@@ -1,0 +1,74 @@
+{
+  "$schema": "./protocol.schema.json",
+  "name": "KarmaChain",
+  "environment": "dev",
+  "configVersion": "1.0.0",
+
+  "chain": {
+    "chainId": 20189,
+    "reservedMainnetChainId": 20188,
+    "blockchainName": "karmachain"
+  },
+
+  "avalanche": {
+    "networkId": 1337,
+    "avalanchegoVersion": "v1.14.1",
+    "subnetEvmVersion": "v0.8.0",
+    "avalancheCliVersion": "v1.9.6",
+    "rpcChainVmProtocol": 44
+  },
+
+  "nativeToken": {
+    "name": "KarmaCoin",
+    "symbol": "KARMA",
+    "decimals": 18
+  },
+
+  "feeConfig": {
+    "gasLimit": 15000000,
+    "targetBlockRate": 2,
+    "minBaseFee": 25000000000,
+    "targetGas": 15000000,
+    "baseFeeChangeDenominator": 36,
+    "minBlockGasCost": 0,
+    "maxBlockGasCost": 1000000,
+    "blockGasCostStep": 200000
+  },
+  "allowFeeRecipients": false,
+
+  "blockProduction": {
+    "mode": "on-demand",
+    "targetBlockRateSeconds": 2
+  },
+
+  "primaryNetwork": {
+    "nodeCount": 2
+  },
+
+  "validators": {
+    "count": 5,
+    "management": "proof-of-authority",
+    "ownerAccount": "ewoq",
+    "nodes": [
+      { "index": 1, "httpPort": 9660, "stakingPort": 9661, "keyDir": "blockchain/validators/dev/node-1/" },
+      { "index": 2, "httpPort": 9662, "stakingPort": 9663, "keyDir": "blockchain/validators/dev/node-2/" },
+      { "index": 3, "httpPort": 9664, "stakingPort": 9665, "keyDir": "blockchain/validators/dev/node-3/" },
+      { "index": 4, "httpPort": 9666, "stakingPort": 9667, "keyDir": "blockchain/validators/dev/node-4/" },
+      { "index": 5, "httpPort": 9668, "stakingPort": 9669, "keyDir": "blockchain/validators/dev/node-5/" }
+    ]
+  },
+
+  "devAccounts": [
+    { "label": "ewoq",    "address": "0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "avalanche-ewoq" },
+    { "label": "anvil-0", "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "foundry-anvil-default-#0" },
+    { "label": "anvil-1", "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "foundry-anvil-default-#1" },
+    { "label": "anvil-2", "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "foundry-anvil-default-#2" },
+    { "label": "anvil-3", "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "foundry-anvil-default-#3" },
+    { "label": "anvil-4", "address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65", "balanceWei": "0xD3C21BCECCEDA1000000", "source": "foundry-anvil-default-#4" }
+  ],
+
+  "endpoints": {
+    "hostRpcPort": 8545,
+    "rpcPath": "/ext/bc/karmachain/rpc"
+  }
+}

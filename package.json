@@ -11,9 +11,9 @@
   "scripts": {
     "protocol:render": "node tools/protocol/render-genesis.mjs && node tools/protocol/render-docs.mjs && node tools/protocol/render-compose-env.mjs",
     "verify": "node tools/verify/verify-network.mjs",
-    "test": "node --test tests/unit/",
-    "test:integration": "node --test tests/integration/",
-    "test:e2e": "node --test tests/e2e/",
+    "test": "node --test \"tests/unit/**/*.test.mjs\"",
+    "test:integration": "node --test \"tests/integration/**/*.test.mjs\"",
+    "test:e2e": "node --test \"tests/e2e/**/*.test.mjs\"",
     "test:secrets": "node --test tests/e2e/secret-scan.test.mjs"
   },
   "dependencies": {

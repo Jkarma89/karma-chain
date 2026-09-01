@@ -36,10 +36,10 @@
 
 **⚠️ CRITICAL**: T011 冒烟验证是全计划最大风险集中点，其结论可能调整 T008/T018 的实现方式，必须最早暴露
 
-- [ ] T004 编写 `blockchain/protocol.json`：按 data-model.md 第 1 节全字段填值（chainId 20189、reservedMainnetChainId 20188、networkId 1337、KarmaCoin/KARMA/18、feeConfig 官方默认 8 字段、blockProduction on-demand、primaryNetwork.nodeCount 2、validators 5 节点含端口 9660-9669、devAccounts 6 项、endpoints 8545 + `/ext/bc/karmachain/rpc`）
-- [ ] T005 [P] 复制 `specs/001-local-avalanche-devnet/contracts/protocol-config.schema.json` 为运行时 schema `blockchain/protocol.schema.json`，并在 `tests/unit/schema-sync.test.mjs` 断言两文件逐字节一致
-- [ ] T006 实现 `tools/protocol/load.mjs`：ajv 校验 schema + data-model 约束（chainId≠reservedMainnetChainId、networkId∉{1,5}、count==nodes.length、端口互不冲突、devAccounts 地址唯一且 EIP-55、余额合计=初始供应）
-- [ ] T007 [P] 编写 `tests/unit/protocol.test.mjs`（node --test）：合法配置通过；上述每条约束的违例样本逐一失败并给出可读错误
+- [x] T004 编写 `blockchain/protocol.json`：按 data-model.md 第 1 节全字段填值（chainId 20189、reservedMainnetChainId 20188、networkId 1337、KarmaCoin/KARMA/18、feeConfig 官方默认 8 字段、blockProduction on-demand、primaryNetwork.nodeCount 2、validators 5 节点含端口 9660-9669、devAccounts 6 项、endpoints 8545 + `/ext/bc/karmachain/rpc`）
+- [x] T005 [P] 复制 `specs/001-local-avalanche-devnet/contracts/protocol-config.schema.json` 为运行时 schema `blockchain/protocol.schema.json`，并在 `tests/unit/schema-sync.test.mjs` 断言两文件逐字节一致
+- [x] T006 实现 `tools/protocol/load.mjs`：ajv 校验 schema + data-model 约束（chainId≠reservedMainnetChainId、networkId∉{1,5}、count==nodes.length、端口互不冲突、devAccounts 地址唯一且 EIP-55、余额合计=初始供应）
+- [x] T007 [P] 编写 `tests/unit/protocol.test.mjs`（node --test）：合法配置通过；上述每条约束的违例样本逐一失败并给出可读错误
 - [ ] T008 编写 `docker/devnet/Dockerfile`：`FROM avaplatform/avalanche-cli:v1.9.6`，下载 avalanchego v1.14.1 与 subnet-evm v0.8.0 官方发行包（amd64+arm64，sha256 固定写入 Dockerfile）预置到 `/root/.avalanche-cli/bin/{avalanchego/avalanchego-v1.14.1,subnet-evm/subnet-evm-v0.8.0}/`，安装 bash/jq/curl/socat（验证 research V-2：CLI 跳过下载）
 - [ ] T009 [P] 实现 `docker/devnet/lib/protocol.sh`：用 jq 从 `blockchain/protocol.json` 读取全部参数的函数（proto_chain_id、proto_ports…），容器内所有脚本只经此读取（FR-017）
 - [ ] T010 实现 `docker/devnet/lib/avalanche.sh`：封装全部 CLI 调用（`network start --num-nodes 2 --avalanchego-version v1.14.1`、`blockchain create --evm --genesis … --vm-version v0.8.0 --proof-of-authority --validator-manager-owner … --evm-token KARMA --force --skip-update-check`、`blockchain deploy --local --use-local-machine --num-bootstrap-validators 5 --http-port … --staking-port … --staking-*-key-path …`、`network stop/clean/status`）；本文件是 CLI 唯一调用点（plan Complexity Tracking）
