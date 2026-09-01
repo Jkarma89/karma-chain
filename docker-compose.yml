@@ -1,0 +1,54 @@
+# KarmaChain 本地开发网络 — Docker Compose 骨架（功能 001 / T003）
+#
+# 契约见 specs/001-local-avalanche-devnet/contracts/cli-interface.md
+#   启动: docker compose up -d devnet        停止: docker compose stop devnet
+#   重置: docker compose down -v             验证: docker compose run --rm verify
+#
+# 注意：下方 8545 / karmachain 等默认值是过渡性内联值，T029 会改为读取由
+# blockchain/protocol.json 生成的 .devnet/compose.env（宪法第十六条唯一事实来源）。
+
+name: karmachain-devnet
+
+services:
+  devnet:
+    build:
+      context: .
+      dockerfile: docker/devnet/Dockerfile
+    image: karmachain/devnet:local
+    container_name: karmachain-devnet
+    # 链数据、快照、sidecar、日志全部落在命名卷；stop 保留、down -v 清除
+    volumes:
+      - karmachain-devnet-data:/root/.avalanche-cli
+      - ./blockchain:/workspace/blockchain:ro
+    ports:
+      - "${KARMACHAIN_RPC_PORT:-8545}:8545"
+    environment:
+      KARMACHAIN_STARTUP_TIMEOUT: "${KARMACHAIN_STARTUP_TIMEOUT:-300}"
+    # Avalanche CLI 依赖容器内 IPv6 回环（research V-1；若不足则见 docs/devnet.md 的 daemon.json 方案）
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+    # SIGTERM 后 entrypoint 需时间执行 `avalanche network stop` 保存快照
+    stop_grace_period: 120s
+    restart: "no"
+
+  verify:
+    profiles: ["verify"]
+    build:
+      context: .
+      dockerfile: docker/verify/Dockerfile
+    image: karmachain/verify:local
+    working_dir: /workspace
+    volumes:
+      - ./blockchain:/workspace/blockchain:ro
+      - ./tools:/workspace/tools:ro
+      - ./tests:/workspace/tests:ro
+      - ./specs:/workspace/specs:ro
+      - ./.devnet:/workspace/.devnet
+    environment:
+      # 验证器自行读取 blockchain/protocol.json 得到端口与路径；这里只告知容器网络内的主机名
+      KARMACHAIN_RPC_HOST: devnet
+    command: ["npm", "run", "verify"]
+
+volumes:
+  karmachain-devnet-data:
+    name: karmachain-devnet-data

@@ -1,0 +1,28 @@
+# ---- 运行时数据（绝不入库）----
+# 本地开发网络的链数据、快照、日志全部位于 Docker 命名卷；若被挂载到工作区也一并忽略
+.devnet/
+.avalanche-cli/
+.avalanchego/
+.tmpnet/
+*.db
+*.log
+
+# ---- Node ----
+node_modules/
+npm-debug.log*
+
+# ---- 本地环境覆盖（示例文件 .env.example 保留）----
+.env
+.env.local
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- 安全：任何非 DEVELOPMENT ONLY 目录下的密钥文件 ----
+# 允许的公开开发密钥仅位于 blockchain/accounts/ 与 blockchain/validators/dev/（见宪法第四条 v1.1.0 例外条款）
+*.pem
+*.key
+!blockchain/validators/dev/**/*.key

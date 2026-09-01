@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.dev/schemas/protocol-config.schema.json",
+  "title": "KarmaChain Protocol Config",
+  "description": "Single source of truth for all consensus-relevant parameters of a KarmaChain network. Every other artifact (genesis, docs, scripts, tests, downstream services) MUST be derived from or read this file.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name", "environment", "configVersion", "chain", "avalanche", "nativeToken",
+    "feeConfig", "allowFeeRecipients", "blockProduction", "primaryNetwork",
+    "validators", "devAccounts", "endpoints"
+  ],
+  "properties": {
+    "name": { "const": "KarmaChain" },
+    "environment": { "enum": ["dev"], "description": "Only 'dev' is permitted in this file. Production parameters live in a separate file/directory and must never be derived from dev." },
+    "configVersion": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "chain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["chainId", "reservedMainnetChainId", "blockchainName"],
+      "properties": {
+        "chainId": { "type": "integer", "minimum": 1 },
+        "reservedMainnetChainId": { "type": "integer", "minimum": 1 },
+        "blockchainName": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,30}$" }
+      }
+    },
+    "avalanche": {
+      "type": "object", "additionalProperties": false,
+      "required": ["networkId", "avalanchegoVersion", "subnetEvmVersion", "avalancheCliVersion", "rpcChainVmProtocol"],
+      "properties": {
+        "networkId": { "type": "integer", "minimum": 0, "not": { "enum": [1, 5] } },
+        "avalanchegoVersion": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "subnetEvmVersion": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "avalancheCliVersion": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "rpcChainVmProtocol": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "nativeToken": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "symbol", "decimals"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "symbol": { "type": "string", "pattern": "^[A-Z]{2,8}$" },
+        "decimals": { "const": 18 }
+      }
+    },
+    "feeConfig": {
+      "type": "object", "additionalProperties": false,
+      "required": ["gasLimit", "targetBlockRate", "minBaseFee", "targetGas", "baseFeeChangeDenominator", "minBlockGasCost", "maxBlockGasCost", "blockGasCostStep"],
+      "properties": {
+        "gasLimit": { "type": "integer", "minimum": 1 },
+        "targetBlockRate": { "type": "integer", "minimum": 1 },
+        "minBaseFee": { "type": "integer", "minimum": 0 },
+        "targetGas": { "type": "integer", "minimum": 1 },
+        "baseFeeChangeDenominator": { "type": "integer", "minimum": 1 },
+        "minBlockGasCost": { "type": "integer", "minimum": 0 },
+        "maxBlockGasCost": { "type": "integer", "minimum": 0 },
+        "blockGasCostStep": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "allowFeeRecipients": { "type": "boolean" },
+    "blockProduction": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "targetBlockRateSeconds"],
+      "properties": {
+        "mode": { "enum": ["on-demand"], "description": "Subnet-EVM builds blocks only when transactions are pending (verified in source)." },
+        "targetBlockRateSeconds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "primaryNetwork": {
+      "type": "object", "additionalProperties": false,
+      "required": ["nodeCount"],
+      "properties": { "nodeCount": { "type": "integer", "minimum": 1 } }
+    },
+    "validators": {
+      "type": "object", "additionalProperties": false,
+      "required": ["count", "management", "ownerAccount", "nodes"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 1 },
+        "management": { "enum": ["proof-of-authority"] },
+        "ownerAccount": { "type": "string", "description": "label of an entry in devAccounts" },
+        "nodes": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["index", "httpPort", "stakingPort", "keyDir"],
+            "properties": {
+              "index": { "type": "integer", "minimum": 1 },
+              "httpPort": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+              "stakingPort": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+              "keyDir": { "type": "string", "pattern": "^blockchain/validators/dev/node-[0-9]+/$" }
+            }
+          }
+        }
+      }
+    },
+    "devAccounts": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["label", "address", "balanceWei", "source"],
+        "properties": {
+          "label": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "address": { "type": "string", "pattern": "^0x[0-9a-fA-F]{40}$" },
+          "balanceWei": { "type": "string", "pattern": "^0x[0-9a-fA-F]+$" },
+          "source": { "type": "string" }
+        }
+      }
+    },
+    "endpoints": {
+      "type": "object", "additionalProperties": false,
+      "required": ["hostRpcPort", "rpcPath"],
+      "properties": {
+        "hostRpcPort": { "type": "integer", "minimum": 1024, "maximum": 65535 },
+        "rpcPath": { "type": "string", "pattern": "^/ext/bc/[a-z][a-z0-9-]*/rpc$" }
+      }
+    }
+  }
+}

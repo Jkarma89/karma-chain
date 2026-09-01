@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.dev/schemas/verification-report.schema.json",
+  "title": "KarmaChain Devnet Verification Report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "timestamp", "rpcUrl", "overall", "checks"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "rpcUrl": { "type": "string", "format": "uri" },
+    "chainId": { "type": ["integer", "null"] },
+    "networkId": { "type": ["integer", "null"] },
+    "blockHeight": { "type": ["integer", "null"] },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "overall": { "enum": ["ready", "failed"] },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "detail"],
+        "properties": {
+          "id": {
+            "enum": [
+              "node", "validator", "rpc", "network-id", "chain-id", "token",
+              "block-production", "balance", "transfer", "receipt", "contract",
+              "rpc-methods", "protocol-consistency"
+            ]
+          },
+          "status": { "enum": ["ok", "fail", "skip", "unsupported"] },
+          "category": {
+            "description": "Failure category per FR-030; required when status is fail.",
+            "enum": ["genesis", "configuration", "node", "validator", "p2p", "rpc", "evm", "transaction", "storage"]
+          },
+          "detail": { "type": "string" },
+          "data": { "type": "object" }
+        },
+        "if": { "properties": { "status": { "const": "fail" } } },
+        "then": { "required": ["category"] }
+      }
+    }
+  }
+}

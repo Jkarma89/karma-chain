@@ -1,0 +1,25 @@
+{
+  "name": "karmachain-devnet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KarmaChain local Avalanche L1 devnet — protocol tooling, verifier and tests (feature 001)",
+  "type": "module",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "protocol:render": "node tools/protocol/render-genesis.mjs && node tools/protocol/render-docs.mjs && node tools/protocol/render-compose-env.mjs",
+    "verify": "node tools/verify/verify-network.mjs",
+    "test": "node --test tests/unit/",
+    "test:integration": "node --test tests/integration/",
+    "test:e2e": "node --test tests/e2e/",
+    "test:secrets": "node --test tests/e2e/secret-scan.test.mjs"
+  },
+  "dependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "solc": "0.8.36",
+    "viem": "^2.56.1"
+  }
+}
