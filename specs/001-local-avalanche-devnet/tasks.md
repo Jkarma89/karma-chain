@@ -81,7 +81,7 @@
 - [x] T023 [US2] 在 entrypoint 增加 stamp 机制：首次部署写 `/root/.avalanche-cli/karmachain.stamp.json`（configVersion/chainId/genesisSha256）；启动时不一致则拒绝并提示 reset，退出 12（FR-021，data-model 状态机）
 - [x] T024 [P] [US2] 编写 `scripts/devnet-reset.ps1`、`scripts/devnet-reset.sh`（`docker compose down -v`，FR-004）
 - [x] T025 [US2] 实现 entrypoint 恢复路径：卷中已有链数据且 stamp 一致时走 `avalanche network start`（快照恢复，含 5 个 L1 节点与别名/socat 重建），确保高度延续（FR-005；依据 T011/V-4 实测结论，必要时显式重连逻辑）
-- [ ] T026 [P] [US2] 编写 `tests/e2e/reset-recreate.test.mjs`：循环 10 次 reset→start→读 `eth_getBlockByNumber("0x0")` 哈希全等（SC-003）；并断言普通 stop→start 后高度 ≥ 停止前
+- [x] T026 [P] [US2] 编写 `tests/e2e/reset-recreate.test.mjs`：循环 10 次 reset→start→读 `eth_getBlockByNumber("0x0")` 哈希全等（SC-003）；并断言普通 stop→start 后高度 ≥ 停止前
 - [ ] T027 [US2] 在 `docs/devnet.md` 写"跨环境一致性核对"操作步骤（第二台机器/另一开发者对比创世哈希、链 ID、账户余额，SC-002），并在本仓库 CI 或第二环境实际执行一次、记录结果
 
 **Checkpoint**: US1+US2 = 可复现的可用链

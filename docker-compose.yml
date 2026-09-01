@@ -29,8 +29,9 @@ services:
     # Avalanche CLI 依赖容器内 IPv6 回环（research V-1；若不足则见 docs/devnet.md 的 daemon.json 方案）
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
-    # SIGTERM 后 entrypoint 需时间执行 `avalanche network stop` 保存快照
-    stop_grace_period: 120s
+    # SIGTERM 后 entrypoint 需时间执行 `avalanche network stop` 保存快照；
+    # 若信号在启动期到达，entrypoint 会先完成启动（首启最长 ≈ 80 s）再停止，因此宽限期须覆盖两者之和
+    stop_grace_period: 180s
     restart: "no"
 
   verify:

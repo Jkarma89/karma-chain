@@ -17,6 +17,7 @@ EXIT_START_FAILED=20
 # 优雅停止：保存快照（FR-003/FR-005），确保不留残余进程
 # ---------------------------------------------------------------------------
 STOPPING=0
+TERM_REQUESTED=0
 on_terminate() {
   [ "${STOPPING}" = "1" ] && return
   STOPPING=1
@@ -24,12 +25,23 @@ on_terminate() {
   log "stopping: saving snapshot and shutting down all nodes ..."
   rt_stop_proxy
   if av_network_is_running; then
-    av_network_stop >/dev/null 2>&1 || log "WARNING: 'avalanche network stop' returned an error; killing remaining node processes"
+    if av_network_stop >/dev/null 2>&1; then
+      log "snapshot saved."
+    else
+      log "WARNING [category: node] 'avalanche network stop' returned an error; killing remaining node processes (next start may need scripts/devnet-reset)"
+    fi
   fi
   pkill -x avalanchego 2>/dev/null || true
   pkill -f signature-aggregator 2>/dev/null || true
   log "stopped."
   exit 0
+}
+# 启动阶段收到 SIGTERM：只记录，等 run 完整结束后再有序停止。
+# 否则信号会打断正在执行的命令替换 / CLI 调用，`avalanche network stop` 来不及保存快照，
+# 下次恢复时只剩主网节点、L1 节点丢失（T026 实测）。compose 的 stop_grace_period 需覆盖最长启动时间。
+request_terminate() {
+  TERM_REQUESTED=1
+  log "termination requested during startup — will shut down cleanly as soon as startup completes"
 }
 
 first_boot() {
@@ -77,7 +89,10 @@ run() {
       rt_check_stamp || exit $?                          # FR-021：参数变了必须先 reset（退出 12）
       log "restoring existing devnet from snapshot (chain state is preserved, FR-005) ..."
       av_network_start || { log "FAILED [category: node] 'avalanche network start' (snapshot restore) failed"; exit ${EXIT_START_FAILED}; }
-      rt_wait_for_rpc || exit ${EXIT_START_FAILED}
+      if ! rt_wait_for_rpc; then
+        log "FAILED [category: node] the L1 validators did not come back after restore — the snapshot is probably incomplete (container was killed before 'avalanche network stop' finished). Run scripts/devnet-reset and start again."
+        exit ${EXIT_START_FAILED}
+      fi
       rt_check_runtime_genesis_hash || exit $?           # T025：恢复后的链必须是同一条链
       ;;
   esac
@@ -89,8 +104,10 @@ run() {
 
 case "${1:-run}" in
   run)
-    trap on_terminate SIGTERM SIGINT
+    trap request_terminate SIGTERM SIGINT          # 启动期：延迟处理
     run
+    if [ "${TERM_REQUESTED}" = "1" ]; then on_terminate; fi
+    trap on_terminate SIGTERM SIGINT               # 运行期：立即有序停止
     log "supervising (SIGTERM → snapshot + clean shutdown). Logs: scripts/devnet-logs"
     # 前台守护：保持 PID 1 存活；节点进程由 tmpnet 管理
     while :; do sleep 3600 & wait $! || true; done
