@@ -61,11 +61,11 @@
 
 **Independent Test**: quickstart 场景 A + B：干净机器 `scripts/devnet-start` → READY 摘要 → cast/MetaMask/viem 连接并完成转账 → `scripts/devnet-stop` 无残留
 
-- [ ] T017 [US1] 实现 `docker/devnet/lib/preflight.sh`：Docker 内存、宿主映射端口占用、容器内端口 9650/9660-9669 占用、二进制存在性检查；失败输出可操作信息并按 cli-interface.md 退出 10/11（FR-007）
-- [ ] T018 [US1] 实现 `docker/devnet/entrypoint.sh` 首次启动路径：preflight → `avalanche.sh` create（用提交的 `blockchain/genesis/karmachain.genesis.json`）→ deploy 5 验证者 → 确认别名 `karmachain` → 起 socat `0.0.0.0:8545→127.0.0.1:9660`（若 T011/V-8 证实可配 http-host 则改配置并删 socat）→ 打印 READY 摘要（cli-interface.md 格式，数值全部经 `protocol.sh` 读取，含 DEVELOPMENT ONLY 警告，FR-008/FR-023）；`trap SIGTERM` → `avalanche network stop` 保存快照后退出（FR-003 无残留）
-- [ ] T019 [US1] 在 entrypoint 增加幂等分支：网络已运行时报告"already running"并退出 0，不创建第二套节点（FR-006）
-- [ ] T020 [P] [US1] 编写宿主薄封装 `scripts/devnet-start.ps1`、`scripts/devnet-start.sh`、`scripts/devnet-stop.ps1`、`scripts/devnet-stop.sh`：仅检查 docker 可用 + 转调 compose + 透传退出码（cli-interface.md 契约，无业务逻辑）
-- [ ] T021 [US1] 编写 `tests/integration/start-stop.test.mjs`：对运行中网络断言 `eth_chainId==0x4edd`、`net_version/info.getNetworkID==1337`、ewoq→anvil-0 转账确认且回执 hash/blockNumber/status/gasUsed/from/to 正确、双方余额差符合金额+费用（FR-013/015）；stop 后宿主 8545 无监听
+- [x] T017 [US1] 实现 `docker/devnet/lib/preflight.sh`：Docker 内存、宿主映射端口占用、容器内端口 9650/9660-9669 占用、二进制存在性检查；失败输出可操作信息并按 cli-interface.md 退出 10/11（FR-007）
+- [x] T018 [US1] 实现 `docker/devnet/entrypoint.sh` 首次启动路径：preflight → `avalanche.sh` create（用提交的 `blockchain/genesis/karmachain.genesis.json`）→ deploy 5 验证者 → 确认别名 `karmachain` → 起 socat `0.0.0.0:8545→127.0.0.1:9660`（若 T011/V-8 证实可配 http-host 则改配置并删 socat）→ 打印 READY 摘要（cli-interface.md 格式，数值全部经 `protocol.sh` 读取，含 DEVELOPMENT ONLY 警告，FR-008/FR-023）；`trap SIGTERM` → `avalanche network stop` 保存快照后退出（FR-003 无残留）
+- [x] T019 [US1] 在 entrypoint 增加幂等分支：网络已运行时报告"already running"并退出 0，不创建第二套节点（FR-006）
+- [x] T020 [P] [US1] 编写宿主薄封装 `scripts/devnet-start.ps1`、`scripts/devnet-start.sh`、`scripts/devnet-stop.ps1`、`scripts/devnet-stop.sh`：仅检查 docker 可用 + 转调 compose + 透传退出码（cli-interface.md 契约，无业务逻辑）
+- [x] T021 [US1] 编写 `tests/integration/start-stop.test.mjs`：对运行中网络断言 `eth_chainId==0x4edd`、`net_version/info.getNetworkID==1337`、ewoq→anvil-0 转账确认且回执 hash/blockNumber/status/gasUsed/from/to 正确、双方余额差符合金额+费用（FR-013/015）；stop 后宿主 8545 无监听
 - [ ] T022 [US1] 按 quickstart 场景 B 手工验证 MetaMask 与 Foundry cast（SC-004 三类工具、SC-006 ≤10s 确认），把实测结果与截图/输出记录到 `docs/devnet.md` 的"工具连接"章节草稿
 
 **Checkpoint**: MVP 可演示 —— 启动、连接、转账、停止全链路可用

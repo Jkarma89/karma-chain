@@ -41,7 +41,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # 容器内工具：bash（脚本）、jq（读 protocol.json）、curl（下载 + RPC 探测）、socat（RPC 代理）、procps（pgrep）、iproute2（端口检查）
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash ca-certificates curl jq socat procps iproute2 \
+ && apt-get install -y --no-install-recommends bash ca-certificates curl jq socat procps iproute2 bc \
  && rm -rf /var/lib/apt/lists/*
 
 # 预置版本锁定的二进制到 /opt/avalanche（镜像层，不受运行时卷影响）

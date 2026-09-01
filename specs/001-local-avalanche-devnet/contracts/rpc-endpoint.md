@@ -33,6 +33,14 @@
 
 实现期每个方法的实际结果写入本表"支持状态"列（`supported` / `unsupported: <reason>`），并同步到 `docs/devnet.md`（SC-010：0 个"未知"）。
 
+## Host 头约束（源于 avalanchego，实现期确认）
+
+avalanchego 的 `--http-allowed-hosts` 默认仅放行 HTTP `Host` 为 `localhost` 或 **IP 字面量** 的请求，其余返回 **403 "invalid host specified"**（`api/server/allowed_hosts.go`）。socat 代理只转发 TCP，不改写 Host。因此：
+
+- 宿主机：`http://127.0.0.1:8545/...` 与 `http://localhost:8545/...` 均可用；
+- Docker Compose 内网：**不要**用服务名 `http://devnet:8545/...`，要先解析为 IP（`tools/verify/lib/rpc.mjs` 已自动处理），或显式发送 `Host: localhost`；
+- 通过其他域名反向代理接入时需改写 Host 或另行配置节点 allowed-hosts（不在本功能范围）。
+
 ## 行为约定（源于 Subnet-EVM，非本项目自定义）
 
 - **无交易不出块**：链空闲时 `eth_blockNumber` 不增长；这是 Subnet-EVM 的设计，不是故障。客户端不应以"高度是否增长"作为空闲期健康判据。
