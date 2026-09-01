@@ -1,0 +1,23 @@
+# 统一 LF：容器内执行的脚本与配置若带 CRLF 会直接失败（bash\r: not found）。
+# Windows / macOS / Linux 开发者检出后内容一致（宪法第七条可复现性）。
+* text=auto eol=lf
+
+# 明确标注常见类型（防止 autocrlf 差异）
+*.sh        text eol=lf
+*.mjs       text eol=lf
+*.js        text eol=lf
+*.json      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.md        text eol=lf
+*.sol       text eol=lf
+*.ps1       text eol=lf
+Dockerfile  text eol=lf
+.gitignore  text eol=lf
+.gitattributes text eol=lf
+
+# 二进制 / 密钥材料不做任何转换
+*.crt   binary
+*.key   binary
+*.pem   binary
+*.png   binary
