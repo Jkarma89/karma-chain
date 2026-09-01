@@ -12,7 +12,6 @@ source "${KARMACHAIN_LIB}/runtime.sh"     # 亦引入 avalanche.sh / protocol.sh
 source "${KARMACHAIN_LIB}/preflight.sh"
 
 EXIT_START_FAILED=20
-GENESIS_FILE="/workspace/blockchain/genesis/karmachain.genesis.json"
 
 # ---------------------------------------------------------------------------
 # 优雅停止：保存快照（FR-003/FR-005），确保不留残余进程
@@ -64,20 +63,26 @@ run() {
       log "starting local primary network ($(proto_primary_nodes) nodes, avalanchego $(proto_avalanchego_ver)) ..."
       av_network_start || { log "FAILED [category: node] 'avalanche network start' failed"; exit ${EXIT_START_FAILED}; }
       first_boot "${name}"
+      rt_wait_for_rpc || exit ${EXIT_START_FAILED}
+      rt_write_stamp                                     # T023：链数据的出生证明
       ;;
     partial)
       log "previous start left an incomplete deployment; retrying create + deploy ..."
       av_network_start || { log "FAILED [category: node] 'avalanche network start' failed"; exit ${EXIT_START_FAILED}; }
       first_boot "${name}"
+      rt_wait_for_rpc || exit ${EXIT_START_FAILED}
+      rt_write_stamp
       ;;
     deployed)
+      rt_check_stamp || exit $?                          # FR-021：参数变了必须先 reset（退出 12）
       log "restoring existing devnet from snapshot (chain state is preserved, FR-005) ..."
       av_network_start || { log "FAILED [category: node] 'avalanche network start' (snapshot restore) failed"; exit ${EXIT_START_FAILED}; }
+      rt_wait_for_rpc || exit ${EXIT_START_FAILED}
+      rt_check_runtime_genesis_hash || exit $?           # T025：恢复后的链必须是同一条链
       ;;
   esac
 
-  # 3) 就绪：别名 RPC 上 chainId 正确 → 起代理 → 摘要
-  rt_wait_for_rpc || exit ${EXIT_START_FAILED}
+  # 3) 就绪：起代理 → 摘要
   rt_start_proxy || exit ${EXIT_START_FAILED}
   rt_print_ready_summary
 }

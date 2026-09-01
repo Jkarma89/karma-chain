@@ -7,6 +7,9 @@ source "${KARMACHAIN_LIB}/avalanche.sh"
 : "${KARMACHAIN_PROXY_PORT:=8545}"          # 容器内对外监听端口（compose 映射到宿主 KARMACHAIN_RPC_PORT）
 : "${KARMACHAIN_STARTUP_TIMEOUT:=300}"      # 秒（SC-001）
 PROXY_PID_FILE="/run/karmachain-proxy.pid"
+GENESIS_FILE="${GENESIS_FILE:-/workspace/blockchain/genesis/karmachain.genesis.json}"
+STAMP_FILE="${AVALANCHE_CLI_HOME}/karmachain.stamp.json"   # data-model §7：卷内链数据的"出生证明"
+EXIT_STAMP_MISMATCH=12
 
 log() { printf '[karmachain] %s\n' "$*"; }
 
@@ -41,6 +44,56 @@ rt_wait_for_rpc() {
   done
   log "FAILED [category: rpc] L1 RPC at ${url} did not report chainId ${want} within ${KARMACHAIN_STARTUP_TIMEOUT}s (last: '${got:-none}')"
   return 1
+}
+
+# --- stamp（FR-021 / T023）：记录链数据是由哪份 protocol.json + 创世产生的 ---
+rt_genesis_sha256()      { sha256sum "${GENESIS_FILE}" | cut -d' ' -f1; }
+rt_runtime_genesis_hash(){ rt_rpc "$(rt_node_rpc_url)" eth_getBlockByNumber '["0x0",false]' | jq -r '.result.hash // empty'; }
+
+rt_write_stamp() {
+  jq -n \
+    --arg configVersion "$(proto_config_version)" \
+    --argjson chainId "$(proto_chain_id)" \
+    --argjson networkId "$(proto_network_id)" \
+    --arg blockchainName "$(proto_blockchain_name)" \
+    --arg genesisSha256 "$(rt_genesis_sha256)" \
+    --arg genesisBlockHash "$(rt_runtime_genesis_hash)" \
+    --arg avalanchegoVersion "$(proto_avalanchego_ver)" \
+    --arg subnetEvmVersion "$(proto_subnet_evm_ver)" \
+    --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '$ARGS.named' > "${STAMP_FILE}"
+  log "stamp written: configVersion $(jq -r .configVersion "${STAMP_FILE}"), chainId $(jq -r .chainId "${STAMP_FILE}"), genesis block $(jq -r .genesisBlockHash "${STAMP_FILE}")"
+}
+
+# 卷内链数据必须与当前 protocol.json / 创世一致；否则拒绝启动并提示 reset（退出 12）
+rt_check_stamp() {
+  if [ ! -f "${STAMP_FILE}" ]; then
+    log "FAILED [category: configuration] chain data exists but ${STAMP_FILE} is missing (created by an older version?) — run scripts/devnet-reset and start again"
+    return ${EXIT_STAMP_MISMATCH}
+  fi
+  local mismatches=()
+  local want got
+  want="$(proto_config_version)";  got="$(jq -r .configVersion "${STAMP_FILE}")";  [ "${want}" = "${got}" ] || mismatches+=("configVersion: chain data ${got}, protocol.json ${want}")
+  want="$(proto_chain_id)";        got="$(jq -r .chainId "${STAMP_FILE}")";        [ "${want}" = "${got}" ] || mismatches+=("chainId: chain data ${got}, protocol.json ${want}")
+  want="$(proto_network_id)";      got="$(jq -r .networkId "${STAMP_FILE}")";      [ "${want}" = "${got}" ] || mismatches+=("networkId: chain data ${got}, protocol.json ${want}")
+  want="$(proto_blockchain_name)"; got="$(jq -r .blockchainName "${STAMP_FILE}")"; [ "${want}" = "${got}" ] || mismatches+=("blockchainName: chain data ${got}, protocol.json ${want}")
+  want="$(rt_genesis_sha256)";     got="$(jq -r .genesisSha256 "${STAMP_FILE}")";  [ "${want}" = "${got}" ] || mismatches+=("genesis file sha256 changed since the chain was created (${got:0:12}… → ${want:0:12}…)")
+  if [ ${#mismatches[@]} -gt 0 ]; then
+    log "FAILED [category: configuration] existing chain data does not match the current protocol configuration:"
+    local m; for m in "${mismatches[@]}"; do log "  - ${m}"; done
+    log "  → this is a protocol change (constitution Art. 15). Run scripts/devnet-reset to wipe the chain, then start again."
+    return ${EXIT_STAMP_MISMATCH}
+  fi
+  log "stamp OK (configVersion $(proto_config_version), chainId $(proto_chain_id))"
+}
+
+# 恢复后：运行中的创世区块哈希必须等于首次部署时记录的值（卷损坏 / 错卷检测）
+rt_check_runtime_genesis_hash() {
+  local want got; want="$(jq -r .genesisBlockHash "${STAMP_FILE}")"; got="$(rt_runtime_genesis_hash)"
+  if [ -n "${want}" ] && [ "${want}" != "${got}" ]; then
+    log "FAILED [category: genesis] running chain genesis hash ${got} != recorded ${want} — chain data is corrupt or from another network; run scripts/devnet-reset"
+    return ${EXIT_STAMP_MISMATCH}
+  fi
 }
 
 # --- socat 代理：0.0.0.0:<proxy-port> → 127.0.0.1:<L1 node 1 http-port>（research V-8：节点只监听回环）---
@@ -89,6 +142,7 @@ KarmaChain local devnet is READY  (environment: $(proto_environment) — DEVELOP
   Validators   : $(proto_validator_count) L1 validators ($(proto_validator_mgmt)) + $(proto_primary_nodes) primary-network nodes
   Block mode   : $(proto_block_mode) (blocks are produced only when there are transactions)
   Block height : $((height))
+  Genesis hash : $(rt_runtime_genesis_hash)
 
   Dev accounts (publicly known keys — NEVER use outside this local network; keys in blockchain/accounts/dev-accounts.json):
 EOF

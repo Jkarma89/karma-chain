@@ -66,7 +66,7 @@
 - [x] T019 [US1] 在 entrypoint 增加幂等分支：网络已运行时报告"already running"并退出 0，不创建第二套节点（FR-006）
 - [x] T020 [P] [US1] 编写宿主薄封装 `scripts/devnet-start.ps1`、`scripts/devnet-start.sh`、`scripts/devnet-stop.ps1`、`scripts/devnet-stop.sh`：仅检查 docker 可用 + 转调 compose + 透传退出码（cli-interface.md 契约，无业务逻辑）
 - [x] T021 [US1] 编写 `tests/integration/start-stop.test.mjs`：对运行中网络断言 `eth_chainId==0x4edd`、`net_version/info.getNetworkID==1337`、ewoq→anvil-0 转账确认且回执 hash/blockNumber/status/gasUsed/from/to 正确、双方余额差符合金额+费用（FR-013/015）；stop 后宿主 8545 无监听
-- [ ] T022 [US1] 按 quickstart 场景 B 手工验证 MetaMask 与 Foundry cast（SC-004 三类工具、SC-006 ≤10s 确认），把实测结果与截图/输出记录到 `docs/devnet.md` 的"工具连接"章节草稿
+- [x] T022 [US1] 按 quickstart 场景 B 手工验证 MetaMask 与 Foundry cast（SC-004 三类工具、SC-006 ≤10s 确认），把实测结果与截图/输出记录到 `docs/devnet.md` 的"工具连接"章节草稿
 
 **Checkpoint**: MVP 可演示 —— 启动、连接、转账、停止全链路可用
 
@@ -78,9 +78,9 @@
 
 **Independent Test**: quickstart 场景 D：记录创世哈希 → stop/start 高度延续 → reset 后哈希不变高度归零；×10 重复一致
 
-- [ ] T023 [US2] 在 entrypoint 增加 stamp 机制：首次部署写 `/root/.avalanche-cli/karmachain.stamp.json`（configVersion/chainId/genesisSha256）；启动时不一致则拒绝并提示 reset，退出 12（FR-021，data-model 状态机）
-- [ ] T024 [P] [US2] 编写 `scripts/devnet-reset.ps1`、`scripts/devnet-reset.sh`（`docker compose down -v`，FR-004）
-- [ ] T025 [US2] 实现 entrypoint 恢复路径：卷中已有链数据且 stamp 一致时走 `avalanche network start`（快照恢复，含 5 个 L1 节点与别名/socat 重建），确保高度延续（FR-005；依据 T011/V-4 实测结论，必要时显式重连逻辑）
+- [x] T023 [US2] 在 entrypoint 增加 stamp 机制：首次部署写 `/root/.avalanche-cli/karmachain.stamp.json`（configVersion/chainId/genesisSha256）；启动时不一致则拒绝并提示 reset，退出 12（FR-021，data-model 状态机）
+- [x] T024 [P] [US2] 编写 `scripts/devnet-reset.ps1`、`scripts/devnet-reset.sh`（`docker compose down -v`，FR-004）
+- [x] T025 [US2] 实现 entrypoint 恢复路径：卷中已有链数据且 stamp 一致时走 `avalanche network start`（快照恢复，含 5 个 L1 节点与别名/socat 重建），确保高度延续（FR-005；依据 T011/V-4 实测结论，必要时显式重连逻辑）
 - [ ] T026 [P] [US2] 编写 `tests/e2e/reset-recreate.test.mjs`：循环 10 次 reset→start→读 `eth_getBlockByNumber("0x0")` 哈希全等（SC-003）；并断言普通 stop→start 后高度 ≥ 停止前
 - [ ] T027 [US2] 在 `docs/devnet.md` 写"跨环境一致性核对"操作步骤（第二台机器/另一开发者对比创世哈希、链 ID、账户余额，SC-002），并在本仓库 CI 或第二环境实际执行一次、记录结果
 

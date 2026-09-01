@@ -49,13 +49,26 @@ export const karmachain = defineChain({
 export const publicClient = createPublicClient({ chain: karmachain, transport: http(rpcUrl, { timeout: 15_000 }) });
 export const walletClient = (account) => createWalletClient({ account, chain: karmachain, transport: http(rpcUrl, { timeout: 15_000 }) });
 
+/**
+ * 带超时的 fetch。不用 AbortSignal.timeout()：其计时器是 unref 的，若连接被接受却无应答（容器端口已映射、服务未起），
+ * 事件循环可能没有任何 ref 句柄，node --test 会取消测试（"Promise resolution is still pending…"）。
+ */
+export async function fetchWithTimeout(url, init = {}, timeoutMs = 15_000) {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(new Error(`request to ${url} timed out after ${timeoutMs}ms`)), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: ac.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** 原始 JSON-RPC 调用（用于逐方法探测与 Avalanche Info API）。 */
 export async function jsonRpc(url, method, params = []) {
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
-    signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`${method}: HTTP ${res.status}`);
   const body = await res.json();
@@ -71,6 +84,6 @@ export const info = {
 };
 
 export async function health() {
-  const res = await fetch(healthUrl, { signal: AbortSignal.timeout(10_000) });
+  const res = await fetchWithTimeout(healthUrl, {}, 10_000);
   return res.json();
 }
