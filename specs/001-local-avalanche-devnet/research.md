@@ -196,15 +196,19 @@
 
 ## 实现期验证清单（研究阶段无法确证，必须在实现中用真实运行验证）
 
-| # | 事项 | 若不成立的回退 |
-|---|---|---|
-| V-1 | 容器级 `sysctl net.ipv6.conf.all.disable_ipv6=0` 是否足以满足 CLI 的 IPv6 需求 | 文档要求 Docker Desktop 开启 IPv6（`daemon.json`），或验证 `--public-ip 127.0.0.1` 是否绕过 |
-| V-2 | 预置到 `~/.avalanche-cli/bin/**` 的二进制能否让 CLI 跳过下载（含 `compatibility.json` 远程拉取是否仍发生） | 改用 `--avalanchego-path`；若 `--evm` 路线仍强制联网则改 `--custom --vm` |
-| V-3 | `--staking-*-key-path` 切片对 5 个本地节点的绑定顺序与 NodeID 确定性 | 放弃固定 NodeID（不影响 SC-002/003），每次重置由 CLI 生成 |
-| V-4 | `network stop`（快照）/`start` 是否同时恢复 5 个 L1 本地节点与链状态（FR-005） | 在 entrypoint 中显式 `blockchain deploy --local` 的重连逻辑或使用 CLI `node local start` |
-| V-5 | `blockchain create` 非交互性：`--icm=false` 是否被识别为显式关闭；PoA owner 通过 `--validator-manager-owner` 后是否仍有提示 | 记录必需标志组合；必要时用 `yes`/expect 兜底并记录原因（FR-002） |
-| V-6 | 7 节点内存占用与 SC-001（5 分钟）达成情况 | 调整文档前置条件；若不可达则向用户提出拓扑复议（不得私自改 5） |
-| V-7 | Anvil/Hardhat 默认账户 #0–#4 的地址/私钥逐字核对 | 以 Foundry 官方文档为准修正 `dev-accounts.json` |
-| V-8 | CLI 本地节点是否可配置 `http-host`（若可则去掉 socat） | 保留 socat |
-| V-9 | FR-012 十个 RPC 方法在 Subnet-EVM v0.8.0 上的实际支持情况 | 不支持者在文档与验证输出中标注 |
-| V-10 | `avalanche network status` / `~/.avalanche-cli` 下日志路径与 `info.peers`、`/ext/health` 在 L1 节点上的可用性 | 调整 `status`/`logs` 命令实现 |
+| # | 事项 | 若不成立的回退 | **T011 实测结论（2026-09-01）** |
+|---|---|---|---|
+| V-1 | 容器级 `sysctl net.ipv6.conf.all.disable_ipv6=0` 是否足以满足 CLI 的 IPv6 需求 | 文档要求 Docker Desktop 开启 IPv6（`daemon.json`），或验证 `--public-ip 127.0.0.1` 是否绕过 | ✅ **成立**。容器内 `::1` 可用，`network start` 7 秒就绪，无需改宿主 daemon.json |
+| V-2 | 预置到 `~/.avalanche-cli/bin/**` 的二进制能否让 CLI 跳过下载（含 `compatibility.json` 远程拉取是否仍发生） | 改用 `--avalanchego-path`；若 `--evm` 路线仍强制联网则改 `--custom --vm` | ✅ avalanchego / subnet-evm 走软链，零下载。⚠️ **新发现**：deploy 期间 CLI 仍下载了 `signature-aggregator-v0.5.3`（版本来自 GitHub "latest"，`DefaultSignatureAggregatorVersion = latest`）与 `icm-contracts v1.0.0` 4 个文本文件，并写入 `download-cache/latest.json`（缓存 3 小时，`DownloadCacheExpiration`）。→ 处置：Dockerfile 预置两者（sha256 锁定）+ 预置 `latest.json`/`min_cli_version.json` 并在 entrypoint 刷新 mtime，使 CLI 视为缓存有效；T018/T049 用屏蔽 github.com 的方式验证离线启动 |
+| V-3 | `--staking-*-key-path` 切片对 5 个本地节点的绑定顺序与 NodeID 确定性 | 放弃固定 NodeID（不影响 SC-002/003），每次重置由 CLI 生成 | ✅ **成立**。密钥从节点 `flags.json`（`staking-tls-cert/key-file-content`、`staking-signer-key-file-content`，base64）提取到 `blockchain/validators/dev/node-{1..5}/`；在全新卷上用 `--staking-*-key-path` 重新部署，5 个 NodeID 与 README **全部一致**，绑定顺序 = `--http-port` 列表顺序 = protocol.json `validators.nodes[]` 顺序 |
+| V-4 | `network stop`（快照）/`start` 是否同时恢复 5 个 L1 本地节点与链状态（FR-005） | 在 entrypoint 中显式 `blockchain deploy --local` 的重连逻辑或使用 CLI `node local start` | ✅ **成立**。stop → start 后 5 个 L1 节点全部重启，RPC 可用，高度 0x4 → 0x4 保持 |
+| V-5 | `blockchain create` 非交互性：`--icm=false` 是否被识别为显式关闭；PoA owner 通过 `--validator-manager-owner` 后是否仍有提示 | 记录必需标志组合；必要时用 `yes`/expect 兜底并记录原因（FR-002） | ✅ **成立**。`create --evm --test-defaults --evm-chain-id --evm-token --proof-of-authority --validator-manager-owner --proxy-contract-owner --icm=false --force` 与 `deploy --local --ewoq --use-local-machine --num-bootstrap-validators 5 --http-port … --staking-port … --avalanchego-version --skip-icm-deploy --skip-relayer` 全程零提示 |
+| V-6 | 7 节点内存占用与 SC-001（5 分钟）达成情况 | 调整文档前置条件；若不可达则向用户提出拓扑复议（不得私自改 5） | ✅ **远优于预期**。network 7s + create 3s + deploy 70s ≈ **80 秒**；7 avalanchego + 5 VM 插件 + 1 aggregator 进程总 RSS ≈ **1.1 GB**。文档前置条件定为 Docker ≥ 4 GB 内存 |
+| V-7 | Anvil/Hardhat 默认账户 #0–#4 的地址/私钥逐字核对 | 以 Foundry 官方文档为准修正 `dev-accounts.json` | ✅ **成立**（比查文档更强）：`tests/unit/accounts.test.mjs` 用 viem 从公开助记词 `test … junk` 按 `m/44'/60'/0'/0/i` 重新推导，地址与私钥与 `dev-accounts.json` 逐字一致；ewoq 私钥推导出 `0x8db97C7c…52FC` |
+| V-8 | CLI 本地节点是否可配置 `http-host`（若可则去掉 socat） | 保留 socat | ❌ **不可配置**：L1 节点 `flags.json` 固定 `http-host=127.0.0.1`、`public-ip=127.0.0.1`，全部监听回环 → **保留 socat** |
+| V-9 | FR-012 十个 RPC 方法在 Subnet-EVM v0.8.0 上的实际支持情况 | 不支持者在文档与验证输出中标注 | ⏳ T037 |
+| V-10 | `avalanche network status` / `~/.avalanche-cli` 下日志路径与 `info.peers`、`/ext/health` 在 L1 节点上的可用性 | 调整 `status`/`logs` 命令实现 | ✅ 部分确认：`/ext/health` 与 `info.peers` 在 5 个 L1 节点均可用；**observed peers = 7**（7 节点网络，与 spec "≥4" 一致）；主网节点日志 `~/.avalanche-cli/runs/network_<ts>/<NodeID>/logs`，L1 节点日志 `~/.avalanche-cli/local/<chain>-local-node-local-network/<NodeID>/logs`；`network status` 输出主网 + L1 节点表 |
+
+**T014 实测（2026-09-01，自有创世 + 固定密钥 + GitHub 全域名屏蔽）**：`network start` → `create --genesis blockchain/genesis/karmachain.genesis.json` → `deploy`（5 个 `--staking-*-key-path`）全程 **73 秒、零联网**（`bin/` 下无任何非软链条目，`download-cache` 无新文件）；CLI 接受生成的创世并识别出 4 个 ValidatorManager 合约；`eth_chainId=0x4edd`、创世 `timestamp=0x6a961580`（1788220800）、`gasLimit=0xe4e1c0`（15,000,000）；**创世区块哈希基准 = `0xcd807715b50b5eaba52dd332cce379da66704b443b1439e881e11751b88d3efa`**（SC-002/003 的比对值）；5 个 Anvil 账户余额精确等于 `balanceWei`；**ewoq 在 latest 的余额低于创世值**——因为 CLI 用它支付 PoA ValidatorManager 初始化交易（部署后高度已为 4），所以验证器的"余额 == 创世"检查必须以 `eth_getBalance(addr, "0x0")` 为基准，latest 只做 `≤` 检查（写入 T033）。
+
+**T011 其他实测事实**：链别名 `/ext/bc/<name>/rpc` 在 L1 节点上可用（RPC 路径稳定性成立）；CLI `--test-defaults` 的 feeConfig 为 gasLimit 8,000,000 / targetGas 40,000,000（测试默认，不同于官方 L1 默认），本项目创世由生成器决定，不受影响；CLI 创世含 `warpConfig{blockTimestamp=<创世时间>, quorumNumerator=67, requirePrimaryNetworkSigners=true}` 与顶层 `timestamp`——**生成器必须固定这两个时间值**否则创世哈希不可复现；ValidatorManager 相关合约账户共 4 个（`0x0c0deba5…` 逻辑合约 15459B、`0x0feedc0de…` TransparentProxy、`0x9c00629c…` 库、`0xa0affe12…` ProxyAdmin），已提取为 fixture；L1 节点默认 `partial-sync-primary-network=true`。

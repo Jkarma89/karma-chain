@@ -1,0 +1,12 @@
+.git
+node_modules
+.devnet
+specs
+doc
+docs
+tests
+tools
+scripts
+.claude
+.specify
+*.md
