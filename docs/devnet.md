@@ -172,15 +172,59 @@ curl -s -X POST -H 'content-type: application/json' \
 - 部署完成时高度已为 4：Avalanche CLI 用 ewoq 发了 4 笔 PoA ValidatorManager 初始化交易。
 - `docker compose logs` 会保留容器上一轮运行的输出；`scripts/devnet-start` 只解析本次启动之后的日志。
 
-## 6. 排障（按 FR-030 类别，阶段 7 补全）
+## 5.1 节点状态与日志
+
+```bash
+scripts/devnet-status.sh              # 7 个节点：角色/端口/running/healthy/bootstrapped/peers/NodeID
+scripts/devnet-status.sh --json       # 机器可读，供脚本消费
+scripts/devnet-logs.sh                # 列出可选节点与其日志文件
+scripts/devnet-logs.sh l1-3           # 看 l1-3 的节点日志（main.log）末 200 行
+scripts/devnet-logs.sh l1-3 --chain -f  # 跟随 L1 链日志
+scripts/devnet-node.sh status l1-3    # 单节点进程状态
+```
+
+`devnet-status` 退出码：0 全部健康 / 1 存在不健康节点 / 2 网络未运行。健康节点的 `peers` 为 6（7 节点网络中各自看到其余 6 个）。
+
+**日志脱敏（FR-026）**：avalanchego 启动时会把全部传入标志打进 `main.log`，其中包含
+`staking-tls-key-file-content` 与 `staking-signer-key-file-content`（节点私钥的 base64）。
+`devnet-logs` **默认屏蔽**这些字段与 PEM 私钥块；`--raw` 可关闭屏蔽（会打印密钥材料，仅在确有必要时使用）。
+这些密钥就是仓库里 `blockchain/validators/dev/` 下已公开的 DEVELOPMENT ONLY 材料，因此对本开发网络不构成新的泄露；
+但把日志贴到 issue/聊天时仍应使用默认（脱敏）输出。生产环境绝不可复用这些密钥（FR-025）。
+
+## 5.2 故障注入（演练与测试用）
+
+```bash
+scripts/devnet-node.sh stop l1-3      # 终止单个节点（模拟崩溃）
+scripts/devnet-node.sh start l1-3     # 重新拉起（插件进程随之重建）
+scripts/devnet-node.sh pause l1-3     # SIGSTOP 冻结（仅适合短时，见下）
+scripts/devnet-node.sh resume l1-3    # SIGCONT
+```
+
+**实测结论（tests/e2e/single-validator-down.test.mjs）**：停掉 1 个 L1 验证者后网络**继续正常出块**，
+转账确认时间保持约 4 秒不变——与 research R-05 的推算一致（默认 Snow 参数下法定门槛为
+`alphaConfidence/K = 15/20 = 75%`，4/5 = 80% ≥ 75%）。`devnet-status` 会报 1/7 不健康并以 1 退出，
+`devnet-verify` 的 `node`/`validator` 两项失败且带正确类别，而 `transfer`、`block-production` 仍通过。
+
+> ⚠️ **`pause` 只适合短时（≲ 1 分钟）**：冻结过久会拆掉 avalanchego 与其 subnet-evm 插件之间的 gRPC 连接，
+> `resume` 后链健康检查会持续报 `grpc: the client connection is closing` 且无法自愈——此时需 `stop` + `start` 恢复。
+> 需要节点长时间离线时请直接用 `stop`。
+
+## 6. 排障（按 FR-030 类别）
 
 | 类别 | 现象 | 处理 |
 |---|---|---|
 | configuration | `PREFLIGHT FAILED … ports already in use`（退出 11） | 另一套 devnet 仍在容器内运行；`docker compose down` |
 | configuration | `host port 8545 is already in use`（退出 11） | 停掉占用者，或在 `.env` 设置 `KARMACHAIN_RPC_PORT` |
 | configuration | `existing chain data does not match…`（退出 12） | 协议参数变了，链数据是旧的；`scripts/devnet-reset` 后再启动 |
-| genesis | `genesis chainId != protocol.json`（退出 10） | `npm run protocol:render` 后重置 |
+| genesis | `genesis chainId != protocol.json` / 创世文件损坏（退出 10） | `npm run protocol:render` 后重置 |
+| node | `devnet-status` 报 N/7 不健康（退出 1） | `scripts/devnet-logs.sh <node>` 看日志；必要时 `devnet-node stop/start <node>` |
+| validator | `devnet-verify` 报某节点未 bootstrapped | 同上；若长时间不恢复则 `scripts/devnet-reset` |
+| p2p | 某节点 `peers` 明显低于其他节点 | 查该节点日志的对等连接相关条目 |
 | rpc | 403 `invalid host specified` | 见 §3 Host 头限制 |
+| rpc | `devnet-verify` 报 `connection refused` | 网络未启动或已停止；`scripts/devnet-start` |
+
+上述每一类都有对应的自动化回归（`tests/e2e/failure-classification.test.mjs`，6/6 通过，SC-011），
+因此"错误信息可操作、类别正确"这件事是被测试守住的，而不是靠人工检查。
 
 ### 客户端缓存：reset 之后 MetaMask 显示旧余额 / nonce 报错
 

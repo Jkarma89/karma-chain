@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+# devnet-node —— 单节点生命周期控制，用于故障注入（US5 / T042）。
+#
+# 用法：devnet-node <pause|resume|stop|start|status> <node>
+#   pause   SIGSTOP —— 冻结进程（模拟节点挂起/网络分区）。
+#           ⚠️ 只适合短时（≲ 1 分钟）故障注入：冻结过久会导致 avalanchego 与其 subnet-evm 插件之间的
+#           gRPC 连接被拆除，SIGCONT 后链健康检查持续报
+#           "grpc: the client connection is closing"，无法自愈 —— 此时需用 stop + start 恢复。
+#   resume  SIGCONT —— 解冻。
+#   stop    SIGTERM —— 真正终止进程（模拟节点崩溃）。
+#   start   用节点自己的 flags.json 重新拉起，并更新 process.json 的 pid。
+#   status  打印该节点的进程状态与端口监听情况。
+#
+# 注意：本命令只影响单个节点进程，不动快照与链数据；scripts/devnet-stop 仍会正常保存快照。
+set -uo pipefail
+
+: "${KARMACHAIN_LIB:=/opt/karmachain/lib}"
+source "${KARMACHAIN_LIB}/nodes.sh"
+source "${KARMACHAIN_LIB}/binaries.sh"
+
+ACTION="${1:-}"; NODE="${2:-}"
+case "${ACTION}" in pause|resume|stop|start|status) ;; *)
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+esac
+[ -n "${NODE}" ] || { echo "devnet-node: node label required (e.g. l1-3)" >&2; exit 2; }
+
+INV="$(nodes_inventory_json 2>/dev/null)" || { echo "devnet-node: no local network found" >&2; exit 2; }
+PORT="$(jq -r --arg l "${NODE}" '.nodes[] | select(.label == $l) | .httpPort' <<<"${INV}")"
+[ -n "${PORT}" ] || { echo "devnet-node: unknown node '${NODE}'" >&2; exit 2; }
+ROLE="$(jq -r --arg l "${NODE}" '.nodes[] | select(.label == $l) | .role' <<<"${INV}")"
+BASE="$([ "${ROLE}" = "primary" ] && nodes_primary_dir || nodes_l1_dir)"
+
+DIR=""
+for d in "${BASE}"/NodeID-*; do
+  # 用 flags.json 定位（停止后依然存在），不用 process.json
+  [ -r "${d}/flags.json" ] || continue
+  [ "$(jq -r '.["http-port"] | tostring' "${d}/flags.json" 2>/dev/null)" = "${PORT}" ] && { DIR="${d}"; break; }
+done
+[ -n "${DIR}" ] || { echo "devnet-node: node directory for '${NODE}' not found" >&2; exit 2; }
+
+# 以 flags.json 路径定位进程（比 process.json 里的 pid 更可靠：重启后 pid 会变）
+node_pid() { pgrep -f -- "--config-file ${DIR}/flags.json" | head -1; }
+# 只认节点自己在回环上的监听：同端口上还有一个绑在容器 IP 的 socat 代理（lib/runtime.sh）
+port_listening() { ss -ltn 2>/dev/null | awk '{print $4}' | grep -qxF "127.0.0.1:${PORT}"; }
+proc_state() { local p; p="$(node_pid)"; [ -n "${p}" ] && ps -o state= -p "${p}" 2>/dev/null | tr -d ' ' || echo '-'; }
+
+case "${ACTION}" in
+  status)
+    printf '%s  pid=%s  state=%s  port=%s listening=%s\n' \
+      "${NODE}" "$(node_pid || echo none)" "$(proc_state)" "${PORT}" "$(port_listening && echo yes || echo no)"
+    ;;
+  pause)
+    pid="$(node_pid)" || true
+    [ -n "${pid}" ] || { echo "devnet-node: ${NODE} is not running" >&2; exit 1; }
+    kill -STOP "${pid}" && echo "devnet-node: ${NODE} paused (SIGSTOP, pid ${pid}) — health checks will time out; 'resume' to restore"
+    ;;
+  resume)
+    pid="$(node_pid)" || true
+    [ -n "${pid}" ] || { echo "devnet-node: ${NODE} has no process to resume" >&2; exit 1; }
+    kill -CONT "${pid}" && echo "devnet-node: ${NODE} resumed (SIGCONT, pid ${pid})"
+    ;;
+  stop)
+    pid="$(node_pid)" || true
+    [ -n "${pid}" ] || { echo "devnet-node: ${NODE} is already stopped"; exit 0; }
+    kill -TERM "${pid}"
+    for _ in $(seq 1 30); do node_pid >/dev/null || break; sleep 1; done
+    node_pid >/dev/null && { kill -KILL "$(node_pid)" 2>/dev/null; sleep 1; }
+    echo "devnet-node: ${NODE} stopped (was pid ${pid})"
+    ;;
+  start)
+    node_pid >/dev/null && { echo "devnet-node: ${NODE} is already running (pid $(node_pid))"; exit 0; }
+    ensure_cached_binaries
+    mkdir -p "${DIR}/logs"
+    nohup "$(avalanchego_bin)" --config-file "${DIR}/flags.json" >>"${DIR}/logs/relaunch.log" 2>&1 &
+    pid=$!
+    sleep 2
+    kill -0 "${pid}" 2>/dev/null || { echo "devnet-node: ${NODE} failed to start (see ${DIR}/logs/relaunch.log)" >&2; exit 1; }
+    # tmpnet 的 process.json 由节点自己重写；这里兜底同步 pid，避免清单读到陈旧值
+    tmp="$(mktemp)"; jq --argjson pid "${pid}" '.pid = $pid' "${DIR}/process.json" > "${tmp}" 2>/dev/null && mv "${tmp}" "${DIR}/process.json" || rm -f "${tmp}"
+    for _ in $(seq 1 60); do port_listening && break; sleep 1; done
+    port_listening && echo "devnet-node: ${NODE} started (pid ${pid}, port ${PORT} listening)" \
+      || { echo "devnet-node: ${NODE} started (pid ${pid}) but port ${PORT} is not listening yet" >&2; exit 1; }
+    ;;
+esac

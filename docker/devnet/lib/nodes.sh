@@ -13,7 +13,15 @@ source "${KARMACHAIN_LIB}/protocol.sh"
 
 : "${AVALANCHE_CLI_HOME:=/root/.avalanche-cli}"
 
-nodes_container_ip() { hostname -i | awk '{print $1}'; }
+# 容器在 compose 网络中的 IP。
+# 直接读网卡而非 `hostname -i`：后者要经过解析器，容器 DNS 不可用时会返回空
+# （实测：一次失败的 compose 重建后 DNS 短暂不可用，导致每节点代理全部绑定失败）。
+nodes_container_ip() {
+  local ip
+  ip="$(ip -4 -o addr show scope global 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+  [ -n "${ip}" ] || ip="$(hostname -i 2>/dev/null | awk '{print $1}')"
+  printf '%s' "${ip}"
+}
 
 # 当前 Primary Network 运行目录（localNetworks.json 指向最新一次 network start）
 nodes_primary_dir() {
@@ -23,13 +31,20 @@ nodes_primary_dir() {
 
 nodes_l1_dir() { printf '%s/local/%s-local-node-local-network' "${AVALANCHE_CLI_HOME}" "$(proto_blockchain_name)"; }
 
-# 从一个节点目录读出 "nodeId port"
+# 从一个节点目录读出 "nodeId port"。
+# 端口取自 flags.json —— 它在节点停止后依然存在；process.json 会在节点关闭时被 tmpnet 删除，
+# 若依赖它，已停止的节点就会从清单里消失（devnet-node start 将找不到该节点、devnet-status 会漏报）。
 _node_entry() {
-  local dir="$1" pj="$1/process.json"
-  [ -r "${pj}" ] || return 1
-  local uri port
-  uri="$(jq -er '.uri' "${pj}" 2>/dev/null)" || return 1
-  port="${uri##*:}"
+  local dir="$1" fj="$1/flags.json" pj="$1/process.json"
+  local port=""
+  if [ -r "${fj}" ]; then
+    port="$(jq -er '.["http-port"] | tostring' "${fj}" 2>/dev/null || true)"
+  fi
+  if [ -z "${port}" ] && [ -r "${pj}" ]; then
+    local uri; uri="$(jq -er '.uri' "${pj}" 2>/dev/null || true)"
+    [ -n "${uri}" ] && port="${uri##*:}"
+  fi
+  [ -n "${port}" ] || return 1
   printf '%s %s\n' "$(basename "${dir}")" "${port}"
 }
 

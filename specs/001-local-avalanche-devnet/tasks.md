@@ -127,11 +127,11 @@
 
 **Independent Test**: quickstart 场景 F：status 显示 7 节点明细；端口占用退出 11 且指明端口；停 1 个 L1 节点网络仍出块且 status 报 4/5
 
-- [ ] T039 [US5] 实现 `docker/devnet/lib/health.sh` 与 `docker/devnet/bin/devnet-status`（每节点 NodeID/角色/healthy/bootstrapped/peers，存在不健康节点退出 1）+ `scripts/devnet-status.ps1`、`scripts/devnet-status.sh`
-- [ ] T040 [P] [US5] 实现 `docker/devnet/bin/devnet-logs`（按节点过滤、`-f` 跟随、含时间戳与级别）与 `docker/devnet/bin/devnet-node`（stop/start 单节点，供故障注入）+ `scripts/devnet-logs.ps1`、`scripts/devnet-logs.sh`（日志路径按 T011/V-10 实测结果）
-- [ ] T041 [US5] 编写 `tests/e2e/failure-classification.test.mjs`：注入端口占用（预期退出 11 + 端口号）、stamp 不一致（退出 12）、停网 verify（category rpc）等场景，断言每种输出归入 FR-030 正确类别（SC-011）
-- [ ] T042 [US5] 编写 `tests/e2e/single-validator-down.test.mjs`：`devnet-node stop l1-3` 后转账仍确认（5 节点容忍 1 离线，R-05）、`devnet-status` 报 4/5 且退出 1、verify validator 项 fail[category: validator]；恢复节点后全部转 OK
-- [ ] T043 [US5] 审查启动输出与全部节点日志的秘密泄露面：确认私钥/助记词仅出现在明确标记文件，必要时在 entrypoint/摘要处脱敏（FR-026，为 T044 扫描提供保证）
+- [x] T039 [US5] 实现 `docker/devnet/lib/health.sh` 与 `docker/devnet/bin/devnet-status`（每节点 NodeID/角色/healthy/bootstrapped/peers，存在不健康节点退出 1）+ `scripts/devnet-status.ps1`、`scripts/devnet-status.sh`
+- [x] T040 [P] [US5] 实现 `docker/devnet/bin/devnet-logs`（按节点过滤、`-f` 跟随、含时间戳与级别）与 `docker/devnet/bin/devnet-node`（stop/start 单节点，供故障注入）+ `scripts/devnet-logs.ps1`、`scripts/devnet-logs.sh`（日志路径按 T011/V-10 实测结果）
+- [x] T041 [US5] 编写 `tests/e2e/failure-classification.test.mjs`：注入端口占用（预期退出 11 + 端口号）、stamp 不一致（退出 12）、停网 verify（category rpc）等场景，断言每种输出归入 FR-030 正确类别（SC-011）
+- [x] T042 [US5] 编写 `tests/e2e/single-validator-down.test.mjs`：`devnet-node stop l1-3` 后转账仍确认（5 节点容忍 1 离线，R-05）、`devnet-status` 报 4/5 且退出 1、verify validator 项 fail[category: validator]；恢复节点后全部转 OK
+- [x] T043 [US5] 审查启动输出与全部节点日志的秘密泄露面：确认私钥/助记词仅出现在明确标记文件，必要时在 entrypoint/摘要处脱敏（FR-026，为 T044 扫描提供保证）
 
 **Checkpoint**: 全部 5 个故事独立可验
 

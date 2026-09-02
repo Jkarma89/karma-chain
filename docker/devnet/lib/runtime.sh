@@ -117,23 +117,31 @@ rt_start_proxy() {
   # ① 主 RPC 端点
   _rt_spawn_proxy 0.0.0.0 "${KARMACHAIN_PROXY_PORT}" "$(proto_first_validator_http_port)"
 
-  # ② 每节点直通（用于 /ext/health、/ext/info）
-  local ip port
-  ip="$(nodes_container_ip)"
-  for port in $(nodes_http_ports); do
-    _rt_spawn_proxy "${ip}" "${port}" "${port}"
-  done
-
   sleep 1
-  local pid dead=0
-  while read -r pid; do kill -0 "${pid}" 2>/dev/null || dead=$((dead + 1)); done < "${PROXY_PID_FILE}"
-  [ "${dead}" -eq 0 ] || { log "FAILED [category: configuration] ${dead} socat proxy process(es) did not start (see ${PROXY_LOG})"; return 1; }
+  local main_pid; main_pid="$(head -1 "${PROXY_PID_FILE}")"
+  kill -0 "${main_pid}" 2>/dev/null || { log "FAILED [category: configuration] the main RPC proxy on :${KARMACHAIN_PROXY_PORT} did not start (see ${PROXY_LOG})"; return 1; }
 
-  # 经主端点探测一次
+  # 经主端点探测一次 —— 这是 FR-008 承诺的端点，必须可用
   local want got; want="$(proto_chain_id_hex)"
   got="$(rt_rpc "http://127.0.0.1:${KARMACHAIN_PROXY_PORT}$(proto_rpc_path)" eth_chainId | jq -r '.result // empty')"
   [ "${got}" = "${want}" ] || { log "FAILED [category: rpc] proxy check returned '${got}' (want ${want})"; return 1; }
-  log "proxies up: :${KARMACHAIN_PROXY_PORT} (main) + $(nodes_count) per-node on ${ip}"
+
+  # ② 每节点直通（供 verify 容器做 /ext/health、/ext/info 检查）。
+  # 尽力而为：失败只影响 devnet-verify 的 node/validator 两项（会降级为 SKIP），不该让整个网络启动失败。
+  local ip port started=0 failed=0
+  ip="$(nodes_container_ip)"
+  if [ -z "${ip}" ]; then
+    log "WARNING could not determine the container IP — per-node proxies skipped; 'devnet-verify' will SKIP node/validator checks"
+  else
+    for port in $(nodes_http_ports); do
+      _rt_spawn_proxy "${ip}" "${port}" "${port}"
+      local pid; pid="$(tail -1 "${PROXY_PID_FILE}")"
+      sleep 0.2
+      if kill -0 "${pid}" 2>/dev/null; then started=$((started + 1)); else failed=$((failed + 1)); fi
+    done
+    [ "${failed}" -eq 0 ] || log "WARNING ${failed} per-node proxy/proxies failed to bind on ${ip} (see ${PROXY_LOG}) — node-level checks will be incomplete"
+  fi
+  log "proxies up: :${KARMACHAIN_PROXY_PORT} (main) + ${started} per-node${ip:+ on ${ip}}"
 }
 
 rt_stop_proxy() {
