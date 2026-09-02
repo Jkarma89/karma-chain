@@ -29,8 +29,9 @@ export const RPC_CHAIN_VM_PROTOCOL = {
   subnetEvm: { 'v0.7.9': 43, 'v0.8.0': 44 },
 };
 
-// 容器内被其他组件占用的端口：Primary Network 节点（CLI 默认 9650/9651 起）与对外 RPC 代理 8545。
-const CONTAINER_RESERVED_PORTS = new Set([8545, 9650, 9651, 9652, 9653]);
+// 容器内被其他组件占用的端口：Avalanche CLI 主网节点固定区间（9650-9653，CLI 常量，非本项目参数）。
+// 对外 RPC 代理端口来自 protocol.json，运行时并入检查（见 validateConstraints）。
+const CLI_PRIMARY_NODE_PORTS = [9650, 9651, 9652, 9653];
 
 let ajvInstance;
 function getAjv() {
@@ -100,7 +101,8 @@ export function validateConstraints(p) {
   const ports = nodes.flatMap((n) => [n.httpPort, n.stakingPort]);
   const dupPorts = ports.filter((x, i) => ports.indexOf(x) !== i);
   if (dupPorts.length) fail(`validator ports must be unique; duplicates: ${[...new Set(dupPorts)].join(', ')}`);
-  ports.filter((x) => CONTAINER_RESERVED_PORTS.has(x)).forEach((x) => fail(`validator port ${x} collides with a reserved container port (${[...CONTAINER_RESERVED_PORTS].join(', ')})`));
+  const reserved = new Set([...CLI_PRIMARY_NODE_PORTS, p.endpoints.hostRpcPort]);
+  ports.filter((x) => reserved.has(x)).forEach((x) => fail(`validator port ${x} collides with a reserved container port (${[...reserved].join(', ')})`));
 
   // --- 开发账户 ---
   const labels = p.devAccounts.map((a) => a.label);

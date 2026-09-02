@@ -18,7 +18,7 @@ AV_GLOBAL_FLAGS=(--skip-update-check --log-level "${AVALANCHE_LOG_LEVEL:-ERROR}"
 av() { avalanche "$@" "${AV_GLOBAL_FLAGS[@]}"; }
 
 # ---------------------------------------------------------------------------
-# 本地 Primary Network（P/C/X 链，Network ID 1337）—— research R-04
+# 本地 Primary Network（P/C/X 链，Network ID 见 protocol.json avalanche.networkId）—— research R-04
 # ---------------------------------------------------------------------------
 av_network_start() {
   # --avalanchego-version 固定到 protocol.json 声明的版本，二进制已由 binaries.sh 预置进缓存（V-2）

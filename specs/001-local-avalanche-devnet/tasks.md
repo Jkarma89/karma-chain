@@ -94,10 +94,10 @@
 
 **Independent Test**: quickstart 场景 E：`npm test` 漂移/硬编码测试通过；改 chainId 演练走通"漂移失败→重渲→拒启→reset→新链"
 
-- [ ] T028 [P] [US3] 实现 `tools/protocol/render-docs.mjs` → 生成 `docs/protocol-parameters.md`（每参数：值 + 取值理由列，理由文案维护在 protocol.json 旁注文件 `blockchain/protocol-rationale.json` 或脚本内映射；文件头 GENERATED 标记；覆盖宪法第十四条参数清单）
-- [ ] T029 [P] [US3] 实现 `tools/protocol/render-compose-env.mjs` → `.devnet/compose.env`（hostRpcPort 等），`docker-compose.yml` 与 `scripts/*` 改为读取该文件而非内联默认值
-- [ ] T030 [US3] 编写 `tests/unit/docs-drift.test.mjs`（render-docs 输出与提交文件一致）与 `tests/unit/no-hardcode.test.mjs`（对仓库 git grep `20189|20188|1337|KARMA`，白名单仅 protocol.json、生成物、specs/、docs 引用处，其余命中即失败，SC-007）
-- [ ] T031 [US3] 编写 `tests/e2e/param-change.test.mjs` 自动化 quickstart 场景 E 演练：临时改 chainId→漂移测试失败→`npm run protocol:render`→start 退出 12→reset→start 后 `eth_chainId` 为新值→恢复原配置（验证 FR-018/019/021 闭环）
+- [x] T028 [P] [US3] 实现 `tools/protocol/render-docs.mjs` → 生成 `docs/protocol-parameters.md`（每参数：值 + 取值理由列，理由文案维护在 protocol.json 旁注文件 `blockchain/protocol-rationale.json` 或脚本内映射；文件头 GENERATED 标记；覆盖宪法第十四条参数清单）
+- [x] T029 [P] [US3] 实现 `tools/protocol/render-compose-env.mjs` → `.devnet/compose.env`（hostRpcPort 等），`docker-compose.yml` 与 `scripts/*` 改为读取该文件而非内联默认值
+- [x] T030 [US3] 编写 `tests/unit/docs-drift.test.mjs`（render-docs 输出与提交文件一致）与 `tests/unit/no-hardcode.test.mjs`（对仓库 git grep `20189|20188|1337|KARMA`，白名单仅 protocol.json、生成物、specs/、docs 引用处，其余命中即失败，SC-007）
+- [x] T031 [US3] 编写 `tests/e2e/param-change.test.mjs` 自动化 quickstart 场景 E 演练：临时改 chainId→漂移测试失败→`npm run protocol:render`→start 退出 12→reset→start 后 `eth_chainId` 为新值→恢复原配置（验证 FR-018/019/021 闭环）
 
 **Checkpoint**: 参数单点被测试强制，US3 可独立审查验收
 

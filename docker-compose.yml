@@ -20,12 +20,14 @@ services:
     volumes:
       - karmachain-devnet-data:/root/.avalanche-cli
       - ./blockchain:/workspace/blockchain:ro
+    # 变量由 scripts/* 从 blockchain/compose.env（protocol.json 生成）与用户 .env 导出；
+    # 此处的 :- 兜底仅为裸 `docker compose up` 保底，其值由 tests/unit/docs-drift.test.mjs 与 protocol.json 锁定同步
     ports:
-      - "${KARMACHAIN_RPC_PORT:-8545}:8545"
+      - "${KARMACHAIN_RPC_PORT:-8545}:${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"
     environment:
       KARMACHAIN_STARTUP_TIMEOUT: "${KARMACHAIN_STARTUP_TIMEOUT:-300}"
-      KARMACHAIN_PROXY_PORT: "8545"                                 # 容器内监听端口（与上面的映射右侧一致）
-      KARMACHAIN_HOST_RPC_PORT: "${KARMACHAIN_RPC_PORT:-8545}"      # 仅用于 READY 摘要显示宿主实际端口
+      KARMACHAIN_PROXY_PORT: "${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"   # 容器内监听端口（与映射右侧一致）
+      KARMACHAIN_HOST_RPC_PORT: "${KARMACHAIN_RPC_PORT:-8545}"          # 仅用于 READY 摘要显示宿主实际端口
     # Avalanche CLI 依赖容器内 IPv6 回环（research V-1；若不足则见 docs/devnet.md 的 daemon.json 方案）
     sysctls:
       - net.ipv6.conf.all.disable_ipv6=0
@@ -50,7 +52,7 @@ services:
     environment:
       # 验证器自行读取 blockchain/protocol.json 得到路径；这里只告知 compose 内网的主机名与容器端口
       KARMACHAIN_RPC_HOST: devnet
-      KARMACHAIN_RPC_PORT: "8545"
+      KARMACHAIN_RPC_PORT: "${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"
     command: ["npm", "run", "verify"]
 
 volumes:

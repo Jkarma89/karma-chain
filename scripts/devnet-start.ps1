@@ -3,8 +3,20 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $PSScriptRoot '..')
 
-$timeout = if ($env:KARMACHAIN_STARTUP_TIMEOUT) { [int]$env:KARMACHAIN_STARTUP_TIMEOUT } else { 300 }
-$hostPort = if ($env:KARMACHAIN_RPC_PORT) { $env:KARMACHAIN_RPC_PORT } else { '8545' }
+# 默认值优先级：shell 环境 > .env（用户覆盖） > blockchain/compose.env（由 protocol.json 生成，npm run protocol:render）
+function Import-EnvDefaults([string]$path) {
+  if (-not (Test-Path $path)) { return }
+  foreach ($line in Get-Content $path) {
+    if ($line -match '^\s*($|#)') { continue }
+    $k, $v = $line -split '=', 2
+    if (-not (Get-Item "env:$k" -ErrorAction SilentlyContinue)) { Set-Item "env:$k" $v }
+  }
+}
+Import-EnvDefaults '.env'
+Import-EnvDefaults 'blockchain/compose.env'
+if (-not $env:KARMACHAIN_RPC_PORT) { Write-Error "blockchain/compose.env missing or incomplete — run 'npm run protocol:render'"; exit 10 }
+$timeout = [int]$env:KARMACHAIN_STARTUP_TIMEOUT
+$hostPort = $env:KARMACHAIN_RPC_PORT
 $readyMark = 'KarmaChain local devnet is READY'
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {

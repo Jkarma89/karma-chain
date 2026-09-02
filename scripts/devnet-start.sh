@@ -4,7 +4,20 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-TIMEOUT="${KARMACHAIN_STARTUP_TIMEOUT:-300}"
+# 默认值优先级：shell 环境 > .env（用户覆盖） > blockchain/compose.env（由 protocol.json 生成）。
+# 仅在变量尚未设置时赋值，因此不会覆盖用户在 shell 或 .env 中的显式设置。
+load_env_defaults() {
+  [ -f "$1" ] || return 0
+  while IFS='=' read -r k v; do
+    case "$k" in ''|\#*) continue ;; esac
+    eval "current=\${$k:-}"
+    if [ -z "$current" ]; then eval "$k=\$v"; export "$k"; fi
+  done < "$1"
+}
+load_env_defaults ./.env
+load_env_defaults ./blockchain/compose.env
+: "${KARMACHAIN_RPC_PORT:?blockchain/compose.env missing or incomplete — run 'npm run protocol:render'}"
+TIMEOUT="${KARMACHAIN_STARTUP_TIMEOUT}"
 READY_MARK="KarmaChain local devnet is READY"
 
 command -v docker >/dev/null 2>&1 || { echo "devnet-start: docker not found — install Docker Desktop (Windows: WSL2 backend) or Docker Engine + Compose v2" >&2; exit 10; }
@@ -19,7 +32,7 @@ logs() { docker compose logs --no-log-prefix --since "$since" devnet 2>/dev/null
 if ! out="$(docker compose up -d devnet 2>&1)"; then
   echo "$out" >&2
   if echo "$out" | grep -qiE "port is already allocated|address already in use|bind: "; then
-    echo "devnet-start: FAILED [category: configuration] host port ${KARMACHAIN_RPC_PORT:-8545} is already in use — stop the other process or set KARMACHAIN_RPC_PORT in .env" >&2
+    echo "devnet-start: FAILED [category: configuration] host port ${KARMACHAIN_RPC_PORT} is already in use — stop the other process or set KARMACHAIN_RPC_PORT in .env" >&2
     exit 11
   fi
   echo "devnet-start: FAILED [category: node] docker compose up failed" >&2

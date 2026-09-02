@@ -3,7 +3,7 @@
 //
 // 解析优先级：
 //   1. KARMACHAIN_RPC_URL                     （完整 URL，显式覆盖）
-//   2. KARMACHAIN_RPC_HOST + KARMACHAIN_RPC_PORT （compose 内网：devnet:8545）
+//   2. KARMACHAIN_RPC_HOST + KARMACHAIN_RPC_PORT （compose 内网：devnet + 容器端口）
 //   3. 127.0.0.1 + protocol.endpoints.hostRpcPort（宿主机默认）
 
 import { lookup } from 'node:dns/promises';

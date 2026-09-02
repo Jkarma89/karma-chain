@@ -4,7 +4,7 @@
 : "${KARMACHAIN_LIB:=/opt/karmachain/lib}"
 source "${KARMACHAIN_LIB}/avalanche.sh"
 
-: "${KARMACHAIN_PROXY_PORT:=8545}"          # 容器内对外监听端口（compose 映射到宿主 KARMACHAIN_RPC_PORT）
+: "${KARMACHAIN_PROXY_PORT:=$(proto_host_rpc_port)}"   # 容器内对外监听端口；默认取 protocol.json（compose 会显式传入，与映射右侧一致）
 : "${KARMACHAIN_STARTUP_TIMEOUT:=300}"      # 秒（SC-001）
 PROXY_PID_FILE="/run/karmachain-proxy.pid"
 GENESIS_FILE="${GENESIS_FILE:-/workspace/blockchain/genesis/karmachain.genesis.json}"

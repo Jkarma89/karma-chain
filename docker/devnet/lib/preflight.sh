@@ -56,7 +56,7 @@ preflight_memory() {
 # 端口检查：网络未运行时，容器内不应有人占用我们要用的端口
 preflight_ports() {
   local ports=() p busy=()
-  ports+=("${KARMACHAIN_PROXY_PORT:-8545}" 9650 9651 9652 9653)
+  ports+=("${KARMACHAIN_PROXY_PORT:-$(proto_host_rpc_port)}" 9650 9651 9652 9653)
   for p in $(proto_validator_http_ports | tr ',' ' ') $(proto_validator_staking_ports | tr ',' ' '); do ports+=("$p"); done
   for p in "${ports[@]}"; do
     if ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "[:.]${p}$"; then busy+=("$p"); fi
