@@ -67,9 +67,11 @@ describe('protocol.json → genesis mapping', () => {
     }
   });
 
-  test('sum of dev balances equals 6,000,000 KARMA', () => {
+  test('sum of dev balances in genesis equals the initial supply declared by protocol.json', () => {
     const total = protocol.devAccounts.reduce((s, a) => s + BigInt(genesis.alloc[noHex(a.address)].balance), 0n);
-    assert.equal(total, 6_000_000n * 10n ** 18n);
+    const declared = protocol.devAccounts.reduce((s, a) => s + BigInt(a.balanceWei), 0n);
+    assert.equal(total, declared);
+    assert.equal(total, 39_500_000n * 10n ** 18n, 'initial supply changed — this is a protocol change (constitution Art. 15)');
   });
 
   test('all hard forks active from block 0', () => {

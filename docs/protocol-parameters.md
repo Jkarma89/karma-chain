@@ -1,7 +1,7 @@
 <!-- GENERATED FROM blockchain/protocol.json + blockchain/protocol-rationale.json by tools/protocol/render-docs.mjs — DO NOT EDIT.
      修改参数：编辑 protocol.json（走宪法第十五条流程）→ npm run protocol:render → 提交。 -->
 
-# KarmaChain 协议参数（dev · configVersion 1.0.0）
+# KarmaChain 协议参数（dev · configVersion 1.1.0）
 
 宪法第十四条要求记录的全部区块链参数及其取值理由。唯一权威定义：[`blockchain/protocol.json`](../blockchain/protocol.json)。
 
@@ -14,7 +14,7 @@
 | `chain.blockchainName` | "karmachain" | karmachain：Avalanche CLI 的链名，同时成为稳定的 RPC 别名路径 /ext/bc/karmachain/rpc（避免依赖随机的 BlockchainID）。 |
 | `avalanche.networkId` | 1337 | 1337：Avalanche CLI 本地网络的固定 Network ID（区别于主网 1 / Fuji 5，防误连）。取值由 CLI 决定，此处记录并在验证中核对。 |
 | `environment` | "dev" | 本文件只描述本地开发网络；生产/Staging 参数将另建文件与目录，禁止从 dev 复制（宪法第四条）。 |
-| `configVersion` | "1.0.0" | 协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。 |
+| `configVersion` | "1.1.0" | 协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。 |
 
 ### Avalanche 组件版本（锁定）
 
@@ -73,13 +73,13 @@
 
 | 参数 | 值 | 取值理由 |
 |---|---|---|
-| `devAccounts` | 共 6 个，初始供应 6000000 KARMA | ewoq + Foundry Anvil 默认账户 #0-#4，各 1,000,000 KARMA（合计 6,000,000 初始供应）：让 Foundry/Hardhat/MetaMask 零配置可用；密钥公开，仅限本地（宪法第四条 v1.1.0 例外条款）。 |
+| `devAccounts` | 共 6 个，初始供应 39500000 KARMA | ewoq + Foundry Anvil 默认账户 #0-#4，使用生态公开测试密钥，让 Foundry/Hardhat/MetaMask 零配置可用；密钥公开，仅限本地（宪法第四条 v1.1.0 例外条款）。分配（configVersion 1.1.0，2026-09-02 用户裁定）：ewoq 与 anvil-0 各 1,000,000（ewoq 只需支付 PoA 初始化与少量 P-Chain 手续费；anvil-0 作为常规小额账户）；anvil-1/3/4 各 10,000,000、anvil-2 7,500,000，为大额转账、合约资金池、gas 压测等场景提供充足余额，且 anvil-2 取不同数值便于在测试中区分账户。合计初始供应 39,500,000 KARMA —— 开发网络供应量不代表主网代币经济学，主网参数将另行规格化。 |
 | `ewoq` | 0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC（1000000 KARMA，avalanche-ewoq） | ↑ |
 | `anvil-0` | 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266（1000000 KARMA，foundry-anvil-default-#0） | ↑ |
-| `anvil-1` | 0x70997970C51812dc3A010C7d01b50e0d17dc79C8（1000000 KARMA，foundry-anvil-default-#1） | ↑ |
-| `anvil-2` | 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC（1000000 KARMA，foundry-anvil-default-#2） | ↑ |
-| `anvil-3` | 0x90F79bf6EB2c4f870365E785982E1f101E93b906（1000000 KARMA，foundry-anvil-default-#3） | ↑ |
-| `anvil-4` | 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65（1000000 KARMA，foundry-anvil-default-#4） | ↑ |
+| `anvil-1` | 0x70997970C51812dc3A010C7d01b50e0d17dc79C8（10000000 KARMA，foundry-anvil-default-#1） | ↑ |
+| `anvil-2` | 0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC（7500000 KARMA，foundry-anvil-default-#2） | ↑ |
+| `anvil-3` | 0x90F79bf6EB2c4f870365E785982E1f101E93b906（10000000 KARMA，foundry-anvil-default-#3） | ↑ |
+| `anvil-4` | 0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65（10000000 KARMA，foundry-anvil-default-#4） | ↑ |
 
 ### 端点
 
@@ -95,9 +95,9 @@
 | Chain ID（十六进制） | `0x4edd` |
 | 宿主 RPC URL | `http://127.0.0.1:8545/ext/bc/karmachain/rpc` |
 | 宿主 WS URL | `ws://127.0.0.1:8545/ext/bc/karmachain/ws` |
-| 初始供应 | 6000000 KARMA（6000000000000000000000000 wei） |
+| 初始供应 | 39500000 KARMA（39500000000000000000000000 wei） |
 | 节点总数 | 7（2 主网 + 5 L1） |
-| 创世区块哈希（实测基准） | `0xcd807715b50b5eaba52dd332cce379da66704b443b1439e881e11751b88d3efa` |
+| 创世区块哈希（实测基准） | `0x19cfde1f02e585020cdae83071bac33c7d81e411cacf7f306b82ceabe98892ed` |
 
 ### 创世配置
 

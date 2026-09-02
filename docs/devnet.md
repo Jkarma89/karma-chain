@@ -96,15 +96,15 @@ cast block latest --rpc-url $RPC --field number
 
 目标：证明两台机器（或两位开发者）从同一提交启动得到**同一条链**。
 
-**基准（环境 A，2026-09-01）**
+**基准（环境 A，configVersion 1.1.0，2026-09-02）**
 
 | 项 | 值 |
 |---|---|
-| 提交 | 见 `git log`（创世文件 sha256 `19723726a78f6953e82f8eed74b9891f5534f0176c3aed8103b72196f1ea34ef`） |
-| 创世区块哈希 | `0xcd807715b50b5eaba52dd332cce379da66704b443b1439e881e11751b88d3efa`（亦记录于 `blockchain/genesis/karmachain.genesis.hash`） |
+| 提交 | 见 `git log`（创世文件 sha256 `a265d8d3f4eb…`，完整值 `sha256sum blockchain/genesis/karmachain.genesis.json`） |
+| 创世区块哈希 | `0x19cfde1f02e585020cdae83071bac33c7d81e411cacf7f306b82ceabe98892ed`（亦记录于 `blockchain/genesis/karmachain.genesis.hash`） |
 | Chain ID / Network ID | 20189 / 1337 |
 | 环境 | Windows 10 Pro 19045，Docker Desktop 29.7.2，Compose v5.4.0，amd64 |
-| 首次启动耗时 | 78–79 s |
+| 首次启动耗时 | 78–80 s |
 
 **环境 B 操作步骤**
 
@@ -123,7 +123,7 @@ curl -s -X POST -H 'content-type: application/json' \
 
 三项全等（创世哈希、链 ID、区块 0 余额）即通过。把环境 B 的结果（OS / Docker 版本 / 哈希 / 耗时）追加到上表。
 
-**实测记录（SC-002 ✅ 通过）**
+**实测记录（SC-002 ✅ 通过，configVersion 1.0.0 时执行）**
 
 | 项 | 环境 A | 环境 B |
 |---|---|---|
@@ -136,9 +136,22 @@ curl -s -X POST -H 'content-type: application/json' \
 
 两台机器、两套 Docker、独立构建的镜像得到同一条链——可复现性承诺（宪法第七条 / SC-002）成立。
 
+> ⚠️ 上表在 **configVersion 1.0.0** 下取得。2026-09-02 的创世分配变更（1.1.0）使基准哈希变为 `0x19cfde1f…92ed`。环境 B 若要继续与环境 A 比对，需 `git pull` 到最新提交并执行 `scripts/devnet-reset && scripts/devnet-start`（旧链数据会被 stamp 守卫拒绝启动，退出 12）。跨环境结论本身不受影响——机制已验证过一次，换参数后重跑即可。
+
 ## 4. 开发账户
 
-见 [`blockchain/accounts/dev-accounts.json`](../blockchain/accounts/dev-accounts.json)。6 个账户在创世各有 1,000,000 KARMA：`ewoq`（Avalanche 官方测试账户，被 CLI 用作 PoA 管理员并支付初始化 gas，因此启动后余额略低于创世值）与 `anvil-0..4`（Foundry/Hardhat 默认账户，助记词 `test test … junk`）。
+私钥见 [`blockchain/accounts/dev-accounts.json`](../blockchain/accounts/dev-accounts.json)，创世分配见 [`protocol-parameters.md`](protocol-parameters.md)。`anvil-*` 为 Foundry/Hardhat 默认账户（助记词 `test test … junk`），`ewoq` 是 Avalanche 官方测试账户，被 CLI 用作 PoA 管理员并支付初始化 gas，因此启动后余额略低于创世值。
+
+| 账户 | 创世余额（KARMA） | 典型用途 |
+|---|---|---|
+| `ewoq` | 1,000,000 | PoA 管理员 / P-Chain 手续费（勿用于业务测试） |
+| `anvil-0` | 1,000,000 | 常规小额测试 |
+| `anvil-1` | 10,000,000 | 大额转账、资金池 |
+| `anvil-2` | 7,500,000 | 大额转账（取不同数值便于区分账户） |
+| `anvil-3` | 10,000,000 | 大额转账、gas 压测 |
+| `anvil-4` | 10,000,000 | 大额转账、gas 压测 |
+
+初始供应合计 **39,500,000 KARMA**（configVersion 1.1.0）。开发网络供应量不代表主网代币经济学。
 
 ## 5. 已知行为
 

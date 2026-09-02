@@ -61,9 +61,9 @@ describe('committed protocol.json', () => {
     assert.equal(d.rpcUrl, 'http://127.0.0.1:8545/ext/bc/karmachain/rpc');
     assert.equal(d.wsUrl, 'ws://127.0.0.1:8545/ext/bc/karmachain/ws');
     assert.equal(d.totalNodeCount, 7);
-    // 6 accounts × 1,000,000 KARMA
-    assert.equal(d.initialSupplyTokens, 6_000_000n);
-    assert.equal(BigInt(good.devAccounts[0].balanceWei), 10n ** 24n);
+    // ewoq 1M + anvil-0 1M + anvil-1 10M + anvil-2 7.5M + anvil-3 10M + anvil-4 10M（configVersion 1.1.0）
+    assert.equal(d.initialSupplyTokens, 39_500_000n);
+    assert.equal(BigInt(good.devAccounts[0].balanceWei), 10n ** 24n);   // ewoq = 1,000,000 KARMA
   });
 
   test('version compatibility table agrees with the chosen versions', () => {
