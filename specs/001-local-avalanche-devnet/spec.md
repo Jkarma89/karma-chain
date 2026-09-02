@@ -4,7 +4,7 @@
 
 **Created**: 2026-08-31
 
-**Status**: Draft
+**Status**: Completed（2026-09-02 验收通过，见 acceptance.md）
 
 **Input**: User description: "搭建本地可复现的 Avalanche L1 开发网络"
 

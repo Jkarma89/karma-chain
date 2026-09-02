@@ -25,6 +25,22 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 docker info *> $null; if ($LASTEXITCODE -ne 0) { Write-Error 'devnet-start: Docker daemon is not running'; exit 10 }
 docker compose version *> $null; if ($LASTEXITCODE -ne 0) { Write-Error "devnet-start: 'docker compose' (v2) not available"; exit 10 }
 
+# 幂等快路径：容器已在运行且 RPC 已应答时，`docker compose up -d` 是空操作，entrypoint 不会再打印
+# READY 标记，若直接进入等待循环就会一直等到超时。此时回放上一次的摘要并退出 0（FR-006）。
+$state = docker inspect --format '{{.State.Status}}' karmachain-devnet 2>$null
+if ($state -eq 'running') {
+  $rpcPath = (Get-Content 'blockchain/protocol.json' -Raw | ConvertFrom-Json).endpoints.rpcPath
+  $body = '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
+  try {
+    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$hostPort$rpcPath" -ContentType 'application/json' -Body $body -TimeoutSec 5 | Out-Null
+    $all = (docker compose logs --no-log-prefix devnet 2>$null) -join "`n"
+    $idx = $all.LastIndexOf($readyMark)
+    if ($idx -ge 0) { Write-Host $all.Substring($idx) }
+    Write-Host 'devnet-start: already running and answering RPC — nothing to do (summary above is from the last start)'
+    exit 0
+  } catch { }   # RPC 未应答 -> 走正常启动流程
+}
+
 # 只看本次启动之后的日志（容器重启后 `compose logs` 仍含上一轮的 READY 标记）
 $since = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
 function Get-DevnetLogs { (docker compose logs --no-log-prefix --since $since devnet 2>$null) -join "`n" }

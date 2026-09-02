@@ -24,6 +24,23 @@ command -v docker >/dev/null 2>&1 || { echo "devnet-start: docker not found — 
 docker info >/dev/null 2>&1 || { echo "devnet-start: Docker daemon is not running" >&2; exit 10; }
 docker compose version >/dev/null 2>&1 || { echo "devnet-start: 'docker compose' (v2) not available" >&2; exit 10; }
 
+# 幂等快路径：容器已在运行且 RPC 已应答时，`docker compose up -d` 是空操作，entrypoint 不会再打印
+# READY 标记，若直接进入等待循环就会一直等到超时。此时回放上一次的摘要并退出 0（FR-006）。
+rpc_answers() {
+  port="${KARMACHAIN_RPC_PORT}"
+  path="$(sed -n 's/.*"rpcPath"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' ./blockchain/protocol.json | head -1)"
+  [ -n "$path" ] || path=/
+  curl -s -m 5 -o /dev/null -X POST -H 'content-type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+    "http://127.0.0.1:${port}${path}" 2>/dev/null
+}
+if [ "$(docker inspect --format '{{.State.Status}}' karmachain-devnet 2>/dev/null || echo missing)" = "running" ] && rpc_answers; then
+  all_logs="$(docker compose logs --no-log-prefix devnet 2>/dev/null)"
+  echo "$all_logs" | sed -n "/$READY_MARK/,\$p" | tail -30
+  echo "devnet-start: already running and answering RPC — nothing to do (summary above is from the last start)"
+  exit 0
+fi
+
 # 只看本次启动之后的日志（容器重启后 `compose logs` 仍含上一轮的 READY 标记）
 since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 logs() { docker compose logs --no-log-prefix --since "$since" devnet 2>/dev/null; }

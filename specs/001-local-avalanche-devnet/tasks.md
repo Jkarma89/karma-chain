@@ -146,7 +146,7 @@
 - [x] T046 [P] 完成 `docs/devnet.md` 开发者手册：前置依赖、六命令、工具连接（MetaMask/cast/viem）、开发账户表、无交易不出块说明、按 FR-030 九类组织的排障章节、跨机部署不在范围声明（FR-033）
 - [x] T047 [P] 撰写 4 份 ADR：`docs/adr/0001-avalanche-l1-and-evm.md`、`0002-avalanche-cli-toolchain-and-versions.md`（含维护模式风险与迁移路径）、`0003-chain-identity-and-dev-security-boundary.md`（20189/20188、公开密钥安全边界、prod 分离）、`0004-five-validator-local-topology.md`（容错结论），格式满足宪法第十四条五要素（FR-034）
 - [x] T048 更新 `README.md`（指向 docs/devnet.md 与三步上手）；把 research.md 验证清单 V-1~V-10 的最终实测结论回填成"已确认/已回退"状态
-- [ ] T049 端到端收口：完整执行 quickstart 场景 A–G，记录 SC-001/005/006 实测数值（不达标则回到相应任务修正或按 V-6 回退流程向用户复议）；逐项核对宪法第十七条 DoD 8 项与 spec 全部 FR/SC，结果记入 PR 描述
+- [x] T049 端到端收口：完整执行 quickstart 场景 A–G，记录 SC-001/005/006 实测数值（不达标则回到相应任务修正或按 V-6 回退流程向用户复议）；逐项核对宪法第十七条 DoD 8 项与 spec 全部 FR/SC，结果记入 PR 描述
 
 ---
 
