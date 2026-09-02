@@ -165,7 +165,25 @@ curl -s -X POST -H 'content-type: application/json' \
 |---|---|---|
 | configuration | `PREFLIGHT FAILED … ports already in use`（退出 11） | 另一套 devnet 仍在容器内运行；`docker compose down` |
 | configuration | `host port 8545 is already in use`（退出 11） | 停掉占用者，或在 `.env` 设置 `KARMACHAIN_RPC_PORT` |
+| configuration | `existing chain data does not match…`（退出 12） | 协议参数变了，链数据是旧的；`scripts/devnet-reset` 后再启动 |
 | genesis | `genesis chainId != protocol.json`（退出 10） | `npm run protocol:render` 后重置 |
 | rpc | 403 `invalid host specified` | 见 §3 Host 头限制 |
+
+### 客户端缓存：reset 之后 MetaMask 显示旧余额 / nonce 报错
+
+**每次 `scripts/devnet-reset` 之后都要做一次。** 重置换了创世但 Chain ID 不变，MetaMask 按 Chain ID 缓存余额、nonce 与交易历史，无法察觉底层链已被替换，因此会继续显示旧数据；更麻烦的是缓存的 nonce 比新链的真实值大，直接发交易会失败或卡在待处理。
+
+1. 切到别的网络再切回 `KarmaChain Local` —— 强制重新拉取余额；
+2. **设置 → 高级 → 清除活动标签数据** —— 清掉脏 nonce 与旧交易记录（不会删除账户或私钥）；
+3. 仍不生效：锁定 MetaMask 再解锁；
+4. 最后手段：删除该网络后按 §3.3 重新添加（私钥无需重新导入）。
+
+同类问题也会出现在其他缓存 nonce 的客户端上；`cast` / viem 每次都现查 nonce，不受影响。用 RPC 确认链上真实值：
+
+```bash
+curl -s -X POST -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_getBalance","params":["0x70997970C51812dc3A010C7d01b50e0d17dc79C8","latest"]}' \
+  http://127.0.0.1:8545/ext/bc/karmachain/rpc
+```
 
 （其余章节：跨环境一致性核对 / 状态与日志 / 参数说明 —— 后续阶段补全）
