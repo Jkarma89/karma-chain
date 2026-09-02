@@ -1,6 +1,18 @@
-# KarmaChain 本地开发网络 —— 开发者手册（草稿，随功能 001 各阶段补全）
+# KarmaChain 本地开发网络 —— 开发者手册
 
-> 本文档中的链参数（Chain ID、端口、代币…）以 [`blockchain/protocol.json`](../blockchain/protocol.json) 为唯一权威；如有出入以该文件为准并修正本文。
+> 本文档中的链参数（Chain ID、端口、代币…）以 [`blockchain/protocol.json`](../blockchain/protocol.json) 为唯一权威；
+> 逐参数取值与理由见生成的 [`protocol-parameters.md`](protocol-parameters.md)；架构决策见 [`adr/`](adr/)。
+
+**三步上手**
+
+```bash
+git clone <repo> && cd karma-chain
+scripts/devnet-start.sh      # Windows: scripts\devnet-start.ps1（首次约 80 秒，含镜像构建约 5 分钟）
+scripts/devnet-verify.sh     # 13 项自动化检查，应输出 "KarmaChain is READY"
+```
+
+得到：Chain ID **20189** 的 EVM 链，RPC `http://127.0.0.1:8545/ext/bc/karmachain/rpc`，
+6 个预置账户（共 39,500,000 KARMA），5 个 PoA 验证者 + 2 个主网节点。
 
 ## 1. 前置条件
 
@@ -225,6 +237,66 @@ scripts/devnet-node.sh resume l1-3    # SIGCONT
 
 上述每一类都有对应的自动化回归（`tests/e2e/failure-classification.test.mjs`，6/6 通过，SC-011），
 因此"错误信息可操作、类别正确"这件事是被测试守住的，而不是靠人工检查。
+
+### 其他常见问题
+
+| 现象 | 处理 |
+|---|---|
+| `PREFLIGHT FAILED … missing tools in image` | 镜像过旧：`docker compose build devnet` |
+| `image binary versions do not match protocol.json` | 改过 `protocol.json` 的版本字段但没重建镜像：`docker compose build devnet` |
+| 非正常终止（断电 / 强杀容器）后启动失败，提示"snapshot is probably incomplete" | 快照未保存完整：`scripts/devnet-reset` 后重新启动 |
+| 长时间 `pause` 后节点无法恢复（`grpc: the client connection is closing`） | `scripts/devnet-node.sh stop <node>` 再 `start <node>` |
+| 磁盘空间不足 | 节点日志会报错；清理 Docker（`docker system prune`）或扩容后重启 |
+
+## 7. 测试与验证
+
+| 命令 | 内容 | 耗时 |
+|---|---|---|
+| `npm test` | 单元测试（协议参数约束、创世漂移、账户派生、报告 schema、硬编码扫描） | ~1 秒 |
+| `npm run test:integration` | 集成测试（对运行中的链：链身份、创世余额、转账回执、按需出块） | ~15 秒 |
+| `npm run test:secrets` | 秘密扫描（仓库 + 运行时日志） | ~4 秒 |
+| `scripts/devnet-verify.sh` | 13 项网络验证 | ~22 秒 |
+| `node --test tests/e2e/<name>.test.mjs` | 端到端（见下） | 分钟级 |
+
+不带宿主 Node 时，前三项都可以在容器内跑：`docker compose run --rm verify npm test`。
+
+**端到端测试**（长时，按需运行）
+
+| 文件 | 覆盖 | 备注 |
+|---|---|---|
+| `reset-recreate.test.mjs` | 重置 → 启动 ×10，创世哈希全等（SC-003） | ~15 分钟；`KARMACHAIN_RESET_CYCLES=2` 可快速冒烟 |
+| `param-change.test.mjs` | 改 Chain ID 的完整闭环（漂移 → 重渲 → 拒启 12 → 重置 → 新链） | ~85 秒 |
+| `single-validator-down.test.mjs` | 停 1 个验证者后网络仍出块（R-05） | ~2 分钟 |
+| `failure-classification.test.mjs` | 五类故障注入与分类（SC-011） | 需 `KARMACHAIN_ALLOW_DISRUPTIVE=1` |
+| `verify-negative.test.mjs` | 停网后验证器失败且分类正确 | 需 `KARMACHAIN_ALLOW_DISRUPTIVE=1` |
+| `secret-scan.test.mjs` | 私钥/助记词/日志泄露 | 见上 |
+| `vm-alloc-drift.test.mjs` | CLI 注入的 ValidatorManager 合约是否漂移 | ~2 秒 |
+
+## 8. 修改协议参数（宪法第十五条流程）
+
+任何共识相关参数（Chain ID、代币、Gas、验证者数量、创世分配…）都只能这样改：
+
+```bash
+# 1. 编辑唯一事实来源
+vi blockchain/protocol.json          # 同时递增 configVersion
+vi blockchain/protocol-rationale.json  # 补充取值理由（缺理由会导致文档生成失败）
+
+# 2. 重新生成全部派生物（创世、参数文档、compose.env）
+npm run protocol:render
+
+# 3. 单元测试会指出还有什么没同步
+npm test
+
+# 4. 重置并重新启动（旧链数据会被 stamp 守卫拒绝，退出 12）
+scripts/devnet-reset.sh && scripts/devnet-start.sh
+
+# 5. 若创世改变，更新哈希基准并重跑验证
+#    新哈希见 READY 摘要的 "Genesis hash" 行 → 写入 blockchain/genesis/karmachain.genesis.hash
+scripts/devnet-verify.sh
+```
+
+**不要**手改 `blockchain/genesis/karmachain.genesis.json`、`docs/protocol-parameters.md`、
+`blockchain/compose.env` —— 它们都是生成物，漂移测试会拦下手改。
 
 ### 客户端缓存：reset 之后 MetaMask 显示旧余额 / nonce 报错
 

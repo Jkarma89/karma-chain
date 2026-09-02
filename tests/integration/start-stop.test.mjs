@@ -80,11 +80,23 @@ describe(`US1 — live devnet at ${rpcUrl}`, () => {
   });
 
   test('block height advances when transactions are sent (on-demand block production)', async () => {
-    const h0 = await publicClient.getBlockNumber();
+    // 高度取自回执而不是 eth_blockNumber：回执可见后，节点的 latest 指针仍可能短暂返回旧值，
+    // 在刚跑过一批交易（例如紧接 devnet-verify）时会导致 h1 == h0 的假失败。
     const sender = privateKeyToAccount(keyOf('anvil-3').privateKey);
-    const hash = await walletClient(sender).sendTransaction({ to: keyOf('anvil-4').address, value: 1n });
-    await publicClient.waitForTransactionReceipt({ hash, timeout: 30_000 });
-    const h1 = await publicClient.getBlockNumber();
-    assert.ok(h1 > h0, `height ${h0} → ${h1}`);
+    const to = keyOf('anvil-4').address;
+
+    const first = await publicClient.waitForTransactionReceipt({
+      hash: await walletClient(sender).sendTransaction({ to, value: 1n }),
+      timeout: 30_000,
+    });
+    const second = await publicClient.waitForTransactionReceipt({
+      hash: await walletClient(sender).sendTransaction({ to, value: 1n }),
+      timeout: 30_000,
+    });
+
+    assert.equal(first.status, 'success');
+    assert.equal(second.status, 'success');
+    assert.ok(second.blockNumber > first.blockNumber,
+      `each transaction must land in a new block: ${first.blockNumber} → ${second.blockNumber}`);
   });
 });
