@@ -109,13 +109,13 @@
 
 **Independent Test**: quickstart 场景 C：健康网络全过退出 0；停网后 `[FAIL] rpc [category: rpc]` 退出 1
 
-- [ ] T032 [P] [US4] 实现 `tools/verify/lib/rpc.mjs`（viem client 按 protocol.json 构造）、`lib/avalanche-api.mjs`（/ext/health、info.peers、info.isBootstrapped）、`lib/report.mjs`（[OK] 行格式 + JSON 按 `contracts/verification-report.schema.json`）、`lib/categories.mjs`（FR-030 九类判据映射）
-- [ ] T033 [US4] 实现基础检查 `tools/verify/checks/{node,validator,rpc,network-id,chain-id,token,balance}.mjs`（7/7 节点健康、5/5 bootstrapped 且 peers≥4——精确阈值按 T011/V-10 实测写入 `tools/verify/lib/categories.mjs` 的派生常量、RPC 连通、1337、20189、KARMA/18、6 账户余额==创世——以 `eth_getBalance(addr,"0x0")` 为基准，latest 仅要求 ≤，因 ewoq 支付了 PoA 初始化 gas）
-- [ ] T034 [US4] 实现交易与合约检查 `tools/verify/checks/{transfer,receipt,block-production,contract,rpc-methods,protocol-consistency}.mjs`：转账+回执字段、发 2 笔交易观测高度 N→N+1→N+2（on-demand 模式）、`tools/verify/contracts/Counter.sol` 用 solc-js `evmVersion:"cancun"` 编译部署+increment+count 断言、FR-012 十方法逐一探测（不支持→unsupported 不算失败）、创世 sha256 与提交文件一致
-- [ ] T035 [US4] 实现编排器 `tools/verify/verify-network.mjs`：顺序执行 13 检查、汇总 READY/NOT READY、写 `./.devnet/verify-report.json`、退出码 0/1、总时长打印（SC-005 ≤3 分钟）
-- [ ] T036 [P] [US4] 编写 `scripts/devnet-verify.ps1`、`scripts/devnet-verify.sh` 薄封装（转调 `docker compose run --rm verify npm run verify`，退出码与输出契约见 cli-interface.md；容器与 compose 接线已由 T050 完成）
-- [ ] T037 [US4] 用真实运行结果回填 `specs/001-local-avalanche-devnet/contracts/rpc-endpoint.md` 十方法支持表（V-9，SC-010 零"未知"）；编写 `tests/integration/verify-negative.test.mjs`：停网后运行 verify，断言失败项类别正确（SC-011 一部分）
-- [ ] T038 [P] [US4] 编写 `tests/unit/report.test.mjs`：报告样本经 ajv 校验 `verification-report.schema.json`；fail 无 category 时校验必须失败
+- [x] T032 [P] [US4] 实现 `tools/verify/lib/rpc.mjs`（viem client 按 protocol.json 构造）、`lib/avalanche-api.mjs`（/ext/health、info.peers、info.isBootstrapped）、`lib/report.mjs`（[OK] 行格式 + JSON 按 `contracts/verification-report.schema.json`）、`lib/categories.mjs`（FR-030 九类判据映射）
+- [x] T033 [US4] 实现基础检查 `tools/verify/checks/{node,validator,rpc,network-id,chain-id,token,balance}.mjs`（7/7 节点健康、5/5 bootstrapped 且 peers≥4——精确阈值按 T011/V-10 实测写入 `tools/verify/lib/categories.mjs` 的派生常量、RPC 连通、1337、20189、KARMA/18、6 账户余额==创世——以 `eth_getBalance(addr,"0x0")` 为基准，latest 仅要求 ≤，因 ewoq 支付了 PoA 初始化 gas）
+- [x] T034 [US4] 实现交易与合约检查 `tools/verify/checks/{transfer,receipt,block-production,contract,rpc-methods,protocol-consistency}.mjs`：转账+回执字段、发 2 笔交易观测高度 N→N+1→N+2（on-demand 模式）、`tools/verify/contracts/Counter.sol` 用 solc-js `evmVersion:"cancun"` 编译部署+increment+count 断言、FR-012 十方法逐一探测（不支持→unsupported 不算失败）、创世 sha256 与提交文件一致
+- [x] T035 [US4] 实现编排器 `tools/verify/verify-network.mjs`：顺序执行 13 检查、汇总 READY/NOT READY、写 `./.devnet/verify-report.json`、退出码 0/1、总时长打印（SC-005 ≤3 分钟）
+- [x] T036 [P] [US4] 编写 `scripts/devnet-verify.ps1`、`scripts/devnet-verify.sh` 薄封装（转调 `docker compose run --rm verify npm run verify`，退出码与输出契约见 cli-interface.md；容器与 compose 接线已由 T050 完成）
+- [x] T037 [US4] 用真实运行结果回填 `specs/001-local-avalanche-devnet/contracts/rpc-endpoint.md` 十方法支持表（V-9，SC-010 零"未知"）；编写 `tests/integration/verify-negative.test.mjs`：停网后运行 verify，断言失败项类别正确（SC-011 一部分）
+- [x] T038 [P] [US4] 编写 `tests/unit/report.test.mjs`：报告样本经 ajv 校验 `verification-report.schema.json`；fail 无 category 时校验必须失败
 
 **Checkpoint**: "启动成功"从此由机器判定；回归基线就位
 

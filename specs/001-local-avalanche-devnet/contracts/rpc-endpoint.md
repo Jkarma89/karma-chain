@@ -18,20 +18,26 @@
 
 ## 必须验证的 JSON-RPC 方法（FR-012）
 
+**实测结论（2026-09-02，AvalancheGo v1.14.1 + Subnet-EVM v0.8.0，`scripts/devnet-verify` 的 `rpc-methods` 检查）：10/10 全部支持，无"未知"状态（SC-010 ✅）。**
+
 | 方法 | 验证方式 | 期望 | 支持状态 |
 |---|---|---|---|
-| `eth_chainId` | 调用 | `0x4edd` | 待实现期填写（V-9） |
-| `eth_blockNumber` | 调用两次，中间发一笔交易 | 第二次 > 第一次 | 待填写 |
-| `eth_getBlockByNumber` | `("0x0", false)` 与 `("latest", true)` | 创世哈希跨环境一致；latest 含交易 | 待填写 |
-| `eth_getBlockByHash` | 用上一步的哈希 | 与 byNumber 结果一致 | 待填写 |
-| `eth_getBalance` | 每个 devAccount `("latest")` | 首次启动等于创世 `balanceWei` | 待填写 |
-| `eth_getTransactionCount` | 发送前后 | nonce +1 | 待填写 |
-| `eth_sendRawTransaction` | 签名的 EIP-1559 转账 | 返回 32 字节哈希 | 待填写 |
-| `eth_getTransactionByHash` | 上一步哈希 | `from/to/value/blockNumber` 正确 | 待填写 |
-| `eth_getTransactionReceipt` | 上一步哈希 | `status=0x1`、`gasUsed>0`、`blockNumber` 匹配 | 待填写 |
-| `eth_call` | 对 `Counter.sol` 的 `count()` | 与写入后的值一致 | 待填写 |
+| `eth_chainId` | 调用 | `0x4edd` | ✅ supported |
+| `eth_blockNumber` | 调用两次，中间发一笔交易 | 第二次 > 第一次 | ✅ supported |
+| `eth_getBlockByNumber` | `("0x0", false)` 与 `("latest", true)` | 创世哈希跨环境一致；latest 含交易 | ✅ supported |
+| `eth_getBlockByHash` | 用上一步的哈希 | 与 byNumber 结果一致 | ✅ supported |
+| `eth_getBalance` | 每个 devAccount `("0x0")` 与 `("latest")` | 区块 0 等于创世 `balanceWei` | ✅ supported |
+| `eth_getTransactionCount` | 发送前后 | nonce +1 | ✅ supported |
+| `eth_sendRawTransaction` | 签名的 EIP-1559 转账 | 返回 32 字节哈希 | ✅ supported（畸形负载探测返回 `-32000`，即方法存在但拒绝该负载；真实转账在 `transfer` 检查中通过） |
+| `eth_getTransactionByHash` | 上一步哈希 | `from/to/value/blockNumber` 正确 | ✅ supported |
+| `eth_getTransactionReceipt` | 上一步哈希 | `status=0x1`、`gasUsed=21000`、`blockNumber` 匹配 | ✅ supported |
+| `eth_call` | 对 `Counter.sol` 的 `count()` | 与写入后的值一致 | ✅ supported |
 
-实现期每个方法的实际结果写入本表"支持状态"列（`supported` / `unsupported: <reason>`），并同步到 `docs/devnet.md`（SC-010：0 个"未知"）。
+判定规则（`tools/verify/checks/chain.mjs`）：JSON-RPC 错误码 `-32601`（method not found）判为 **unsupported**；`-32602 / -32000 / -32603`（参数/执行错误）说明方法存在，判为 **supported**。任何 unsupported 都会让验证输出 `[UNSUPPORTED]` 行并要求写入文档。
+
+### 已确认不可用的方法（作弊类，Subnet-EVM 默认只启用 `eth` 命名空间）
+
+`anvil_setBalance`、`hardhat_setBalance`、`evm_setAccountBalance`、`debug_setHead` 均返回 `-32601`。因此**无法直接改写账户余额**——余额只能通过创世分配或链上交易改变（宪法第一条）。
 
 ## Host 头约束（源于 avalanchego，实现期确认）
 

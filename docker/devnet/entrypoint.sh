@@ -99,6 +99,7 @@ run() {
 
   # 3) 就绪：起代理 → 摘要
   rt_start_proxy || exit ${EXIT_START_FAILED}
+  rt_write_node_inventory
   rt_print_ready_summary
 }
 

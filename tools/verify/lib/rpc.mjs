@@ -9,10 +9,12 @@
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { createPublicClient, createWalletClient, defineChain, http } from 'viem';
-import { loadProtocol, derive } from '../../protocol/load.mjs';
+import { loadProtocol, derive, REPO_ROOT } from '../../protocol/load.mjs';
 
 export const protocol = loadProtocol();
 export const derived = derive(protocol);
+/** 仓库根（验证器写报告、读节点清单时用；容器内为 /workspace）。 */
+export const REPO_ROOT_HINT = REPO_ROOT;
 
 /**
  * avalanchego 的 `--http-allowed-hosts` 默认只放行 Host 头为 `localhost` 或 **IP 字面量** 的请求（其余 403）。

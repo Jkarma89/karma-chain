@@ -5,6 +5,12 @@
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "timestamp", "rpcUrl", "overall", "checks"],
+  "$defs": {
+    "category": {
+      "description": "Failure category per FR-030.",
+      "enum": ["genesis", "configuration", "node", "validator", "p2p", "rpc", "evm", "transaction", "storage"]
+    }
+  },
   "properties": {
     "schemaVersion": { "const": 1 },
     "timestamp": { "type": "string", "format": "date-time" },
@@ -29,15 +35,17 @@
             ]
           },
           "status": { "enum": ["ok", "fail", "skip", "unsupported"] },
-          "category": {
-            "description": "Failure category per FR-030; required when status is fail.",
-            "enum": ["genesis", "configuration", "node", "validator", "p2p", "rpc", "evm", "transaction", "storage"]
-          },
+          "category": { "$ref": "#/$defs/category" },
           "detail": { "type": "string" },
           "data": { "type": "object" }
         },
-        "if": { "properties": { "status": { "const": "fail" } } },
-        "then": { "required": ["category"] }
+        "allOf": [
+          {
+            "description": "A failing check MUST name its FR-030 category.",
+            "if": { "properties": { "status": { "const": "fail" } }, "required": ["status"] },
+            "then": { "required": ["category"], "properties": { "category": { "$ref": "#/$defs/category" } } }
+          }
+        ]
       }
     }
   }

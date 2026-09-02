@@ -3,6 +3,8 @@
 
 : "${KARMACHAIN_LIB:=/opt/karmachain/lib}"
 source "${KARMACHAIN_LIB}/avalanche.sh"
+# shellcheck source=nodes.sh
+source "${KARMACHAIN_LIB}/nodes.sh"
 
 : "${KARMACHAIN_PROXY_PORT:=$(proto_host_rpc_port)}"   # 容器内对外监听端口；默认取 protocol.json（compose 会显式传入，与映射右侧一致）
 : "${KARMACHAIN_STARTUP_TIMEOUT:=300}"      # 秒（SC-001）
@@ -96,27 +98,63 @@ rt_check_runtime_genesis_hash() {
   fi
 }
 
-# --- socat 代理：0.0.0.0:<proxy-port> → 127.0.0.1:<L1 node 1 http-port>（research V-8：节点只监听回环）---
+# --- socat 代理（research V-8：avalanchego 固定只监听 127.0.0.1，不可配置）---
+#   ① 0.0.0.0:<proxy-port> → L1 节点 1 —— 对宿主与 compose 网络暴露的主 RPC 端点
+#   ② <容器 IP>:<node-port> → 127.0.0.1:<node-port>（每个节点一个，端口号不变）
+#      绑定容器 IP 而非 0.0.0.0，才能与节点自己的 127.0.0.1:<同端口> 并存；
+#      不映射到宿主，仅 compose 网络内可达，供 verify 容器逐节点做健康/共识检查。
+PROXY_LOG=/root/.avalanche-cli/karmachain-proxy.log
+
+_rt_spawn_proxy() { # _rt_spawn_proxy <bind-ip> <listen-port> <target-port>
+  socat -d -lf "${PROXY_LOG}" TCP-LISTEN:"$2",fork,reuseaddr,bind="$1" TCP:127.0.0.1:"$3" &
+  echo $! >> "${PROXY_PID_FILE}"
+}
+
 rt_start_proxy() {
   rt_stop_proxy
-  local target; target="$(proto_first_validator_http_port)"
-  socat -d -lf /root/.avalanche-cli/karmachain-proxy.log \
-    TCP-LISTEN:"${KARMACHAIN_PROXY_PORT}",fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:"${target}" &
-  echo $! > "${PROXY_PID_FILE}"
-  sleep 0.5
-  kill -0 "$(cat "${PROXY_PID_FILE}")" 2>/dev/null || { log "FAILED [category: configuration] socat proxy on :${KARMACHAIN_PROXY_PORT} did not start"; return 1; }
-  # 经代理探测一次（容器内走 127.0.0.1:<proxy-port>）
+  : > "${PROXY_PID_FILE}"
+
+  # ① 主 RPC 端点
+  _rt_spawn_proxy 0.0.0.0 "${KARMACHAIN_PROXY_PORT}" "$(proto_first_validator_http_port)"
+
+  # ② 每节点直通（用于 /ext/health、/ext/info）
+  local ip port
+  ip="$(nodes_container_ip)"
+  for port in $(nodes_http_ports); do
+    _rt_spawn_proxy "${ip}" "${port}" "${port}"
+  done
+
+  sleep 1
+  local pid dead=0
+  while read -r pid; do kill -0 "${pid}" 2>/dev/null || dead=$((dead + 1)); done < "${PROXY_PID_FILE}"
+  [ "${dead}" -eq 0 ] || { log "FAILED [category: configuration] ${dead} socat proxy process(es) did not start (see ${PROXY_LOG})"; return 1; }
+
+  # 经主端点探测一次
   local want got; want="$(proto_chain_id_hex)"
   got="$(rt_rpc "http://127.0.0.1:${KARMACHAIN_PROXY_PORT}$(proto_rpc_path)" eth_chainId | jq -r '.result // empty')"
   [ "${got}" = "${want}" ] || { log "FAILED [category: rpc] proxy check returned '${got}' (want ${want})"; return 1; }
+  log "proxies up: :${KARMACHAIN_PROXY_PORT} (main) + $(nodes_count) per-node on ${ip}"
 }
 
 rt_stop_proxy() {
   if [ -f "${PROXY_PID_FILE}" ]; then
-    kill "$(cat "${PROXY_PID_FILE}")" 2>/dev/null || true
+    local pid; while read -r pid; do kill "${pid}" 2>/dev/null || true; done < "${PROXY_PID_FILE}"
     rm -f "${PROXY_PID_FILE}"
   fi
   pkill -x socat 2>/dev/null || true
+}
+
+# 节点清单写给验证器（.devnet/ 由 compose 双向挂载；FR-032 / T033 的数据源）
+rt_write_node_inventory() {
+  local out="${KARMACHAIN_SHARED_DIR:-/workspace/.devnet}/nodes.json"
+  mkdir -p "$(dirname "${out}")" 2>/dev/null || true
+  if nodes_inventory_json > "${out}.tmp" 2>/dev/null && [ -s "${out}.tmp" ]; then
+    mv "${out}.tmp" "${out}"
+    log "node inventory written: ${out} ($(jq -r '.nodes | length' "${out}") nodes)"
+  else
+    rm -f "${out}.tmp"
+    log "WARNING could not write node inventory to ${out} (is ./.devnet mounted?) — per-node checks will degrade"
+  fi
 }
 
 # --- 余额格式化：hex wei → 整数代币（bc 处理大整数）---

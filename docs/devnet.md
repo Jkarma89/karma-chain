@@ -19,8 +19,8 @@
 |---|---|---|---|
 | 启动 | `scripts\devnet-start.ps1` | `scripts/devnet-start.sh` | 首次约 80 秒（create + deploy）；之后从快照恢复约 15 秒，链状态保留 |
 | 停止 | `scripts\devnet-stop.ps1` | `scripts/devnet-stop.sh` | 保存快照，无残余进程 |
-| 重置 | （阶段 4） | （阶段 4） | 回到创世 |
-| 验证 | （阶段 6） | （阶段 6） | 13 项自动化检查 |
+| 重置 | `scripts\devnet-reset.ps1` | `scripts/devnet-reset.sh` | 删除链数据卷，下次启动回到创世 |
+| 验证 | `scripts\devnet-verify.ps1` | `scripts/devnet-verify.sh` | 13 项自动化检查，约 22 秒；退出码 0 通过 / 1 失败 |
 
 启动成功会打印 READY 摘要：RPC URL、Chain ID、代币、验证者数、出块模式、开发账户余额。退出码见 [`contracts/cli-interface.md`](../specs/001-local-avalanche-devnet/contracts/cli-interface.md)。
 
@@ -82,6 +82,19 @@ cast block latest --rpc-url $RPC --field number
 3. 预期：余额显示 1,000,000 KARMA（若已跑过集成测试则略少）；向 `anvil-1` 发送 1 KARMA，几秒内确认。
 
 > 这些私钥是**公开的测试密钥**，MetaMask 里请使用单独的测试 Profile，绝不与真实资产账户混用。
+
+## 3.4 自动化验证
+
+```bash
+scripts/devnet-verify.sh            # 13 项完整检查（约 22 秒）
+scripts/devnet-verify.sh --quick    # 跳过合约编译与 RPC 方法探测（仅本地迭代，不可用于验收）
+```
+
+13 项检查：`rpc`、`chain-id`、`network-id`、`token`、`node`（7 个节点健康）、`validator`（5 个 L1 已 bootstrapped、peers ≥ 4、NodeID 与仓库密钥一致）、`balance`（区块 0 余额精确等于创世）、`transfer`、`receipt`（回执 6 个字段 + 余额守恒）、`block-production`（每笔交易产生新区块）、`contract`（编译部署 `Counter.sol` 并读写验证）、`rpc-methods`（FR-012 十个方法逐一探测）、`protocol-consistency`（运行中创世哈希 == 基准）。
+
+输出为逐项 `[OK]/[FAIL]/[SKIP]/[UNSUPPORTED]` 行 + `.devnet/verify-report.json`（结构见 `contracts/verification-report.schema.json`）。**每个失败都带 FR-030 故障类别**，便于快速定位是配置、节点、共识、RPC 还是交易问题。
+
+> **为什么要在容器里跑**：节点只监听容器内回环（avalanchego 不可配置），devnet 容器为每个节点在容器 IP 上起了同端口代理，仅 compose 网络内可达。因此在宿主直接 `node tools/verify/verify-network.mjs` 时，`node` 与 `validator` 两项会降级为 `[SKIP]` 并提示改用 `scripts/devnet-verify`；其余 11 项照常执行。
 
 ## 3.5 重置与状态保留
 

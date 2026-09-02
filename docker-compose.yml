@@ -20,6 +20,8 @@ services:
     volumes:
       - karmachain-devnet-data:/root/.avalanche-cli
       - ./blockchain:/workspace/blockchain:ro
+      # 节点清单（nodes.json）写到这里供 verify 容器读取；.devnet 已被 .gitignore 忽略
+      - ./.devnet:/workspace/.devnet
     # 变量由 scripts/* 从 blockchain/compose.env（protocol.json 生成）与用户 .env 导出；
     # 此处的 :- 兜底仅为裸 `docker compose up` 保底，其值由 tests/unit/docs-drift.test.mjs 与 protocol.json 锁定同步
     ports:
