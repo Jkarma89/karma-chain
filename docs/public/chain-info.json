@@ -1,0 +1,130 @@
+{
+  "$comment": "GENERATED artifact published by the KarmaChain team — DO NOT EDIT. Public chain metadata for third-party developers. Every value here can be independently confirmed against the chain via eth_chainId / net_version / eth_getChainConfig / eth_feeConfig / eth_getBlockByNumber / eth_getBalance / eth_getCode.",
+  "schemaVersion": 1,
+  "name": "KarmaChain Local Devnet",
+  "shortName": "karmachain",
+  "environment": "dev",
+  "chainId": 20189,
+  "networkId": 1337,
+  "nativeCurrency": {
+    "name": "KarmaCoin",
+    "symbol": "KARMA",
+    "decimals": 18
+  },
+  "rpc": {
+    "http": [
+      "http://127.0.0.1:8545/ext/bc/karmachain/rpc"
+    ],
+    "ws": [
+      "ws://127.0.0.1:8545/ext/bc/karmachain/ws"
+    ],
+    "hostHeaderPolicy": "Only \"localhost\" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 \"invalid host specified\". Resolve hostnames to an IP before connecting."
+  },
+  "evm": {
+    "version": "cancun",
+    "note": "Compile with evmVersion=cancun. Subnet-EVM implements up to the Cancun fork and does not support Pectra, while solc 0.8.30+ targets Pectra by default — omitting this produces bytecode this chain cannot execute.",
+    "solidityConfig": {
+      "foundry": "evm_version = \"cancun\"",
+      "hardhat": "solidity: { settings: { evmVersion: \"cancun\" } }",
+      "solcJson": "{ \"settings\": { \"evmVersion\": \"cancun\" } }"
+    }
+  },
+  "fees": {
+    "gasLimit": 15000000,
+    "targetBlockRate": 2,
+    "minBaseFee": 25000000000,
+    "targetGas": 15000000,
+    "baseFeeChangeDenominator": 36,
+    "minBlockGasCost": 0,
+    "maxBlockGasCost": 1000000,
+    "blockGasCostStep": 200000,
+    "feesBurned": true,
+    "note": "Fees are burned (allowFeeRecipients=false). minBaseFee is the EIP-1559 base fee floor, in wei."
+  },
+  "blockProduction": {
+    "mode": "on-demand",
+    "targetBlockRateSeconds": 2,
+    "note": "Blocks are produced only when there are pending transactions. An idle chain does not advance its block height — this is Subnet-EVM behaviour, not a fault. Do not treat a static block height as unhealthy."
+  },
+  "permissioning": {
+    "contractDeployment": "permissionless",
+    "transactions": "permissionless",
+    "nativeTokenMinting": "disabled",
+    "note": "Anyone may deploy contracts and send transactions. The native token cannot be minted by anyone, including the chain operators."
+  },
+  "genesis": {
+    "blockHash": "0x19cfde1f02e585020cdae83071bac33c7d81e411cacf7f306b82ceabe98892ed",
+    "note": "eth_getBlockByNumber(\"0x0\", false).hash must equal this value. Use it to confirm you are talking to the intended chain instance."
+  },
+  "wallet": {
+    "chainId": "0x4edd",
+    "chainName": "KarmaChain Local",
+    "nativeCurrency": {
+      "name": "KarmaCoin",
+      "symbol": "KARMA",
+      "decimals": 18
+    },
+    "rpcUrls": [
+      "http://127.0.0.1:8545/ext/bc/karmachain/rpc"
+    ],
+    "blockExplorerUrls": []
+  },
+  "contracts": {
+    "$comment": "Official contract addresses. Genesis-embedded infrastructure only for now; application contracts will be listed here as they are deployed.",
+    "validatorManagerProxy": "0x0Feedc0de0000000000000000000000000000000",
+    "validatorManagerImplementation": "0x0C0DEbA5E0000000000000000000000000000000"
+  },
+  "testAccounts": {
+    "$comment": "PUBLIC, WIDELY KNOWN development keys — valid only on this local devnet. NEVER use them on any real network or fund them with anything of value.",
+    "warning": "DEVELOPMENT ONLY — publicly known keys, never use in production. These keys are valid only on the KarmaChain local devnet (Network ID 1337 / Chain ID 20189). Committed under constitution Article 4 v1.1.0 exception.",
+    "mnemonic": {
+      "phrase": "test test test test test test test test test test test junk",
+      "derivationPath": "m/44'/60'/0'/0/{index}",
+      "source": "Foundry Anvil / Hardhat default test mnemonic (publicly documented)"
+    },
+    "accounts": [
+      {
+        "label": "ewoq",
+        "address": "0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC",
+        "privateKey": "0x56289e99c94b6912bfc12adc093c9b51124f0dc54ac7a766b2bc5ccf558d8027",
+        "genesisBalanceWei": "0xD3C21BCECCEDA1000000",
+        "source": "avalanche-ewoq"
+      },
+      {
+        "label": "anvil-0",
+        "address": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "privateKey": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+        "genesisBalanceWei": "0xD3C21BCECCEDA1000000",
+        "source": "foundry-anvil-default-#0"
+      },
+      {
+        "label": "anvil-1",
+        "address": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+        "privateKey": "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+        "genesisBalanceWei": "0x84595161401484A000000",
+        "source": "foundry-anvil-default-#1"
+      },
+      {
+        "label": "anvil-2",
+        "address": "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC",
+        "privateKey": "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a",
+        "genesisBalanceWei": "0x6342FD08F00F637800000",
+        "source": "foundry-anvil-default-#2"
+      },
+      {
+        "label": "anvil-3",
+        "address": "0x90F79bf6EB2c4f870365E785982E1f101E93b906",
+        "privateKey": "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6",
+        "genesisBalanceWei": "0x84595161401484A000000",
+        "source": "foundry-anvil-default-#3"
+      },
+      {
+        "label": "anvil-4",
+        "address": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
+        "privateKey": "0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a",
+        "genesisBalanceWei": "0x84595161401484A000000",
+        "source": "foundry-anvil-default-#4"
+      }
+    ]
+  }
+}

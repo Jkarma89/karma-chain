@@ -9,7 +9,7 @@
     "node": ">=22.12.0"
   },
   "scripts": {
-    "protocol:render": "node tools/protocol/render-genesis.mjs && node tools/protocol/render-docs.mjs && node tools/protocol/render-compose-env.mjs",
+    "protocol:render": "node tools/protocol/render-genesis.mjs && node tools/protocol/render-docs.mjs && node tools/protocol/render-compose-env.mjs && node tools/protocol/render-chain-info.mjs && node tools/protocol/render-developer-quickstart.mjs",
     "verify": "node tools/verify/verify-network.mjs",
     "test": "node --test \"tests/unit/**/*.test.mjs\"",
     "test:integration": "node --test \"tests/integration/**/*.test.mjs\"",
