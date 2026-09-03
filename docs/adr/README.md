@@ -20,6 +20,7 @@
 | **验证者模型的去中心化路径** | "人人可部署合约"但"验证者由单一地址指定"在去信任化上不对称 | ADR-0004、ADR-0005 |
 | **主网代币经济学** | 初始分配、是否可增发（当前不可）、手续费处理（当前销毁）需独立规格 | ADR-0003、ADR-0005 |
 | **Chain ID 注册** | 20188/20189 已核实未占用，但正式发布前需向 ethereum-lists/chains 提交注册 | ADR-0003 |
+| **面向第三方的公开接入信息** | 第一方仓库（karma-sc）直接读 `protocol.json`，第三方开发者拿不到也不该拿到。他们需要的其实很少：RPC、Chain ID、**evmVersion**、官方合约地址。链已能自报大部分（`eth_getChainConfig` 含全部硬分叉激活时间与 feeConfig、`eth_feeConfig`、`web3_clientVersion`），但没人会靠解析 RPC 猜该用哪个 `evm_version` 编译——踩坑后只会卡住或放弃。**因此需要一份公开接入文档**（RPC / Chain ID / 代币 / evmVersion=cancun / 官方合约地址），且它**必须由 `protocol.json` 生成**（复用 `render-docs.mjs` 的模式），否则又是一份会漂移的手写副本，违反第十六条。开发网阶段不必做 | 主网/公开 RPC 上线前；与 Chain ID 注册、区块浏览器一并规划 |
 | **合约升级策略** | 官方合约是否使用代理模式，须在编写合约前决定（宪法第六条） | 智能合约功能 |
 
 ## 写新 ADR
