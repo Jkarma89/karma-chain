@@ -14,7 +14,8 @@
     "test": "node --test \"tests/unit/**/*.test.mjs\"",
     "test:integration": "node --test \"tests/integration/**/*.test.mjs\"",
     "test:e2e": "node --test \"tests/e2e/**/*.test.mjs\"",
-    "test:secrets": "node --test tests/e2e/secret-scan.test.mjs"
+    "test:secrets": "node --test tests/e2e/secret-scan.test.mjs",
+    "contracts": "node tools/inspect/list-contracts.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",

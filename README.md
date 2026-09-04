@@ -32,6 +32,7 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 | 重置到创世 | `scripts/devnet-reset` |
 | 13 项自动化验证 | `scripts/devnet-verify` |
 | 节点状态 / 日志 | `scripts/devnet-status` · `scripts/devnet-logs <node>` |
+| 链上合约清单 | `scripts/devnet-contracts`（`--json` 可机器读） |
 | 故障注入（演练） | `scripts/devnet-node <stop\|start\|pause\|resume> <node>` |
 
 ## 目录

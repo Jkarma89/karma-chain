@@ -14,6 +14,7 @@
 | 验证 | `scripts/devnet-verify.{ps1,sh}` | `docker compose run --rm verify` | 运行 FR-027 全部检查；输出逐项结果 + JSON 报告到 `./.devnet/verify-report.json` | 0 全部通过；1 任一失败 |
 | 状态 | `scripts/devnet-status.{ps1,sh}` | `docker compose exec devnet devnet-status` | 每个节点：NodeID、角色、healthy、bootstrapped、peers | 0 / 1（存在不健康节点） |
 | 日志 | `scripts/devnet-logs.{ps1,sh} [node]` | `docker compose exec devnet devnet-logs [node]` | 按节点区分的日志（`-f` 跟随） | 0 |
+| 合约清单 | `scripts/devnet-contracts.{ps1,sh}` | `docker compose run --rm verify node tools/inspect/list-contracts.mjs` | 列出创世内置 + 运行期部署的全部合约，标注 official / internal / unlisted（`--json`、`--from <block>`、`--no-probe`） | 0 成功；1 链不可达 |
 
 ## 启动成功输出（FR-008）
 

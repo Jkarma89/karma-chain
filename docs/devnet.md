@@ -203,6 +203,30 @@ scripts/devnet-node.sh status l1-3    # 单节点进程状态
 这些密钥就是仓库里 `blockchain/validators/dev/` 下已公开的 DEVELOPMENT ONLY 材料，因此对本开发网络不构成新的泄露；
 但把日志贴到 issue/聊天时仍应使用默认（脱敏）输出。生产环境绝不可复用这些密钥（FR-025）。
 
+## 5.1.1 链上合约清单
+
+```bash
+scripts/devnet-contracts.sh              # 创世内置 + 运行期部署的全部合约
+scripts/devnet-contracts.sh --json       # 机器可读
+scripts/devnet-contracts.sh --from 100   # 只扫 100 号之后的区块（链长了以后用）
+scripts/devnet-contracts.sh --no-probe   # 跳过标准接口探测
+```
+
+每条给出地址、代码大小、来源（创世 / 哪个区块）、部署者，并标注：
+
+| 标记 | 含义 |
+|---|---|
+| `[official]` | 在公开产物 `chain-info.json` 的 `contracts` 里列出 |
+| `[internal]` | 创世合约集的内部实现细节（ValidatorMessages 库、ProxyAdmin） |
+| `[unlisted]` | **不是官方合约** —— 示例与探针（Greeter、Counter 之类）都在这里 |
+
+还会探测若干无参 view 函数（`name/symbol/decimals/totalSupply/owner`）作为合约类型提示。
+
+> **本链目前没有区块浏览器**（记录在 `docs/adr/README.md` 待决策）。调试**单笔交易**用
+> `cast run <txhash> --rpc-url <rpc>` 已经足够——它会重放交易并显示完整调用追踪与解码后的事件。
+> 本命令填补的是另一个空缺：**浏览全链有哪些合约**。源码验证、诈骗标记、面向非开发者的界面
+> 仍然需要真正的浏览器，那是主网前的必需项。
+
 ## 5.2 故障注入（演练与测试用）
 
 ```bash
