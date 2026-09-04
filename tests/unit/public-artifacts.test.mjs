@@ -50,10 +50,24 @@ describe('chain-info.json exposes what a third party needs', () => {
     });
   });
 
-  test('endpoints match the derived values', () => {
-    assert.deepEqual(info.rpc.http, [derived.rpcUrl]);
-    assert.deepEqual(info.rpc.ws, [derived.wsUrl]);
+  test('endpoints list every published host, in protocol.json order', () => {
+    assert.deepEqual(info.rpc.http, derived.rpcUrls);
+    assert.deepEqual(info.rpc.ws, derived.wsUrls);
+    assert.equal(info.rpc.http.length, protocol.endpoints.publishedHosts.length);
+    protocol.endpoints.publishedHosts.forEach((host, i) => {
+      assert.ok(info.rpc.http[i].includes(`//${host}:`), `rpc.http[${i}] should use host ${host}`);
+      assert.ok(info.rpc.ws[i].includes(`//${host}:`), `rpc.ws[${i}] should use host ${host}`);
+    });
+    assert.equal(info.rpc.http[0], derived.rpcUrl, 'the first entry is the preferred endpoint');
     assert.match(info.rpc.hostHeaderPolicy, /Host header/);
+  });
+
+  test('published hosts are machine-independent (no LAN or per-developer addresses)', () => {
+    // 这些只在某台机器上成立，提交进来会让不同开发者的产物不一致 —— 属于消费者侧覆盖的范畴
+    for (const host of protocol.endpoints.publishedHosts) {
+      assert.equal(/^(10|192\.168|172\.(1[6-9]|2\d|3[01]))\./.test(host), false,
+        `publishedHosts must not contain the private/LAN address ${host}; use a consumer-side override instead`);
+    }
   });
 
   test('the EVM version and its rationale are stated (the most common third-party pitfall)', () => {

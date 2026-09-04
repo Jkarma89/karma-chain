@@ -2,7 +2,7 @@
   "$comment": "protocol.json 每个参数的取值理由（宪法第十四条：决定了什么/为什么）。键为 protocol.json 中的路径；render-docs.mjs 要求所列必备路径全部存在，缺失即失败。仅文档用途，不参与共识。",
   "rationale": {
     "environment": "本文件只描述本地开发网络；生产/Staging 参数将另建文件与目录，禁止从 dev 复制（宪法第四条）。",
-    "configVersion": "协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。",
+    "configVersion": "协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。1.2.0（2026-09-04）：新增 endpoints.publishedHosts，把 RPC 主机名从代码提升为声明参数。",
     "chain.chainId": "20189：本地开发网专用。与主网预留值分离，钱包不可能把本地链误认为主网。2026-08-31 核实 ethereum-lists/chains 未被占用；正式发布前需再次核实并注册。",
     "chain.reservedMainnetChainId": "20188：为 KarmaChain 未来主网预留，本地网络禁止使用（load.mjs 与 preflight 双重断言）。",
     "chain.blockchainName": "karmachain：Avalanche CLI 的链名，同时成为稳定的 RPC 别名路径 /ext/bc/karmachain/rpc（避免依赖随机的 BlockchainID）。",
@@ -32,6 +32,7 @@
     "validators.nodes": "端口 9660-9669（HTTP/staking 交替）：避开 CLI 主网节点默认区间 9650-9653 与对外 RPC 端口；keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。",
     "devAccounts": "ewoq + Foundry Anvil 默认账户 #0-#4，使用生态公开测试密钥，让 Foundry/Hardhat/MetaMask 零配置可用；密钥公开，仅限本地（宪法第四条 v1.1.0 例外条款）。分配（configVersion 1.1.0，2026-09-02 用户裁定）：ewoq 与 anvil-0 各 1,000,000（ewoq 只需支付 PoA 初始化与少量 P-Chain 手续费；anvil-0 作为常规小额账户）；anvil-1/3/4 各 10,000,000、anvil-2 7,500,000，为大额转账、合约资金池、gas 压测等场景提供充足余额，且 anvil-2 取不同数值便于在测试中区分账户。合计初始供应 39,500,000 KARMA —— 开发网络供应量不代表主网代币经济学，主网参数将另行规格化。",
     "endpoints.hostRpcPort": "8545：EVM 生态惯例端口（Anvil/Hardhat/geth 同款），MetaMask 等工具默认友好；可被宿主 .env 覆盖而不影响链身份。",
-    "endpoints.rpcPath": "/ext/bc/karmachain/rpc：由 blockchainName 派生（load.mjs 断言），Avalanche 节点的标准链路径 + CLI 设置的别名。"
+    "endpoints.rpcPath": "/ext/bc/karmachain/rpc：由 blockchainName 派生（load.mjs 断言），Avalanche 节点的标准链路径 + CLI 设置的别名。",
+    "endpoints.publishedHosts": "本链对外发布 RPC 的主机名列表，按优先顺序排列；公开产物 chain-info.json 的 rpc.http/rpc.ws 由它逐一生成（第三方消费者应依次尝试）。开发网取 [\"127.0.0.1\", \"localhost\"]：两者在任何运行本链的机器上都成立，因而可安全提交、不因开发者而异。**不要**把局域网 IP 或某台机器专属地址写进来——那属于消费者侧的临时覆盖（如 karma-sc 的 KARMACHAIN_RPC_URL）。真实部署时此处列出实际域名；注意 avalanchego 只接受 Host 为 localhost 或 IP 字面量，其他域名需由反向代理改写 Host。"
   }
 }

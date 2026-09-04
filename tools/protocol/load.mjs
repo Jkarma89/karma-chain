@@ -145,8 +145,12 @@ export function derive(p) {
   const initialSupplyWei = p.devAccounts.reduce((sum, a) => sum + BigInt(a.balanceWei), 0n);
   return {
     chainIdHex: `0x${p.chain.chainId.toString(16)}`,
-    rpcUrl: `http://127.0.0.1:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`,
-    wsUrl: `ws://127.0.0.1:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath.replace(/\/rpc$/, '/ws')}`,
+    // 端点主机来自 protocol.json 的 endpoints.publishedHosts（声明的协议参数，不在代码里硬编码）。
+    // rpcUrl / wsUrl 保留为"首选端点"，等于列表首项。
+    rpcUrls: p.endpoints.publishedHosts.map((h) => `http://${h}:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`),
+    wsUrls: p.endpoints.publishedHosts.map((h) => `ws://${h}:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath.replace(/\/rpc$/, '/ws')}`),
+    rpcUrl: `http://${p.endpoints.publishedHosts[0]}:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`,
+    wsUrl: `ws://${p.endpoints.publishedHosts[0]}:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath.replace(/\/rpc$/, '/ws')}`,
     initialSupplyWei,
     initialSupplyTokens: initialSupplyWei / 10n ** BigInt(p.nativeToken.decimals),
     totalNodeCount: p.primaryNetwork.nodeCount + p.validators.count,

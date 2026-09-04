@@ -2,7 +2,7 @@
   "$schema": "./protocol.schema.json",
   "name": "KarmaChain",
   "environment": "dev",
-  "configVersion": "1.1.0",
+  "configVersion": "1.2.0",
 
   "chain": {
     "chainId": 20189,
@@ -69,6 +69,7 @@
 
   "endpoints": {
     "hostRpcPort": 8545,
+    "publishedHosts": ["127.0.0.1", "localhost"],
     "rpcPath": "/ext/bc/karmachain/rpc"
   }
 }

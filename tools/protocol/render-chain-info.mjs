@@ -31,7 +31,6 @@ export function renderChainInfo() {
   const keys = readJson(DEV_ACCOUNTS_PATH);
   const genesisHash = readFileSync(GENESIS_HASH_PATH, 'utf8').trim();
 
-  const wsUrl = d.rpcUrl.replace(/^http/, 'ws').replace(/\/rpc$/, '/ws');
 
   const info = {
     // 刻意不提任何内部文件路径：这是对外接口，消费者不该、也不需要了解链仓库的内部结构。
@@ -56,8 +55,10 @@ export function renderChainInfo() {
 
     // --- 端点 ---
     rpc: {
-      http: [d.rpcUrl],
-      ws: [wsUrl],
+      // 多端点：按 protocol.json 的 publishedHosts 顺序给出，消费者应依次尝试。
+      // 不在这里列出局域网/机器专属地址——那属于消费者侧的覆盖（如 KARMACHAIN_RPC_URL）。
+      http: d.rpcUrls,
+      ws: d.wsUrls,
       // avalanchego 的 --http-allowed-hosts 默认只放行 localhost 与 IP 字面量，其余返回 403。
       hostHeaderPolicy: 'Only "localhost" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 "invalid host specified". Resolve hostnames to an IP before connecting.',
     },

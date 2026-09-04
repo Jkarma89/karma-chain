@@ -13,10 +13,12 @@
   },
   "rpc": {
     "http": [
-      "http://127.0.0.1:8545/ext/bc/karmachain/rpc"
+      "http://127.0.0.1:8545/ext/bc/karmachain/rpc",
+      "http://localhost:8545/ext/bc/karmachain/rpc"
     ],
     "ws": [
-      "ws://127.0.0.1:8545/ext/bc/karmachain/ws"
+      "ws://127.0.0.1:8545/ext/bc/karmachain/ws",
+      "ws://localhost:8545/ext/bc/karmachain/ws"
     ],
     "hostHeaderPolicy": "Only \"localhost\" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 \"invalid host specified\". Resolve hostnames to an IP before connecting."
   },

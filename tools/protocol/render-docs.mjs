@@ -25,7 +25,7 @@ export const REQUIRED_RATIONALE_KEYS = [
   'primaryNetwork.nodeCount',
   'validators.count', 'validators.management', 'validators.ownerAccount', 'validators.nodes',
   'devAccounts',
-  'endpoints.hostRpcPort', 'endpoints.rpcPath',
+  'endpoints.hostRpcPort', 'endpoints.rpcPath', 'endpoints.publishedHosts',
 ];
 
 const get = (obj, path) => path.split('.').reduce((o, k) => o?.[k], obj);
@@ -63,7 +63,7 @@ ${section('Gas / 费用（Subnet-EVM feeConfig）', ['gasLimit', 'targetBlockRat
 ${section('出块', [row('blockProduction.mode'), row('blockProduction.targetBlockRateSeconds')])}
 ${section('拓扑与验证者', [row('primaryNetwork.nodeCount'), row('validators.count'), row('validators.management'), row('validators.ownerAccount'), `| \`validators.nodes\` | 见下 | ${rationale['validators.nodes']} |`, validatorRows])}
 ${section('创世开发账户', [`| \`devAccounts\` | 共 ${p.devAccounts.length} 个，初始供应 ${d.initialSupplyTokens} ${p.nativeToken.symbol} | ${rationale.devAccounts} |`, accountRows])}
-${section('端点', [row('endpoints.hostRpcPort'), row('endpoints.rpcPath')])}
+${section('端点', [row('endpoints.hostRpcPort'), row('endpoints.rpcPath'), row('endpoints.publishedHosts')])}
 ### 派生值（不存储，由 \`tools/protocol/load.mjs derive()\` 计算）
 
 | 派生值 | 值 |

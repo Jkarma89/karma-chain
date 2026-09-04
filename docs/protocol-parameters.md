@@ -1,7 +1,7 @@
 <!-- GENERATED FROM blockchain/protocol.json + blockchain/protocol-rationale.json by tools/protocol/render-docs.mjs — DO NOT EDIT.
      修改参数：编辑 protocol.json（走宪法第十五条流程）→ npm run protocol:render → 提交。 -->
 
-# KarmaChain 协议参数（dev · configVersion 1.1.0）
+# KarmaChain 协议参数（dev · configVersion 1.2.0）
 
 宪法第十四条要求记录的全部区块链参数及其取值理由。唯一权威定义：[`blockchain/protocol.json`](../blockchain/protocol.json)。
 
@@ -14,7 +14,7 @@
 | `chain.blockchainName` | "karmachain" | karmachain：Avalanche CLI 的链名，同时成为稳定的 RPC 别名路径 /ext/bc/karmachain/rpc（避免依赖随机的 BlockchainID）。 |
 | `avalanche.networkId` | 1337 | 1337：Avalanche CLI 本地网络的固定 Network ID（区别于主网 1 / Fuji 5，防误连）。取值由 CLI 决定，此处记录并在验证中核对。 |
 | `environment` | "dev" | 本文件只描述本地开发网络；生产/Staging 参数将另建文件与目录，禁止从 dev 复制（宪法第四条）。 |
-| `configVersion` | "1.1.0" | 协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。 |
+| `configVersion` | "1.2.0" | 协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。1.2.0（2026-09-04）：新增 endpoints.publishedHosts，把 RPC 主机名从代码提升为声明参数。 |
 
 ### Avalanche 组件版本（锁定）
 
@@ -87,6 +87,7 @@
 |---|---|---|
 | `endpoints.hostRpcPort` | 8545 | 8545：EVM 生态惯例端口（Anvil/Hardhat/geth 同款），MetaMask 等工具默认友好；可被宿主 .env 覆盖而不影响链身份。 |
 | `endpoints.rpcPath` | "/ext/bc/karmachain/rpc" | /ext/bc/karmachain/rpc：由 blockchainName 派生（load.mjs 断言），Avalanche 节点的标准链路径 + CLI 设置的别名。 |
+| `endpoints.publishedHosts` | ["127.0.0.1","localhost"] | 本链对外发布 RPC 的主机名列表，按优先顺序排列；公开产物 chain-info.json 的 rpc.http/rpc.ws 由它逐一生成（第三方消费者应依次尝试）。开发网取 ["127.0.0.1", "localhost"]：两者在任何运行本链的机器上都成立，因而可安全提交、不因开发者而异。**不要**把局域网 IP 或某台机器专属地址写进来——那属于消费者侧的临时覆盖（如 karma-sc 的 KARMACHAIN_RPC_URL）。真实部署时此处列出实际域名；注意 avalanchego 只接受 Host 为 localhost 或 IP 字面量，其他域名需由反向代理改写 Host。 |
 
 ### 派生值（不存储，由 `tools/protocol/load.mjs derive()` 计算）
 
