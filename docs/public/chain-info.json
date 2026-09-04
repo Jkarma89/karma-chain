@@ -72,7 +72,9 @@
     "blockExplorerUrls": []
   },
   "contracts": {
-    "$comment": "Official contract addresses. Genesis-embedded infrastructure only for now; application contracts will be listed here as they are deployed.",
+    "$comment": "Official contracts. Today this is only the genesis-embedded validator-management infrastructure — KarmaChain has not deployed any application contracts yet, and anything you find on chain that is not listed here is NOT official (contracts named Greeter, Counter and the like are examples and probes, not part of the chain).",
+    "$abi": "No ABIs are published here yet. The contracts below are Avalanche's standard PoA ValidatorManager set, embedded in the genesis as bytecode; their source and ABIs come from the upstream ava-labs/icm-contracts project, not from us. When KarmaChain deploys its own application contracts, their ABIs will be published as part of this artifact.",
+    "$listed": "Only the two addresses a third party would interact with or inspect are listed. The genesis also contains a ValidatorMessages library and a ProxyAdmin, which are internal implementation details of the set below and are intentionally omitted.",
     "validatorManagerProxy": "0x0Feedc0de0000000000000000000000000000000",
     "validatorManagerImplementation": "0x0C0DEbA5E0000000000000000000000000000000"
   },

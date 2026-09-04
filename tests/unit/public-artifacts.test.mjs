@@ -117,6 +117,53 @@ describe('chain-info.json exposes what a third party needs', () => {
   });
 });
 
+describe('the contracts block is honest about what is and is not published', () => {
+  test('states plainly that no ABIs are published yet, and where these ABIs come from', () => {
+    assert.match(info.contracts.$abi, /No ABIs are published here yet/);
+    assert.match(info.contracts.$abi, /ava-labs\/icm-contracts/, 'must point at the upstream source');
+    assert.match(info.contracts.$abi, /as bytecode/, 'must explain why we do not have them');
+    assert.match(info.contracts.$abi, /not from us/, 'must be clear about who owns these ABIs');
+  });
+
+  test('explains that only the interactable addresses are listed', () => {
+    assert.match(info.contracts.$listed, /ValidatorMessages|ProxyAdmin/);
+    assert.match(info.contracts.$listed, /intentionally omitted/);
+  });
+
+  test('warns that unlisted on-chain contracts are not official', () => {
+    assert.match(info.contracts.$comment, /NOT official/);
+    assert.match(info.contracts.$comment, /Greeter|Counter/, 'name the example contracts a newcomer will actually find');
+  });
+
+  test('lists the proxy as the entry point alongside its implementation', () => {
+    assert.match(info.contracts.validatorManagerProxy, /^0x[0-9a-fA-F]{40}$/);
+    assert.match(info.contracts.validatorManagerImplementation, /^0x[0-9a-fA-F]{40}$/);
+    assert.notEqual(info.contracts.validatorManagerProxy, info.contracts.validatorManagerImplementation);
+  });
+
+  test('the quickstart carries the same statement for human readers', () => {
+    assert.match(quickstart, /## 6\. 官方合约与 ABI/);
+    assert.match(quickstart, /尚未发布任何 ABI/);
+    assert.match(quickstart, /尚未部署任何业务合约/);
+    assert.match(quickstart, /不是官方合约/);
+  });
+
+  test('quickstart section cross-references point at the right sections', () => {
+    // 章节编号变化时最容易留下失效引用
+    const sections = [...quickstart.matchAll(/^## (\d+)\. (.+)$/gm)].map((m) => ({ n: Number(m[1]), title: m[2] }));
+    assert.deepEqual(sections.map((s) => s.n), sections.map((_, i) => i + 1), 'section numbers must be contiguous from 1');
+    for (const m of quickstart.matchAll(/见第 (\d+) 节/g)) {
+      const n = Number(m[1]);
+      assert.ok(sections.some((s) => s.n === n), `cross-reference to section ${n} but no such section exists`);
+    }
+    // 具体核对两处指向
+    const behaviours = sections.find((s) => s.title.includes('链行为'));
+    assert.ok(quickstart.includes(`链空闲时的正常表现，见第 ${behaviours.n} 节`), 'the idle-height answer must point at the chain-behaviour section');
+    const evm = sections.find((s) => s.title.includes('evmVersion'));
+    assert.ok(quickstart.includes(`见第 ${evm.n} 节`), 'the deployment-failure answer must point at the evmVersion section');
+  });
+});
+
 describe('chain-info.json leaks nothing internal', () => {
   // 第三方接口只能含公开信息：不得出现内部路径、验证者密钥材料、内部版本锁定等
   const serialized = JSON.stringify(info);

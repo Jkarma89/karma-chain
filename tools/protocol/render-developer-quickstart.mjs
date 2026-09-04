@@ -143,7 +143,22 @@ cast send <合约地址> "increment()" --rpc-url $KARMACHAIN_RPC --private-key $
 
 导入上表任一账户的私钥即可看到余额。
 
-## 6. 你需要知道的链行为
+## 6. 官方合约与 ABI
+
+| 合约 | 地址 | 说明 |
+|---|---|---|
+| Validator Manager（代理） | \`0x0Feedc0de0000000000000000000000000000000\` | 对外入口；调用应发往这里 |
+| Validator Manager（实现） | \`0x0C0DEbA5E0000000000000000000000000000000\` | 代理当前指向的实现，仅供查验 |
+
+**目前本链尚未发布任何 ABI。** 上面两个是 Avalanche 标准的 PoA ValidatorManager 合约，以字节码形式写入创世；
+其源码与 ABI 来自上游的 \`ava-labs/icm-contracts\` 项目，不由我们提供。
+创世中还有一个 ValidatorMessages 库和一个 ProxyAdmin，属于上述合约集的内部实现细节，故未列出。
+
+${p.name} **尚未部署任何业务合约**。链上出现的其他合约（名为 Greeter、Counter 之类的）都是示例与探针，
+**不是官方合约**，不要在集成中依赖它们。等本链部署自己的业务合约时，其 ABI 会随
+[\`chain-info.json\`](chain-info.json) 一并发布。
+
+## 7. 你需要知道的链行为
 
 | 行为 | 说明 |
 |---|---|
@@ -155,7 +170,7 @@ cast send <合约地址> "increment()" --rpc-url $KARMACHAIN_RPC --private-key $
 | **原生代币不可增发** | 包括链的运营方在内，没有任何人能凭空铸造 ${p.nativeToken.symbol} |
 | **Host 头限制** | RPC 只接受 \`Host\` 为 \`localhost\` 或 **IP 字面量** 的请求；用其他主机名会得到 \`403 invalid host specified\`。容器/代理场景请先把主机名解析成 IP |
 
-## 7. 常见问题
+## 8. 常见问题
 
 **部署交易失败，或合约行为异常**
 先确认 \`evmVersion = cancun\`（见第 2 节）。这是最常见的原因。
@@ -164,7 +179,7 @@ cast send <合约地址> "increment()" --rpc-url $KARMACHAIN_RPC --private-key $
 你的 \`Host\` 头是主机名。改用 \`127.0.0.1\`、\`localhost\` 或直接用 IP。
 
 **区块高度不动**
-链空闲时的正常表现，见第 6 节。发一笔交易即会出块。
+链空闲时的正常表现，见第 7 节。发一笔交易即会出块。
 
 **余额为 0**
 确认导入的是第 3 节表中的账户；开发网被重置后钱包可能缓存旧状态，切换网络再切回可刷新。

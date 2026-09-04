@@ -117,10 +117,27 @@ export function renderChainInfo() {
       blockExplorerUrls: [],
     },
 
-    // --- 官方合约地址（第三方集成的锚点）---
+    // --- 官方合约（第三方集成的锚点）---
     contracts: {
-      $comment: 'Official contract addresses. Genesis-embedded infrastructure only for now; application contracts will be listed here as they are deployed.',
+      $comment:
+        'Official contracts. Today this is only the genesis-embedded validator-management '
+        + 'infrastructure — KarmaChain has not deployed any application contracts yet, and anything '
+        + 'you find on chain that is not listed here is NOT official (contracts named Greeter, Counter '
+        + 'and the like are examples and probes, not part of the chain).',
+      // ABI 尚未由本链发布 —— 明确写出来，免得第三方以为漏了或去反编译
+      // 只说第三方需要知道的来源，不提我们用的工具版本 —— 那是内部选择，变了也不影响他们
+      $abi:
+        'No ABIs are published here yet. The contracts below are Avalanche\'s standard PoA '
+        + 'ValidatorManager set, embedded in the genesis as bytecode; their source and ABIs come from '
+        + 'the upstream ava-labs/icm-contracts project, not from us. When KarmaChain deploys its own '
+        + 'application contracts, their ABIs will be published as part of this artifact.',
+      $listed:
+        'Only the two addresses a third party would interact with or inspect are listed. The genesis '
+        + 'also contains a ValidatorMessages library and a ProxyAdmin, which are internal implementation '
+        + 'details of the set below and are intentionally omitted.',
+      // 对外入口：所有调用都应发往代理，而不是实现合约
       validatorManagerProxy: '0x0Feedc0de0000000000000000000000000000000',
+      // 代理当前指向的实现，仅用于查验/审计
       validatorManagerImplementation: '0x0C0DEbA5E0000000000000000000000000000000',
     },
 
