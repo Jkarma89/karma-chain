@@ -18,7 +18,27 @@
 | 原生代币 | KarmaCoin（**KARMA**，18 位小数） |
 | 区块浏览器 | 暂未提供 |
 
-自检（应返回 `0x4edd`）：
+### ⚠️ 你不在运行这条链的那台机器上？
+
+上表的地址是**回环地址**（`127.0.0.1`、`localhost`），只对运行链的那台机器有效。
+从别的机器访问会连接失败——不是链的问题，是这个地址在你机器上指向你自己。
+
+这么办：
+
+1. 向链的运维者索取**可达地址**。局域网内通常是宿主机的 IP，形如
+   `http://<宿主机IP>:8545/ext/bc/karmachain/rpc`。
+2. **必须是 IP，不能是域名。** 节点只接受 `Host` 为 `localhost` 或 IP 字面量的请求，
+   用域名会得到 `403 invalid host specified`（详见第 7 节）。
+3. 把下文所有命令里的 RPC 地址替换成它。设个环境变量最省事：
+
+   ```bash
+   export KARMACHAIN_RPC=http://<宿主机IP>:8545/ext/bc/karmachain/rpc
+   ```
+
+可达地址不在本文与 [`chain-info.json`](chain-info.json) 中，因为它取决于链跑在哪台机器上，
+不是链本身的属性。
+
+自检（应返回 `0x4edd`；把 `http://127.0.0.1:8545/ext/bc/karmachain/rpc` 换成你实际使用的地址）：
 
 ```bash
 curl -s -X POST -H 'content-type: application/json' \

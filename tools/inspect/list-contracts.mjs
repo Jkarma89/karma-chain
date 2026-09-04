@@ -19,13 +19,18 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { publicClient, protocol, rpcUrl, REPO_ROOT_HINT } from '../verify/lib/rpc.mjs';
 
-const args = process.argv.slice(2);
-const asJson = args.includes('--json');
-const noProbe = args.includes('--no-probe');
-const fromBlock = (() => {
-  const i = args.indexOf('--from');
-  return i !== -1 && args[i + 1] ? BigInt(args[i + 1]) : 1n;
-})();
+/**
+ * 解析命令行开关。**每次调用时解析**，不在模块加载时定格 —— 否则 collect() 的行为
+ * 会被 import 那一刻的 argv 锁死，调用方（测试、其他工具）再也无法改变它。
+ */
+export function parseArgs(argv = process.argv.slice(2)) {
+  const i = argv.indexOf('--from');
+  return {
+    asJson: argv.includes('--json'),
+    probe: !argv.includes('--no-probe'),
+    fromBlock: i !== -1 && argv[i + 1] ? BigInt(argv[i + 1]) : 1n,
+  };
+}
 
 const GENESIS_PATH = resolve(REPO_ROOT_HINT, 'blockchain/genesis/karmachain.genesis.json');
 const CHAIN_INFO_PATH = resolve(REPO_ROOT_HINT, 'docs/public/chain-info.json');
@@ -58,8 +63,8 @@ function officialAddresses() {
     .map(([name, addr]) => [addr.toLowerCase(), name]));
 }
 
-async function probeInterfaces(address) {
-  if (noProbe) return [];
+async function probeInterfaces(address, probe) {
+  if (!probe) return [];
   const { keccak256, toHex, decodeAbiParameters } = await import('viem');
   const hits = [];
   await Promise.all(PROBES.map(async ({ sig, ret }) => {
@@ -94,7 +99,9 @@ async function scanDeployments(from, to, concurrency = 16) {
   return found;
 }
 
-async function collect() {
+/** @param {{fromBlock?: bigint, probe?: boolean}} [opts] 未给出的项回落到命令行开关。 */
+async function collect(opts = {}) {
+  const { fromBlock, probe } = { ...parseArgs(), ...opts };
   const height = await publicClient.getBlockNumber();
   const official = officialAddresses();
   const genesis = readJsonMaybe(GENESIS_PATH);
@@ -136,7 +143,7 @@ async function collect() {
     const code = await publicClient.getCode({ address: e.address });
     e.codeSize = code && code !== '0x' ? (code.length - 2) / 2 : 0;
     e.live = e.codeSize > 0;
-    e.signals = e.live ? await probeInterfaces(e.address) : [];
+    e.signals = e.live ? await probeInterfaces(e.address, probe) : [];
   }
 
   entries.sort((a, b) => (a.block - b.block) || a.address.localeCompare(b.address));
@@ -176,8 +183,11 @@ function printTable({ height, scannedFrom, entries }) {
   console.log('  debug a specific transaction with:  cast run <txhash> --rpc-url <rpc>\n');
 }
 
-const data = await collect();
-if (asJson) console.log(JSON.stringify(data, null, 2));
-else printTable(data);
-
 export { collect };
+
+// 只有作为命令运行时才扫链；被 import 时不产生任何副作用。
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  const data = await collect();
+  if (parseArgs().asJson) console.log(JSON.stringify(data, null, 2));
+  else printTable(data);
+}

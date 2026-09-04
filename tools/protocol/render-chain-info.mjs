@@ -61,6 +61,13 @@ export function renderChainInfo() {
       ws: d.wsUrls,
       // avalanchego 的 --http-allowed-hosts 默认只放行 localhost 与 IP 字面量，其余返回 403。
       hostHeaderPolicy: 'Only "localhost" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 "invalid host specified". Resolve hostnames to an IP before connecting.',
+      // 明确告诉消费者：不要盲目使用 http[0]。可达地址取决于链跑在哪台机器上，不是链的属性。
+      reachability:
+        `The endpoints above are loopback addresses (${p.endpoints.publishedHosts.join(', ')}) and only work `
+        + 'on the machine running the chain. From anywhere else, ask the chain operator for a reachable '
+        + 'address — on a LAN that is the host machine\'s IP with the same port and path. It must be an IP, '
+        + 'not a hostname, because of the Host header policy above. A reachable address is not published '
+        + 'here because it depends on where the chain is running, which is not a property of the chain.',
     },
 
     // --- EVM 能力（第三方最容易踩坑的一项）---

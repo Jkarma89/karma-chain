@@ -20,7 +20,8 @@
       "ws://127.0.0.1:8545/ext/bc/karmachain/ws",
       "ws://localhost:8545/ext/bc/karmachain/ws"
     ],
-    "hostHeaderPolicy": "Only \"localhost\" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 \"invalid host specified\". Resolve hostnames to an IP before connecting."
+    "hostHeaderPolicy": "Only \"localhost\" or an IP literal is accepted in the HTTP Host header; other hostnames get 403 \"invalid host specified\". Resolve hostnames to an IP before connecting.",
+    "reachability": "The endpoints above are loopback addresses (127.0.0.1, localhost) and only work on the machine running the chain. From anywhere else, ask the chain operator for a reachable address — on a LAN that is the host machine's IP with the same port and path. It must be an IP, not a hostname, because of the Host header policy above. A reachable address is not published here because it depends on where the chain is running, which is not a property of the chain."
   },
   "evm": {
     "version": "cancun",

@@ -70,6 +70,18 @@ describe('chain-info.json exposes what a third party needs', () => {
     }
   });
 
+  test('says plainly that the endpoints are loopback-only and what to do instead', () => {
+    // 第三方最先撞上的墙：拿到 rpc.http[0] 却不在跑链的那台机器上。
+    // 机器可读制品必须自己说明这件事，否则消费方工具会盲用 http[0]。
+    assert.match(info.rpc.reachability, /loopback/);
+    assert.match(info.rpc.reachability, /only work on the machine running the chain/);
+    assert.match(info.rpc.reachability, /ask the chain operator/);
+    assert.match(info.rpc.reachability, /must be an IP, not a hostname/);
+    for (const host of protocol.endpoints.publishedHosts) {
+      assert.ok(info.rpc.reachability.includes(host), `reachability must name the loopback host ${host}`);
+    }
+  });
+
   test('the EVM version and its rationale are stated (the most common third-party pitfall)', () => {
     assert.equal(info.evm.version, 'cancun');
     assert.match(info.evm.note, /Pectra/);
@@ -213,6 +225,21 @@ describe('developer-quickstart.md answers the third-party essentials', () => {
     assert.match(quickstart, /无交易不出块/);
     assert.match(quickstart, /403 invalid host specified|Host 头限制/);
     assert.match(quickstart, /原生代币不可增发/);
+  });
+
+  test('tells a developer who is not on the chain machine what to do', () => {
+    // 局域网/远程开发者按回环地址连必然失败；文档不解释，他们就无从判断是链坏了还是地址错了。
+    assert.match(quickstart, /你不在运行这条链的那台机器上/);
+    assert.match(quickstart, /回环地址/);
+    assert.ok(quickstart.includes('向链的运维者索取**可达地址**'));
+    assert.ok(quickstart.includes('**必须是 IP，不能是域名。**'));
+    assert.match(quickstart, /403 invalid host specified/);
+    // 可达地址依赖运行环境，不能写进任何生成物 —— 说清这一点，免得读者以为文档漏了
+    assert.ok(quickstart.includes('可达地址不在本文与 [`chain-info.json`](chain-info.json) 中'));
+    // 指出替换范围，并给出一个可照抄的覆盖方式
+    assert.match(quickstart, /export KARMACHAIN_RPC=/);
+    assert.ok(quickstart.indexOf('你不在运行这条链的那台机器上') < quickstart.indexOf('## 2.'),
+      'the note must sit in the connection section, before anything tells the reader to run a command');
   });
 
   test('includes the genesis hash so a developer can confirm the chain instance', () => {

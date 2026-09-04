@@ -75,14 +75,15 @@ describe('list-contracts against the live chain', () => {
   test('--from narrows the deployment scan without dropping genesis contracts', async () => {
     const height = Number(await publicClient.getBlockNumber());
     if (height < 2) return;   // 链太短，无从验证
-    const original = process.argv;
-    process.argv = [original[0], original[1], '--from', String(height), '--no-probe'];
-    try {
-      const narrowed = await collect();
-      assert.equal(narrowed.entries.filter((e) => e.origin === 'genesis').length, genesisContractCount,
-        'genesis contracts come from the genesis file and must not depend on --from');
-      assert.ok(narrowed.entries.filter((e) => e.origin === 'deployed').every((e) => e.block >= height));
-    } finally { process.argv = original; }
+    const narrowed = await collect({ fromBlock: BigInt(height), probe: false });
+    assert.equal(narrowed.entries.filter((e) => e.origin === 'genesis').length, genesisContractCount,
+      'genesis contracts come from the genesis file and must not depend on --from');
+    assert.ok(narrowed.entries.filter((e) => e.origin === 'deployed').every((e) => e.block >= height));
+    assert.equal(narrowed.scannedFrom, height);
+    // 缩小窗口只能减少运行期部署，不能增加
+    const wide = data.entries.filter((e) => e.origin === 'deployed').length;
+    assert.ok(narrowed.entries.filter((e) => e.origin === 'deployed').length <= wide);
+    assert.ok(narrowed.entries.every((e) => e.signals.length === 0), 'probe:false must skip interface probing');
   });
 
   test('the total matches protocol expectations: 4 genesis contracts, all with code', () => {
