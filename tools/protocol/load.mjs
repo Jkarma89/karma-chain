@@ -59,6 +59,17 @@ function formatAjvError(e) {
 }
 
 /** data-model.md §1 的业务约束；返回可读错误列表（空数组 = 通过）。假定 schema 已通过。 */
+/**
+ * 约束 T-5（每故障边界的验证者数不得超过容错上限）违规的机器可读标记。
+ *
+ * 为什么需要它：违规必须映射到**退出码 13**（contracts/cli-interface.md），
+ * 而 validateConstraints 只产出字符串。此前 validate-topology.mjs 靠匹配英文散文
+ * （`'holds'` + `'L1 validators, limit is'`）来识别 —— 文案一改（比如按契约要求改成中文）
+ * 判据就静默失效，退出码退化成 10。用标记后二者不再耦合于措辞或语言。
+ * T-5 的编号见 specs/002-resilient-validator-network/data-model.md §1。
+ */
+export const TOPOLOGY_VIOLATION_TAG = '[T-5]';
+
 export function validateConstraints(p) {
   const errors = [];
   const fail = (msg) => errors.push(msg);
@@ -121,6 +132,82 @@ export function validateConstraints(p) {
   const expectedPath = `/ext/bc/${p.chain.blockchainName}/rpc`;
   if (p.endpoints.rpcPath !== expectedPath) fail(`endpoints.rpcPath must be ${expectedPath} (derived from chain.blockchainName)`);
 
+  // --- 拓扑（功能 002；约束编号见 specs/002-…/data-model.md §1）---
+  const t = p.topology;
+  const tNodes = t.nodes;
+  const validatorNodes = tNodes.filter((n) => n.role === 'l1-validator');
+  const primaryNodes = tNodes.filter((n) => n.role === 'primary');
+
+  // T-6 节点 id 唯一
+  const ids = tNodes.map((n) => n.id);
+  const dupIds = ids.filter((x, i) => ids.indexOf(x) !== i);
+  if (dupIds.length) fail(`topology.nodes[].id must be unique; duplicates: ${[...new Set(dupIds)].join(', ')}`);
+
+  // T-1 / T-2 节点数量与既有声明一致
+  if (validatorNodes.length !== p.validators.count) {
+    fail(`topology has ${validatorNodes.length} l1-validator nodes but validators.count is ${p.validators.count}`);
+  }
+  if (primaryNodes.length !== p.primaryNetwork.nodeCount) {
+    fail(`topology has ${primaryNodes.length} primary nodes but primaryNetwork.nodeCount is ${p.primaryNetwork.nodeCount}`);
+  }
+
+  // validatorIndex 必须恰好覆盖 1..validators.count（端口与 keyDir 由 validators.nodes[] 提供）
+  const vIdx = validatorNodes.map((n) => n.validatorIndex).sort((a, b) => a - b);
+  const wantIdx = nodes.map((n) => n.index);
+  if (JSON.stringify(vIdx) !== JSON.stringify(wantIdx)) {
+    fail(`topology l1-validator nodes must reference validators.nodes indices ${wantIdx.join(',')} exactly once each (got ${vIdx.join(',')})`);
+  }
+
+  // Primary 端口不得与验证者端口或宿主 RPC 端口冲突
+  const primaryPorts = primaryNodes.flatMap((n) => [n.httpPort, n.stakingPort]);
+  const dupPrimary = primaryPorts.filter((x, i) => primaryPorts.indexOf(x) !== i);
+  if (dupPrimary.length) fail(`topology primary ports must be unique; duplicates: ${[...new Set(dupPrimary)].join(', ')}`);
+  const validatorPorts = new Set(ports);
+  primaryPorts.filter((x) => validatorPorts.has(x) || x === p.endpoints.hostRpcPort)
+    .forEach((x) => fail(`topology primary port ${x} collides with a validator port or endpoints.hostRpcPort`));
+
+  // T-3 activeDeployment 必须存在
+  if (!Object.prototype.hasOwnProperty.call(t.deployments, t.activeDeployment)) {
+    fail(`topology.activeDeployment "${t.activeDeployment}" is not a key of topology.deployments (${Object.keys(t.deployments).join(', ')})`);
+  }
+
+  const idSet = new Set(ids);
+  for (const [name, dep] of Object.entries(t.deployments)) {
+    const domains = dep.failureDomains;
+
+    // 边界 id 唯一
+    const dIds = domains.map((d) => d.id);
+    const dupD = dIds.filter((x, i) => dIds.indexOf(x) !== i);
+    if (dupD.length) fail(`deployment "${name}": failureDomains[].id must be unique; duplicates: ${[...new Set(dupD)].join(', ')}`);
+
+    // T-4 成员并集 == 节点全集，且互不重叠
+    const members = domains.flatMap((d) => d.nodes);
+    const dupM = members.filter((x, i) => members.indexOf(x) !== i);
+    if (dupM.length) fail(`deployment "${name}": node(s) assigned to more than one failure domain: ${[...new Set(dupM)].join(', ')}`);
+    const unknown = members.filter((m) => !idSet.has(m));
+    if (unknown.length) fail(`deployment "${name}": unknown node id(s) ${[...new Set(unknown)].join(', ')}`);
+    const missing = ids.filter((i) => !members.includes(i));
+    if (missing.length) fail(`deployment "${name}": node(s) not assigned to any failure domain: ${missing.join(', ')}`);
+
+    // T-5 边界数 > 1 时，任一边界内的验证者不得超过容错上限 ⌊n/4⌋
+    // 单边界形态（阶段一）不做整机失效容错承诺，故不适用 —— 见 specs/002-…/data-model.md §4
+    if (domains.length > 1) {
+      const maxPerDomain = Math.floor(p.validators.count / 4);
+      for (const d of domains) {
+        const inDomain = d.nodes.filter((id) => validatorNodes.some((n) => n.id === id));
+        if (inDomain.length > maxPerDomain) {
+          // 文案依 contracts/cli-interface.md 的"新增退出码 13"一节：必须给出**可执行**的
+          // 修正方向（把哪个节点挪走），而不只是报出违规。语言与工具其余输出一致（中文）。
+          const surplus = inDomain.slice(maxPerDomain);
+          fail(`${TOPOLOGY_VIOLATION_TAG} 形态 "${name}"：故障边界 '${d.id}' 含 ${inDomain.length} 个 L1 验证者，`
+            + `上限为 ${maxPerDomain}（${p.validators.count} 个等权验证者，查询门槛 75% → `
+            + `最多容忍 ⌊${p.validators.count}/4⌋ = ${maxPerDomain} 个离线）。`
+            + `把 ${surplus.join('、')} 移到另一个边界，或增加边界数量。`);
+        }
+      }
+    }
+  }
+
   return errors;
 }
 
@@ -154,6 +241,143 @@ export function derive(p) {
     initialSupplyWei,
     initialSupplyTokens: initialSupplyWei / 10n ** BigInt(p.nativeToken.decimals),
     totalNodeCount: p.primaryNetwork.nodeCount + p.validators.count,
+    ...deriveTopology(p),
+  };
+}
+
+/**
+ * 把共享失效因素相同的故障边界合并成**有效边界**。
+ *
+ * 为什么必须合并：整域失效容忍的前提是"各边界独立失效"。两个边界共享同一个因素时，
+ * 该因素一旦触发会同时打掉两边 —— 对这项承诺而言它们根本就是同一个边界。
+ * 只把共享因素报成告警是不够的：2026-09-07 实测发现声明的 5 个边界里有 3 个是虚拟机、
+ * 宿主只有 2 台物理机（win-1 承载 3 个验证者），而当时的模型仍然打印
+ * "可容忍 1 个边界整体失效 [OK]" —— 一个**在现实里为假的绿灯**，正是最危险的缺陷形态。
+ *
+ * 合并用并查集：因素是可传递的（A 与 B 共享 f1、B 与 C 共享 f2 ⇒ A/B/C 同生共死）。
+ * @returns {Array<{ids: string[], factors: string[], nodes: string[]}>}
+ */
+export function effectiveDomains(domains) {
+  const parent = new Map(domains.map((d) => [d.id, d.id]));
+  const find = (x) => (parent.get(x) === x ? x : (parent.set(x, find(parent.get(x))), parent.get(x)));
+  const union = (a, b) => { const ra = find(a); const rb = find(b); if (ra !== rb) parent.set(ra, rb); };
+
+  const byFactor = new Map();
+  for (const d of domains) {
+    for (const f of d.sharedFailureFactors ?? []) {
+      if (!byFactor.has(f)) byFactor.set(f, []);
+      byFactor.get(f).push(d.id);
+    }
+  }
+  for (const ids of byFactor.values()) for (let i = 1; i < ids.length; i++) union(ids[0], ids[i]);
+
+  const groups = new Map();
+  for (const d of domains) {
+    const root = find(d.id);
+    if (!groups.has(root)) groups.set(root, { ids: [], factors: new Set(), nodes: [] });
+    const g = groups.get(root);
+    g.ids.push(d.id);
+    g.nodes.push(...d.nodes);
+    for (const f of d.sharedFailureFactors ?? []) g.factors.add(f);
+  }
+  return [...groups.values()].map((g) => ({ ids: g.ids, factors: [...g.factors], nodes: g.nodes }));
+}
+
+/**
+ * 容错推导。**声明边界**用于校验 T-5（每边界至多 maxOfflineValidators 个验证者），
+ * **有效边界**（合并共享因素后）才决定 tolerateWholeDomainLoss 这项对外承诺。
+ */
+function faultTolerance(domains, nodes, n, maxOfflineValidators) {
+  const isValidator = (id) => nodes.some((x) => x.id === id && x.role === 'l1-validator');
+  const countIn = (ids) => ids.filter(isValidator).length;
+  const effective = effectiveDomains(domains);
+  const withinLimit = (list) => list.every((x) => countIn(x.nodes) <= maxOfflineValidators);
+
+  return {
+    validatorCount: n,
+    maxOfflineValidators,
+    domainCount: domains.length,
+    // 单边界形态不做整机失效承诺；多边界时每边界至多 maxOfflineValidators 个验证者
+    maxValidatorsPerDomain: domains.length > 1 ? maxOfflineValidators : n,
+    // 声明层面是否合规（T-5 校验用）
+    declaredWithinLimit: domains.length > 1 && withinLimit(domains.map((d) => ({ nodes: d.nodes }))),
+    effectiveDomainCount: effective.length,
+    effectiveDomains: effective.map((g) => ({ ids: g.ids, factors: g.factors, validators: countIn(g.nodes) })),
+    // 对外承诺：必须按有效边界判定，否则共享因素会被绿灯掩盖
+    tolerateWholeDomainLoss: effective.length > 1 && withinLimit(effective),
+  };
+}
+
+/**
+ * 拓扑派生（功能 002）：把 topology 的引用解析成每个节点的完整参数。
+ * 验证者的端口与 keyDir 来自 validators.nodes[]（唯一出处），此处只做解析，不引入新值。
+ */
+export function deriveTopology(p) {
+  const byIndex = new Map(p.validators.nodes.map((n) => [n.index, n]));
+  const deployment = p.topology.deployments[p.topology.activeDeployment];
+  const domainOf = new Map();
+  for (const d of deployment.failureDomains) for (const id of d.nodes) domainOf.set(id, d);
+
+  // 故障边界地址允许由环境变量覆盖（T060）：机器 IP 是**安装特有**数据，
+  // 提交进 protocol.json 是为了满足 FR-022（跨机部署不得依赖手工步骤），
+  // 但换网段、换机器、他人复用本仓库时不该被迫改事实来源。
+  //   KARMACHAIN_ADDRESS_OVERRIDE="win-1=192.168.1.50 ubuntu-2=192.168.1.61"
+  const overrides = new Map(
+    (process.env.KARMACHAIN_ADDRESS_OVERRIDE ?? '')
+      .split(/\s+/).filter(Boolean)
+      .map((pair) => {
+        const i = pair.indexOf('=');
+        if (i < 1) throw new Error(`KARMACHAIN_ADDRESS_OVERRIDE 格式应为 "<domain>=<ip>"，收到 "${pair}"`);
+        return [pair.slice(0, i), pair.slice(i + 1)];
+      }),
+  );
+  for (const id of overrides.keys()) {
+    if (!deployment.failureDomains.some((d) => d.id === id)) {
+      throw new Error(`KARMACHAIN_ADDRESS_OVERRIDE 指向未知故障边界 "${id}"；本形态可选：${deployment.failureDomains.map((d) => d.id).join(', ')}`);
+    }
+  }
+  const addressOf = (d) => overrides.get(d.id) ?? d.address;
+
+  // 单机形态：每个节点是独立容器，必须有各自的地址 —— 共用边界地址会让节点连向自身。
+  // 多机形态：节点分处不同机器，地址即所属边界的机器地址，靠端口区分同机节点。
+  const net = deployment.containerNetwork;
+  const containerIp = (index) => {
+    const base = net.subnet.split('/')[0].split('.').slice(0, 3).join('.');
+    return `${base}.${net.firstHost + index}`;
+  };
+
+  const nodes = p.topology.nodes.map((n, i) => {
+    const d = domainOf.get(n.id);
+    const v = n.role === 'l1-validator' ? byIndex.get(n.validatorIndex) : null;
+    return {
+      id: n.id,
+      role: n.role,
+      httpPort: v ? v.httpPort : n.httpPort,
+      stakingPort: v ? v.stakingPort : n.stakingPort,
+      keyDir: v ? v.keyDir : n.keyDir,
+      domain: d?.id ?? null,
+      address: net ? containerIp(i) : (d ? addressOf(d) : null),
+      hostAddress: d ? addressOf(d) : null,
+      platform: d?.platform ?? null,
+    };
+  });
+
+  // 容错上限：等权验证者 n 个，发起查询需已连接权重 >= 共识法定人数/采样规模 = 75%
+  // => (n-f)/n >= 0.75 => f <= n/4（001 研究 R-05，源码 snow/engine/snowman/engine.go）
+  const n = p.validators.count;
+  const maxOfflineValidators = Math.floor(n / 4);
+  const domains = deployment.failureDomains;
+
+  return {
+    activeDeployment: p.topology.activeDeployment,
+    containerNetwork: net ?? null,
+    topologyNodes: nodes,
+    failureDomains: domains.map((d) => ({
+      ...d,
+      address: addressOf(d),
+      validatorCount: d.nodes.filter((id) => nodes.some((x) => x.id === id && x.role === 'l1-validator')).length,
+    })),
+    faultTolerance: faultTolerance(domains, nodes, n, maxOfflineValidators),
   };
 }
 

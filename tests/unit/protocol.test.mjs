@@ -126,7 +126,7 @@ describe('constraint layer rejects', () => {
     expectConstraintFailure(mutate((p) => { p.validators.nodes[1].keyDir = 'blockchain/validators/dev/node-9/'; }), 'keyDir');
   });
   test('duplicate validator ports', () => {
-    expectConstraintFailure(mutate((p) => { p.validators.nodes[1].httpPort = 9660; }), 'unique');
+    expectConstraintFailure(mutate((p) => { p.validators.nodes[1].httpPort = p.validators.nodes[0].httpPort; }), 'unique');
   });
   test('validator port colliding with reserved container port', () => {
     expectConstraintFailure(mutate((p) => { p.validators.nodes[0].httpPort = 9650; }), 'reserved container port');

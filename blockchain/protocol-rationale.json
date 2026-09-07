@@ -2,7 +2,7 @@
   "$comment": "protocol.json 每个参数的取值理由（宪法第十四条：决定了什么/为什么）。键为 protocol.json 中的路径；render-docs.mjs 要求所列必备路径全部存在，缺失即失败。仅文档用途，不参与共识。",
   "rationale": {
     "environment": "本文件只描述本地开发网络；生产/Staging 参数将另建文件与目录，禁止从 dev 复制（宪法第四条）。",
-    "configVersion": "协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。1.2.0（2026-09-04）：新增 endpoints.publishedHosts，把 RPC 主机名从代码提升为声明参数。",
+    "configVersion": "协议参数集的版本号；任何字段变更须递增并走宪法第十五条协议变更流程（stamp 机制会拒绝启动旧链数据）。1.1.0（2026-09-02）：调整开发账户创世分配，见 devAccounts。1.2.0（2026-09-04）：新增 endpoints.publishedHosts，把 RPC 主机名从代码提升为声明参数。 1.3.0（2026-09-06）：新增 topology，把节点身份、角色与故障边界从隐式部署方式提升为声明参数（功能 002）。 1.4.0（2026-09-06）：节点端口由 9650-9669 迁至 21650-21669，见 validators.nodes 与 topology。",
     "chain.chainId": "20189：本地开发网专用。与主网预留值分离，钱包不可能把本地链误认为主网。2026-08-31 核实 ethereum-lists/chains 未被占用；正式发布前需再次核实并注册。",
     "chain.reservedMainnetChainId": "20188：为 KarmaChain 未来主网预留，本地网络禁止使用（load.mjs 与 preflight 双重断言）。",
     "chain.blockchainName": "karmachain：Avalanche CLI 的链名，同时成为稳定的 RPC 别名路径 /ext/bc/karmachain/rpc（避免依赖随机的 BlockchainID）。",
@@ -29,10 +29,15 @@
     "validators.count": "5：2026-08-31 用户裁定（Q1=B）。可在本地暴露多验证者共识/同步行为；默认 Snow 参数下容忍 1 个离线（research R-05）。",
     "validators.management": "proof-of-authority：本地开发无质押经济需求；ValidatorManager 由 Avalanche CLI 部署（官方合约）。",
     "validators.ownerAccount": "ewoq：Avalanche 官方公开测试账户，CLI 在本地网络为其预置 P/C 链资金，可直接支付 P-Chain 交易并担任 PoA 管理员。",
-    "validators.nodes": "端口 9660-9669（HTTP/staking 交替）：避开 CLI 主网节点默认区间 9650-9653 与对外 RPC 端口；keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。",
+    "validators.nodes": "端口 21660-21669（HTTP/staking 交替）：keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。【端口迁移，configVersion 1.4.0】原用 9660-9669，实测 Windows 的 Hyper-V 从动态端口范围（本机 1024-15000）中切走了 9617-9716 等多个区间，覆盖全部节点端口；而跨机 P2P 要求 staking 端口发布到宿主，且 avalanchego 对外通告的就是 public-ip:staking-port（通告端口必须等于宿主发布端口，没有内外不同端口的选项），因此这些端口在 Windows 故障边界上无法使用。迁到 21650-21669：该区段在动态端口范围之外，Hyper-V 不会再切走它。编号保持原有对应关系（9660→21660）以便对照。8545 未受影响，本就不在保留区间内。",
     "devAccounts": "ewoq + Foundry Anvil 默认账户 #0-#4，使用生态公开测试密钥，让 Foundry/Hardhat/MetaMask 零配置可用；密钥公开，仅限本地（宪法第四条 v1.1.0 例外条款）。分配（configVersion 1.1.0，2026-09-02 用户裁定）：ewoq 与 anvil-0 各 1,000,000（ewoq 只需支付 PoA 初始化与少量 P-Chain 手续费；anvil-0 作为常规小额账户）；anvil-1/3/4 各 10,000,000、anvil-2 7,500,000，为大额转账、合约资金池、gas 压测等场景提供充足余额，且 anvil-2 取不同数值便于在测试中区分账户。合计初始供应 39,500,000 KARMA —— 开发网络供应量不代表主网代币经济学，主网参数将另行规格化。",
     "endpoints.hostRpcPort": "8545：EVM 生态惯例端口（Anvil/Hardhat/geth 同款），MetaMask 等工具默认友好；可被宿主 .env 覆盖而不影响链身份。",
     "endpoints.rpcPath": "/ext/bc/karmachain/rpc：由 blockchainName 派生（load.mjs 断言），Avalanche 节点的标准链路径 + CLI 设置的别名。",
-    "endpoints.publishedHosts": "本链对外发布 RPC 的主机名列表，按优先顺序排列；公开产物 chain-info.json 的 rpc.http/rpc.ws 由它逐一生成（第三方消费者应依次尝试）。开发网取 [\"127.0.0.1\", \"localhost\"]：两者在任何运行本链的机器上都成立，因而可安全提交、不因开发者而异。**不要**把局域网 IP 或某台机器专属地址写进来——那属于消费者侧的临时覆盖（如 karma-sc 的 KARMACHAIN_RPC_URL）。真实部署时此处列出实际域名；注意 avalanchego 只接受 Host 为 localhost 或 IP 字面量，其他域名需由反向代理改写 Host。"
+    "endpoints.publishedHosts": "本链对外发布 RPC 的主机名列表，按优先顺序排列；公开产物 chain-info.json 的 rpc.http/rpc.ws 由它逐一生成（第三方消费者应依次尝试）。开发网取 [\"127.0.0.1\", \"localhost\"]：两者在任何运行本链的机器上都成立，因而可安全提交、不因开发者而异。**不要**把局域网 IP 或某台机器专属地址写进来——那属于消费者侧的临时覆盖（如 karma-sc 的 KARMACHAIN_RPC_URL）。真实部署时此处列出实际域名；注意 avalanchego 只接受 Host 为 localhost 或 IP 字面量，其他域名需由反向代理改写 Host。",
+    "topology": "功能 002 引入。声明有哪些节点、各属哪个故障边界、部署在哪里 —— 此前这些是「单容器里跑 7 个进程」的隐含结果，既无法表达跨机部署，也无法校验容错约束。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]；Primary 节点的端口在仓库中无其他出处，故在此声明（21650/21651、21652/21653；原为 001 实测值 9650-9653，随 configVersion 1.4.0 的端口迁移一并改动）。故障边界 = 会同时失效的一组节点：容错上限 f ≤ ⌊n/4⌋ 由共识参数推导（001 研究 R-05），边界数 > 1 时任一边界内的验证者不得超过该上限。sharedFailureFactors 必填，因为「独立失效」无法由代码验证，只能要求部署者显式声明共享的供电、交换机与更新窗口（研究 R-12）。",
+    "topology.activeDeployment": "当前生效的部署形态。它是**唯一**决定\"节点用哪套地址启动\"的开关：生成物按形态分目录（blockchain/nodes/<deployment>/），改这一个字段再重新生成即可切换，不必改动任何其他声明。取 local（单机全部节点）：阶段一形态，只有 1 个故障边界，不做整机失效容错承诺。",
+    "topology.nodes": "声明有哪些节点及其角色。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]（此处只用 validatorIndex 引用）；Primary 节点的端口与 keyDir 在仓库中无其他出处，故在此声明。",
+    "topology.deployments": "每个部署形态声明一套\"节点 → 故障边界\"的归属。故障边界 = 会同时失效的一组节点。容错上限 f ≤ ⌊n/4⌋ 由共识参数推导（001 研究 R-05）；边界数 > 1 时任一边界内的验证者不得超过该上限（约束 T-5，违规即退出码 13）。sharedFailureFactors 必填且可为空数组，但空必须是**有意识的**空：\"独立失效\"无法由代码验证，只能要求部署者显式声明共享的供电、交换机、更新窗口与虚拟化宿主（研究 R-12）。共享同一因素的边界会被合并为一个**有效边界**，整域失效容忍按合并后判定 ——否则\"5 个边界各 1 个验证者\"这种声明会在真实宿主只有 2 台时依然显示绿灯（研究 R-12 的 2026-09-07 修正）。",
+    "topology.deployments.local.containerNetwork": "单机形态下 7 个容器需要**稳定且可预测**的地址：节点的 --public-ip 与 --bootstrap-ips 必须在容器启动前就能算出来，而 Docker 默认网络的地址分配不保证顺序。因此声明一个专用网段，按节点序号确定性地分配（firstHost 起）。跨机形态不声明本项 —— 那里用各机器的真实地址。"
   }
 }
