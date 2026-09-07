@@ -4,6 +4,27 @@
 import { STATUS } from '../lib/report.mjs';
 import { CATEGORIES, categorizeError } from '../lib/categories.mjs';
 import { readInventory, resolveNodeHost, nodeHealth, nodePeerCount, nodeIsBootstrapped, nodeId } from '../lib/avalanche-api.mjs';
+import { collect as collectNodeStatus } from '../../inspect/node-status.mjs';
+
+/**
+ * T094：`node` 与 `fault-tolerance` 两项改用**与容器健康检查同一个判据** ——
+ * "本节点能否参与 L1 出块"，而不是 `/ext/health` 的综合健康位。
+ *
+ * 为什么必须改（两次实测）：
+ *   1. 停掉 2 个 Primary 节点时链完全正常出块，但 5 个 L1 验证者的综合健康位全部转为 false
+ *      （它们带 partial-sync-primary-network，健康判定含 P 链可达性）—— 见研究 R-09 / V-08。
+ *   2. 重建全部容器后约 20 秒，`devnet-start` 报 READY、手工交易与合约部署都正常，
+ *      而同一时刻 devnet-verify 报 `7/7 unhealthy: HTTP 503` 且 fault-tolerance 报
+ *      "0/5 validators online, chain has stopped producing blocks" —— 一条**完全健康的链**
+ *      被报成越过容错上限。
+ *
+ * 判据统一之后，三处（docker/node/healthcheck.sh、tools/inspect/node-status.mjs、本文件）
+ * 对"健康"的定义一致；其中后两者共用同一份代码，不会各自漂移。
+ *
+ * 结果按检查项缓存：两项检查都要它，而它要探全部节点并采样两次。
+ */
+let nodeStatusPromise;
+const nodeStatus = () => (nodeStatusPromise ??= collectNodeStatus({ asJson: true, sampleSeconds: 1 }));
 
 /** 每节点检查的共同前置：清单存在且端点可达，否则给出可操作的 SKIP 理由。 */
 async function nodeAccess(protocol) {
@@ -76,18 +97,31 @@ export const nodeCheck = {
     if (inv.nodes.length !== expected) {
       return { status: STATUS.FAIL, category: CATEGORIES.NODE, detail: `inventory lists ${inv.nodes.length} nodes, protocol.json expects ${expected}` };
     }
-    const results = await Promise.all(inv.nodes.map(async (n) => {
-      try {
-        const h = await nodeHealth(n);
-        return { label: n.label, healthy: h.healthy === true, detail: h.healthy ? 'healthy' : 'unhealthy' };
-      } catch (e) {
-        return { label: n.label, healthy: false, detail: e.message.slice(0, 80) };
-      }
+    // 判据："本节点能否参与 L1 出块"（T094）。`catching-up` / `bootstrapping` 是"要等"
+    // 而非"坏了"，因此不算失败 —— 否则恢复期间的每一次验证都会误报。
+    const s = await nodeStatus();
+    const results = s.nodes.map((n) => ({
+      label: n.id, state: n.state, healthy: n.state === 'healthy',
+      waiting: ['catching-up', 'bootstrapping', 'starting'].includes(n.state),
+      detail: n.detail,
     }));
-    const bad = results.filter((r) => !r.healthy);
-    return bad.length === 0
-      ? { status: STATUS.OK, detail: `${results.length}/${expected} nodes healthy`, data: { nodes: results } }
-      : { status: STATUS.FAIL, category: CATEGORIES.NODE, detail: `${bad.length}/${expected} unhealthy: ${bad.map((b) => `${b.label} (${b.detail})`).join('; ')}`, data: { nodes: results } };
+    const bad = results.filter((r) => !r.healthy && !r.waiting);
+    const waiting = results.filter((r) => r.waiting);
+
+    if (bad.length) {
+      return {
+        status: STATUS.FAIL,
+        category: CATEGORIES.NODE,
+        detail: `${bad.length}/${expected} 须处置：${bad.map((b) => `${b.label} ${b.state}（${b.detail}）`).join('; ')}`,
+        data: { nodes: results },
+      };
+    }
+    const note = waiting.length ? `，${waiting.length} 个在恢复中（${waiting.map((w) => `${w.label} ${w.state}`).join('、')}）` : '';
+    return {
+      status: STATUS.OK,
+      detail: `${results.length - waiting.length}/${expected} nodes serving${note}`,
+      data: { nodes: results },
+    };
   },
 };
 
@@ -160,5 +194,48 @@ export const balanceCheck = {
   },
 };
 
-export const basicChecks = [rpcCheck, chainIdCheck, networkIdCheck, tokenCheck, nodeCheck, validatorCheck, balanceCheck];
+/**
+ * 容错余量（功能 002 / T045、FR-011）。
+ *
+ * 只报告「当前在线验证者数」与「推导出的容错上限」的关系 —— 让"还剩多少余量"成为
+ * 可自动化验证的事实，而不是需要人去心算的东西。
+ *
+ * 上限来自共识参数：等权验证者 n 个、发起查询需已连接权重 ≥ 75%，故 f ≤ ⌊n/4⌋
+ * （001 研究 R-05）。全部在线时余量满格；已有节点离线但仍在上限内时给出警示性说明；
+ * 越界则判为失败 —— 此时链已经停摆，属于必须立刻知道的状态。
+ */
+export const faultToleranceCheck = {
+  id: 'fault-tolerance',
+  async run({ protocol }) {
+    const access = await nodeAccess(protocol);
+    if (!access.ok) return { status: STATUS.SKIP, detail: access.reason };
+
+    // 与 node 项同源（T094）：离线的判定来自 node-status 的 classify，
+    // 因此 `catching-up` 的节点**不计入离线** —— 契约要求追赶中不算故障。
+    const s = await nodeStatus();
+    const { summary: sum, faultTolerance } = s;
+    const total = faultTolerance.validatorCount;
+    const maxOffline = faultTolerance.maxOfflineValidators;
+    const data = { total, online: sum.online, offline: sum.offlineIds, maxOffline };
+    const head = `${sum.online}/${total} validators online, tolerance ${maxOffline} (75% query threshold)`;
+
+    if (!sum.withinTolerance) {
+      return {
+        status: STATUS.FAIL,
+        category: CATEGORIES.VALIDATOR,
+        detail: `${head} — EXCEEDED: ${sum.offlineIds.join(', ')} offline, chain has stopped producing blocks`,
+        data,
+      };
+    }
+    return {
+      status: STATUS.OK,
+      detail: sum.offline === 0
+        ? `${head}, full margin`
+        : `${head} — ${sum.offlineIds.join(', ')} offline, ${sum.margin} of margin left`,
+      data,
+    };
+  },
+};
+
+export const basicChecks = [rpcCheck, chainIdCheck, networkIdCheck, tokenCheck, nodeCheck, validatorCheck, faultToleranceCheck, balanceCheck];
 export { categorizeError };

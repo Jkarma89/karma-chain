@@ -1,4 +1,4 @@
-// tools/verify/verify-network.mjs —— T035：编排 13 项检查，输出逐项 [OK]/[FAIL] 行 + JSON 报告。
+// tools/verify/verify-network.mjs —— 编排全部检查（001 的 13 项 + 002 的 fault-tolerance），输出逐项 [OK]/[FAIL] 行 + JSON 报告。
 //
 // 退出码：0 全部通过（含 unsupported/skip 之外无失败）| 1 任一失败（contracts/cli-interface.md）
 // "节点已启动" 单独不构成通过（FR-029）：必须走完转账、合约与协议一致性检查。
