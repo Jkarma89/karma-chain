@@ -16,10 +16,20 @@ const protocol = loadProtocol();
 const derived = derive(protocol);
 
 const SCHEMA_PATH = resolve(REPO_ROOT, 'specs/001-local-avalanche-devnet/contracts/verification-report.schema.json');
+// 功能 002 在 001 的契约上追加了检查项；基线不改写，增量单独声明后在此合并。
+const ADDITIONS_PATH = resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/verification-report.additions.json');
+export const CHECK_IDS = (() => {
+  const base = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
+  const added = JSON.parse(readFileSync(ADDITIONS_PATH, 'utf8')).addedCheckIds ?? [];
+  return [...base.properties.checks.items.properties.id.enum, ...added];
+})();
+
 const validate = (() => {
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
-  return ajv.compile(JSON.parse(readFileSync(SCHEMA_PATH, 'utf8')));
+  const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
+  schema.properties.checks.items.properties.id.enum = CHECK_IDS;
+  return ajv.compile(schema);
 })();
 
 const assertValid = (json, label) => {
@@ -102,11 +112,11 @@ describe('verification report', () => {
     ]);
   });
 
-  test('the last generated report (if any) is schema-valid and has 13 checks', () => {
+  test('the last generated report (if any) is schema-valid and has 14 checks', () => {
     const path = resolve(REPO_ROOT, '.devnet/verify-report.json');
     if (!existsSync(path)) return;   // 未跑过验证器时跳过
     const json = JSON.parse(readFileSync(path, 'utf8'));
     assertValid(json, '.devnet/verify-report.json');
-    assert.equal(json.checks.length, 13, 'the verifier must run all 13 checks');
+    assert.equal(json.checks.length, 14, 'the verifier must run all 14 checks (13 from 001 + fault-tolerance from 002)');
   });
 });
