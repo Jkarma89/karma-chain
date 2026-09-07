@@ -1,43 +1,20 @@
-# KarmaChain 本地开发网络 — Docker Compose 骨架（功能 001 / T003）
+# KarmaChain — 工具容器（功能 002 / T080）
 #
-# 契约见 specs/001-local-avalanche-devnet/contracts/cli-interface.md
-#   启动: docker compose up -d devnet        停止: docker compose stop devnet
-#   重置: docker compose down -v             验证: docker compose run --rm verify
+# **本文件不再启动链。** 链由每个故障边界一份的生成物启动：
+#   docker/compose/<deployment>-<domain>.yml   ← 由 blockchain/protocol.json 生成
+# 走 scripts/devnet-start（它按 KARMACHAIN_DOMAIN 选出本机那一份）。
 #
-# 注意：下方 8545 / karmachain 等默认值是过渡性内联值，T029 会改为读取由
-# blockchain/protocol.json 生成的 .devnet/compose.env（宪法第十六条唯一事实来源）。
+# 这里只放**不属于任何故障边界**的一次性工具容器：验证与生成。
+# 它们无状态、不参与共识、不持有链数据，因此不在崩溃恢复路径上。
+#
+# 001 的 `devnet` 服务（单容器内由 Avalanche CLI 编排 7 个节点）已于 T080 退役 ——
+# 它是缺陷 A 的载体：链状态的存续依赖容器收到 SIGTERM 后 `avalanche network stop`
+# 成功写出快照，任何非优雅终止都必然绕过该路径。理由与代价见
+# docs/adr/0008-runtime-without-orchestration-cli.md。
 
 name: karmachain-devnet
 
 services:
-  devnet:
-    build:
-      context: .
-      dockerfile: docker/devnet/Dockerfile
-    image: karmachain/devnet:local
-    container_name: karmachain-devnet
-    # 链数据、快照、sidecar、日志全部落在命名卷；stop 保留、down -v 清除
-    volumes:
-      - karmachain-devnet-data:/root/.avalanche-cli
-      - ./blockchain:/workspace/blockchain:ro
-      # 节点清单（nodes.json）写到这里供 verify 容器读取；.devnet 已被 .gitignore 忽略
-      - ./.devnet:/workspace/.devnet
-    # 变量由 scripts/* 从 blockchain/compose.env（protocol.json 生成）与用户 .env 导出；
-    # 此处的 :- 兜底仅为裸 `docker compose up` 保底，其值由 tests/unit/docs-drift.test.mjs 与 protocol.json 锁定同步
-    ports:
-      - "${KARMACHAIN_RPC_PORT:-8545}:${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"
-    environment:
-      KARMACHAIN_STARTUP_TIMEOUT: "${KARMACHAIN_STARTUP_TIMEOUT:-300}"
-      KARMACHAIN_PROXY_PORT: "${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"   # 容器内监听端口（与映射右侧一致）
-      KARMACHAIN_HOST_RPC_PORT: "${KARMACHAIN_RPC_PORT:-8545}"          # 仅用于 READY 摘要显示宿主实际端口
-    # Avalanche CLI 依赖容器内 IPv6 回环（research V-1；若不足则见 docs/devnet.md 的 daemon.json 方案）
-    sysctls:
-      - net.ipv6.conf.all.disable_ipv6=0
-    # SIGTERM 后 entrypoint 需时间执行 `avalanche network stop` 保存快照；
-    # 若信号在启动期到达，entrypoint 会先完成启动（首启最长 ≈ 80 s）再停止，因此宽限期须覆盖两者之和
-    stop_grace_period: 180s
-    restart: "no"
-
   verify:
     profiles: ["verify"]
     build:
@@ -52,11 +29,28 @@ services:
       - ./specs:/workspace/specs:ro
       - ./.devnet:/workspace/.devnet
     environment:
-      # 验证器自行读取 blockchain/protocol.json 得到路径；这里只告知 compose 内网的主机名与容器端口
-      KARMACHAIN_RPC_HOST: devnet
+      # 验证器自行读取 blockchain/protocol.json 得到路径；这里只告知容器内端口。
+      # 逐节点检查需要接到节点所在的容器网络上，scripts/devnet-verify 用
+      # `docker run --network karmachain` 起容器，不走本文件。
       KARMACHAIN_RPC_PORT: "${KARMACHAIN_CONTAINER_RPC_PORT:-8545}"
     command: ["npm", "run", "verify"]
 
-volumes:
-  karmachain-devnet-data:
-    name: karmachain-devnet-data
+  # 生成器（功能 002 / US5）。与 verify 用同一镜像，区别只在挂载权限：
+  # 生成物必须可写，而 verify 刻意把 blockchain/ 挂成只读（它不该改任何东西）。
+  #
+  # 为什么要有这个服务：README 承诺"宿主唯一前置依赖是 Docker"，但"改协议参数"那条流程
+  # 一直让人跑 npm run protocol:render —— 那需要宿主装 Node。这个服务补上该缺口，
+  # 让 scripts/devnet-render 在只有 Docker 的机器上也能用。
+  render:
+    profiles: ["render"]
+    build:
+      context: .
+      dockerfile: docker/verify/Dockerfile
+    image: karmachain/verify:local
+    working_dir: /workspace
+    volumes:
+      - ./blockchain:/workspace/blockchain          # 读声明，写 genesis/ nodes/ compose.env
+      - ./docs:/workspace/docs                      # 写 protocol-parameters.md 与 public/
+      - ./docker/compose:/workspace/docker/compose  # 写每边界 compose 与 active.env
+      - ./tools:/workspace/tools:ro
+    command: ["node", "tools/protocol/render-all.mjs"]
