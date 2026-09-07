@@ -9,6 +9,10 @@
 | [0003](0003-chain-identity-and-dev-security-boundary.md) | 链身份（Chain ID 20189 / 主网预留 20188）与开发密钥安全边界 | 已接受 | 2026-09-01 |
 | [0004](0004-five-validator-local-topology.md) | 本地网络采用 5 个 L1 验证者 + 2 个主网节点 | 已接受 | 2026-09-01 |
 | [0005](0005-permissionless-deployment-model.md) | 采用无许可模型（开放公链生态） | 已接受 | 2026-09-03 |
+| [0006](0006-windows-failure-domain-autostart.md) | Windows 故障边界不做开机自启，接受人工恢复（候选 2 已被 `WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED` 否决） | 已接受 | 2026-09-07 |
+| [0007](0007-failure-domain-independence.md) | 故障边界独立性的依据与已知限制；**取证发现声明的 5 个边界只对应 2 台物理机**，整域失效容忍当前为 false | 已接受（含修正） | 2026-09-07 |
+| [0008](0008-runtime-without-orchestration-cli.md) | 运行时脱离编排工具：一节点一容器直接运行 avalanchego（取代 ADR-0002 的运行时部分） | 已接受 | 2026-09-07 |
+| [0009](0009-chain-identity-as-second-class-fact.md) | 建链制品是"第二类事实"，不由 protocol.json 派生 | 已接受 | 2026-09-07 |
 
 ## 待决策（记录在案，避免遗漏）
 
@@ -17,7 +21,7 @@
 | 议题 | 为何重要 | 相关 |
 |---|---|---|
 | **Gas 与费率参数的安全评估** | 无许可链上费率是抗滥用的**唯一**机制；当前值为 Subnet-EVM 默认，未针对开放网络分析过。**且上线后基本改不动**：`upgrade.json` 不能改 feeConfig，唯一的运行时途径 `feeManagerConfig` 预编译已被 ADR-0005 否决，剩下只有"重新部署整条链"。等于主网上线时的取值近乎永久 | ADR-0005 影响节。**主网上线的硬前置**，开发网阶段不必动 |
-| **验证者模型的去中心化路径** | "人人可部署合约"但"验证者由单一地址指定"在去信任化上不对称 | ADR-0004、ADR-0005 |
+| ~~**验证者模型的去中心化路径**~~ | **已由功能 002 处理（2026-09-07）**：验证者从"单容器内 5 个进程"变为可跨机分布、崩溃自愈的独立节点，编排工具退出运行时。**注意这解决的是物理冗余与可恢复性，不是权限去中心化** —— 验证者集合仍由 PoA 合约的单一 owner 管理，那部分留在"主网代币经济学"与未来的治理规格里 | ADR-0004、[0007](0007-failure-domain-independence.md)、[0008](0008-runtime-without-orchestration-cli.md) |
 | **主网代币经济学** | 初始分配、是否可增发（当前不可）、手续费处理（当前销毁）需独立规格 | ADR-0003、ADR-0005 |
 | **Chain ID 注册** | 20188/20189 已核实未占用，但正式发布前需向 ethereum-lists/chains 提交注册 | ADR-0003 |
 | ~~**面向第三方的公开接入信息**~~ | **已完成**（2026-09-03）：`docs/public/chain-info.json` + `developer-quickstart.md`，由 `protocol.json` 生成、有漂移测试，且每一项都可用公开 RPC 独立求证。karma-sc 已改为纯第三方消费者并由测试强制 | 见 `tools/protocol/render-chain-info.mjs` |

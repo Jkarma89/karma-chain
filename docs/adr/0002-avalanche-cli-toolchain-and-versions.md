@@ -1,6 +1,20 @@
 # ADR-0002：用（已进入维护模式的）Avalanche CLI 编排本地网络，并锁定全部组件版本
 
-**状态**：已接受（含明确的技术债与迁移路径） · **日期**：2026-09-01 · **相关**：宪法第七/十三/十五条，research R-01/R-02/R-12
+**状态**：**运行时部分已被 [ADR-0008](0008-runtime-without-orchestration-cli.md) 取代（2026-09-07）**；版本锁定部分仍然有效 · **日期**：2026-09-01 · **相关**：宪法第七/十三/十五条，research R-01/R-02/R-12
+
+> **2026-09-07 更新 —— 请先读这段再读下文。**
+>
+> 本文的"由 CLI 编排本地网络"这一半**已不再成立**。功能 002 把运行时改为**一节点一容器、
+> 容器内直接运行 `avalanchego`**，CLI 只保留在一次性建链这一步；`docker/devnet/`（本文描述的
+> 单容器编排）已删除。原因是本文自己记下的技术债兑现了：2026-09-05 强制重启 Docker 后，
+> 7 个节点的数据库全部完好，而 CLI 的编排账本丢失，导致唯一出路是丢弃全链状态。
+> 完整的根因、代价与替代方案见 [ADR-0008](0008-runtime-without-orchestration-cli.md)；
+> 建链制品为何单独成类见 [ADR-0009](0009-chain-identity-as-second-class-fact.md)。
+>
+> 下文中**仍然有效**的部分：全部组件的版本锁定与 sha256 校验策略（现落在
+> `docker/binaries.env`，由 `docker/node/Dockerfile` 与 `docker/bootstrap/Dockerfile` 共用）。
+> 下文中**已失效**的部分：单容器形态、`avalanche network start/stop` 的运行期编排、
+> 以及依赖快照的停止／恢复语义。
 
 ## 决定了什么
 
