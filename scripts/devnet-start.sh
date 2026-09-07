@@ -61,6 +61,18 @@ assert_chain_on_pchain() {
     port="$(MSYS_NO_PATHCONV=1 docker exec "$c" jq -r '."http-port"' /config/flags.json 2>/dev/null)" || continue
     bid="$(MSYS_NO_PATHCONV=1 docker exec "$c" jq -r '.blockchainId' /config/karmachain.identity.json 2>/dev/null)" || continue
     [ -n "$port" ] && [ -n "$bid" ] || continue
+    # **P 链必须先引导完成**，否则 getBlockchains 的清单是不完整的。
+    # 这一步是必需的：崩溃恢复时（docker kill 全部容器后重启）Primary 的 P 链仍在引导，
+    # 此刻清单只有 C-Chain / X-Chain，据此判定"链不存在"会把 US1 的恢复路径直接拦死。
+    # 实测踩过：50 轮重复崩溃测试第一轮就被这个假阳性打断。
+    #
+    # 教训：**打在正常路径上的诊断守卫必须保守** —— 拿不准就放行，交给后面的就绪轮询。
+    # 原先的判据是"未证明存在即失败"，在慢启动时会反转成误报。
+    boot="$(docker exec "$c" curl -s -m 5 -X POST -H 'content-type: application/json' \
+             --data '{"jsonrpc":"2.0","id":1,"method":"info.isBootstrapped","params":{"chain":"P"}}' \
+             "http://127.0.0.1:${port}/ext/info" 2>/dev/null)" || continue
+    echo "$boot" | grep -q '"isBootstrapped":true' || continue   # P 链还在引导 —— 结论未定，放行
+
     out="$(docker exec "$c" curl -s -m 5 -X POST -H 'content-type: application/json' \
             --data '{"jsonrpc":"2.0","id":1,"method":"platform.getBlockchains","params":{}}' \
             "http://127.0.0.1:${port}/ext/bc/P" 2>/dev/null)" || continue

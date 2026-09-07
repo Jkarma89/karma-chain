@@ -270,7 +270,9 @@ description: "Task list for 002-resilient-validator-network"
 
 - [X] T100 修 `devnet-bootstrap` 对"仍有节点在运行"误用退出码 **11** 的问题：契约里 11 专指**宿主端口冲突**，两件毫不相干的事映射到同一个码上，调用方无法据码分流。改为 10（前置条件未满足），`.sh` 与 `.ps1` 同步。**根因在测试里**：`bootstrap-idempotence.test.mjs` 原本断言 `exit 11` 并注明"端口/状态冲突应使用 11"—— 它把误用写进了断言，因此从未拦住
 
-- [ ] T089 依 DoD（宪法第十七条）逐项核对并在 `specs/002-resilient-validator-network/checklists/` 记录验收结论
+- [X] T101 修 T099 那道守卫引入的**假阳性**：崩溃恢复时（`docker kill` 全部容器后重启）Primary 的 P 链仍在引导，`platform.getBlockchains` 此刻只返回 C/X-Chain，守卫据此判定"链不存在"，把 US1 的恢复路径直接拦死 —— 50 轮重复崩溃测试第一轮就被打断。改为先查 `info.isBootstrapped`（chain P），未引导完成即放行。**教训：打在正常路径上的诊断守卫必须保守 —— 拿不准就放行，交给后面的就绪轮询**；原判据是"未证明存在即失败"，在慢启动时会反转成误报
+
+- [X] T089 依 DoD（宪法第十七条）逐项核对并在 `specs/002-resilient-validator-network/checklists/` 记录验收结论
 
 ---
 
