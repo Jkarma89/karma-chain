@@ -1,0 +1,9 @@
+{
+  "$comment": "功能 002 对 001 验证报告契约的增量。001 的 contracts/verification-report.schema.json 仍是基线；本文件只声明新增的部分，不复制整份 schema —— 与 protocol-config.schema.json 的处理方式一致（见 tests/unit/schema-sync.test.mjs）。",
+  "addedCheckIds": [
+    "fault-tolerance"
+  ],
+  "rationale": {
+    "fault-tolerance": "FR-011 要求容错上限可被自动化验证。该检查报告「当前在线验证者数」与「推导出的上限 f ≤ ⌊n/4⌋」的关系，使剩余余量成为可核对的事实而非需要心算的东西；越界时判为失败，因为此时链已停摆。"
+  }
+}

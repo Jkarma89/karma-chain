@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.local/schemas/chain-identity.schema.json",
+  "title": "KarmaChain Chain Identity Artifact",
+  "description": "blockchain/chain-identity/karmachain.identity.json —— 一次性建链的产出，运行期只读。这是「第二类事实」：不是协议参数，而是某一次建链的身份凭证，无法由 protocol.json 纯函数推导（BlockchainID 取决于 CreateChainTx 的交易 ID）。生成后提交进仓库，受漂移测试与启动期校验保护。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$comment", "subnetId", "blockchainId", "chainAlias", "vm", "vmVersion", "rpcVersion", "networkId", "bootstrapValidators", "createdAt"],
+  "properties": {
+    "$comment": {
+      "description": "生成物标记，禁止手改。",
+      "type": "string",
+      "pattern": "^GENERATED"
+    },
+    "subnetId": {
+      "description": "每个 L1 验证者的 --track-subnets 取值。",
+      "$ref": "#/$defs/cb58"
+    },
+    "blockchainId": {
+      "description": "链配置键与别名映射的目标。重新建链会变化 —— 对外路径的稳定性由 chainAlias 保证（研究 R-05）。",
+      "$ref": "#/$defs/cb58"
+    },
+    "chainAlias": {
+      "description": "写入 --chain-aliases-file，使 /ext/bc/<alias>/rpc 恒定。必须与 docs/public/chain-info.json 中公布的 rpcPath 一致，否则第三方地址失效（FR-024）。",
+      "type": "string",
+      "const": "karmachain"
+    },
+    "vm": { "type": "string", "const": "Subnet-EVM" },
+    "vmVersion": {
+      "description": "须等于 protocol.json 的 avalanche.subnetEvmVersion，启动期交叉校验。",
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "rpcVersion": {
+      "description": "RPCChainVM 协议版本；须等于 protocol.json 的 avalanche.rpcChainVmProtocol。",
+      "type": "integer",
+      "minimum": 1
+    },
+    "networkId": {
+      "description": "须等于 protocol.json 的 avalanche.networkId。",
+      "type": "integer",
+      "minimum": 1
+    },
+    "bootstrapValidators": {
+      "description": "初始验证者集合。数量须等于 protocol.json 的 validators.count。等权是容错计算的前提（001 研究 R-05）。",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/bootstrapValidator" }
+    },
+    "createdAt": {
+      "description": "建链时间，仅用于溯源。",
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "$defs": {
+    "cb58": {
+      "type": "string",
+      "pattern": "^[1-9A-HJ-NP-Za-km-z]{40,60}$"
+    },
+    "bootstrapValidator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nodeId", "weight", "balance", "blsPublicKey", "blsProofOfPossession", "changeOwnerAddr", "validationId"],
+      "properties": {
+        "nodeId": {
+          "description": "MUST 等于对应节点 keyDir/staker.crt 派生出的 NodeID。不符即说明制品与密钥材料来自不同的两次建链，须在启动早期拒绝（FR-017）。",
+          "type": "string",
+          "pattern": "^NodeID-[1-9A-HJ-NP-Za-km-z]{30,50}$"
+        },
+        "weight": {
+          "description": "全部验证者须等权，否则容错上限的推导不成立。",
+          "type": "integer",
+          "minimum": 1
+        },
+        "balance": { "type": "integer", "minimum": 0 },
+        "blsPublicKey": {
+          "description": "MUST 与对应节点 keyDir/signer.key 派生出的公钥一致。",
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{96}$"
+        },
+        "blsProofOfPossession": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{192}$"
+        },
+        "changeOwnerAddr": {
+          "type": "string",
+          "pattern": "^P-[a-z0-9]+1[0-9a-z]{38,}$"
+        },
+        "validationId": { "$ref": "#/$defs/cb58" }
+      }
+    }
+  }
+}
