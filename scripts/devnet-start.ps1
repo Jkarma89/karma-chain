@@ -1,77 +1,77 @@
-# scripts/devnet-start.ps1 —— 启动 KarmaChain 本地开发网络（薄封装，无业务逻辑；契约见 specs/001-*/contracts/cli-interface.md）
-# 退出码：0 就绪 | 10 Docker 不可用 | 11 宿主端口冲突 | 12 链数据与 protocol.json 不一致 | 20 启动失败/超时
-$ErrorActionPreference = 'Stop'
-Set-Location (Join-Path $PSScriptRoot '..')
+# scripts/devnet-start.ps1 —— 启动 KarmaChain 开发网络（功能 002）
+# 与 scripts/devnet-start.sh 等价。没有"恢复快照"路径：节点各自从数据卷恢复（研究 R-01）。
+. (Join-Path $PSScriptRoot '_devnet-common.ps1')
+$ctx = Get-DevnetContext; Assert-Docker
 
-# 默认值优先级：shell 环境 > .env（用户覆盖） > blockchain/compose.env（由 protocol.json 生成，npm run protocol:render）
-function Import-EnvDefaults([string]$path) {
-  if (-not (Test-Path $path)) { return }
-  foreach ($line in Get-Content $path) {
-    if ($line -match '^\s*($|#)') { continue }
-    $k, $v = $line -split '=', 2
-    if (-not (Get-Item "env:$k" -ErrorAction SilentlyContinue)) { Set-Item "env:$k" $v }
-  }
-}
-Import-EnvDefaults '.env'
-Import-EnvDefaults 'blockchain/compose.env'
-if (-not $env:KARMACHAIN_RPC_PORT) { Write-Error "blockchain/compose.env missing or incomplete — run 'npm run protocol:render'"; exit 10 }
-$timeout = [int]$env:KARMACHAIN_STARTUP_TIMEOUT
-$hostPort = $env:KARMACHAIN_RPC_PORT
-$readyMark = 'KarmaChain local devnet is READY'
-
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-  Write-Error 'devnet-start: docker not found — install Docker Desktop (WSL2 backend)'; exit 10
-}
-docker info *> $null; if ($LASTEXITCODE -ne 0) { Write-Error 'devnet-start: Docker daemon is not running'; exit 10 }
-docker compose version *> $null; if ($LASTEXITCODE -ne 0) { Write-Error "devnet-start: 'docker compose' (v2) not available"; exit 10 }
-
-# 幂等快路径：容器已在运行且 RPC 已应答时，`docker compose up -d` 是空操作，entrypoint 不会再打印
-# READY 标记，若直接进入等待循环就会一直等到超时。此时回放上一次的摘要并退出 0（FR-006）。
-$state = docker inspect --format '{{.State.Status}}' karmachain-devnet 2>$null
-if ($state -eq 'running') {
-  $rpcPath = (Get-Content 'blockchain/protocol.json' -Raw | ConvertFrom-Json).endpoints.rpcPath
-  $body = '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}'
-  try {
-    Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$hostPort$rpcPath" -ContentType 'application/json' -Body $body -TimeoutSec 5 | Out-Null
-    $all = (docker compose logs --no-log-prefix devnet 2>$null) -join "`n"
-    $idx = $all.LastIndexOf($readyMark)
-    if ($idx -ge 0) { Write-Host $all.Substring($idx) }
-    Write-Host 'devnet-start: already running and answering RPC — nothing to do (summary above is from the last start)'
-    exit 0
-  } catch { }   # RPC 未应答 -> 走正常启动流程
+$identity = Join-Path $ctx.Root 'blockchain/chain-identity/karmachain.identity.json'
+if (-not (Test-Path $identity)) {
+    Write-Error "链尚未建立 —— 先运行 scripts/devnet-bootstrap.ps1"; exit 10
 }
 
-# 只看本次启动之后的日志（容器重启后 `compose logs` 仍含上一轮的 READY 标记）
-$since = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-function Get-DevnetLogs { (docker compose logs --no-log-prefix --since $since devnet 2>$null) -join "`n" }
-
-$out = docker compose up -d devnet 2>&1 | Out-String
-if ($LASTEXITCODE -ne 0) {
-  Write-Host $out
-  if ($out -match 'port is already allocated|address already in use|bind: ') {
-    Write-Error "devnet-start: FAILED [category: configuration] host port $hostPort is already in use — stop the other process or set KARMACHAIN_RPC_PORT in .env"; exit 11
-  }
-  Write-Error 'devnet-start: FAILED [category: node] docker compose up failed'; exit 20
+# 跨机形态：本机必须真的是拓扑说的那台机器（V-07 / FR-023）。
+# 与 devnet-start.sh 同一判据 —— 容器在 NAT 后看不到宿主地址，配错时节点照常启动、
+# 日志无异常，症状只表现为对等节点连不上它。单边界形态跳过（地址是 127.0.0.1）。
+if ([int]$ctx.KARMACHAIN_DOMAIN_COUNT -gt 1) {
+    $want = ($ctx.KARMACHAIN_DOMAIN_ADDRESSES -split ' ' |
+        Where-Object { $_ -like "$($ctx.Domain)=*" } |
+        ForEach-Object { $_.Split('=', 2)[1] } | Select-Object -First 1)
+    $mine = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -ne '127.0.0.1' } | ForEach-Object IPAddress)
+    if ($want -and ($mine -notcontains $want)) {
+        Write-Host "devnet-start: FAILED [category: configuration] 本机不是故障边界 '$($ctx.Domain)' 声明的那台机器" -ForegroundColor Red
+        Write-Host "  拓扑声明 $($ctx.Domain) 的地址为 $want，但本机的 IPv4 地址是："
+        $mine | ForEach-Object { Write-Host "    $_" }
+        Write-Host "  节点会把 $want 通告给对等节点，而那不是本机地址 —— 对等节点将连不上它，"
+        Write-Host '  且节点自身日志不会报错（容器在 NAT 后，看不到宿主地址）。'
+        Write-Host '  三种修正方式，择一：'
+        Write-Host '    1. 本机要跑的其实是别的边界 → $env:KARMACHAIN_DOMAIN=''<本机对应的边界 id>''; scripts/devnet-start.ps1'
+        Write-Host "       可选边界与地址：$($ctx.KARMACHAIN_DOMAIN_ADDRESSES)"
+        Write-Host "    2. 这台机器的地址变了 → `$env:KARMACHAIN_ADDRESS_OVERRIDE='$($ctx.Domain)=<新地址>'; npm run node:render"
+        Write-Host '    3. 地址应长期改变 → 改 blockchain/protocol.json 的 topology.deployments 后重新渲染'
+        exit 13
+    }
 }
 
+if ((Get-ChainId $ctx.Rpc) -eq $ctx.KARMACHAIN_CHAIN_ID_HEX) {
+    Write-Host 'devnet-start: 已在运行并正常应答 —— 无需操作'; exit 0
+}
+
+docker compose -f $ctx.Compose up -d
+if ($LASTEXITCODE -ne 0) { Write-Error 'docker compose up 失败'; exit 20 }
+
+$timeout = if ($env:KARMACHAIN_STARTUP_TIMEOUT) { [int]$env:KARMACHAIN_STARTUP_TIMEOUT } else { 300 }
 $sw = [Diagnostics.Stopwatch]::StartNew()
 while ($true) {
-  $logs = Get-DevnetLogs
-  if ($logs -match [regex]::Escape($readyMark)) {
-    $idx = $logs.IndexOf($readyMark)
-    Write-Host $logs.Substring($idx)
-    exit 0
-  }
-  $state = docker inspect --format '{{.State.Status}}' karmachain-devnet 2>$null
-  if ($state -eq 'exited' -or $state -eq 'dead') {
-    $code = [int](docker inspect --format '{{.State.ExitCode}}' karmachain-devnet 2>$null)
-    ($logs -split "`n" | Select-Object -Last 30) | ForEach-Object { Write-Host $_ }
-    Write-Error "devnet-start: container exited with code $code (see scripts/devnet-logs)"
-    if ($code -in 10, 11, 12, 20) { exit $code } else { exit 20 }
-  }
-  if ($sw.Elapsed.TotalSeconds -ge $timeout) {
-    ($logs -split "`n" | Select-Object -Last 30) | ForEach-Object { Write-Host $_ }
-    Write-Error "devnet-start: FAILED [category: node] not READY within ${timeout}s (KARMACHAIN_STARTUP_TIMEOUT)"; exit 20
-  }
-  Start-Sleep -Seconds 2
+    if ((Get-ChainId $ctx.Rpc) -eq $ctx.KARMACHAIN_CHAIN_ID_HEX) {
+        $h = try {
+            $b = '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}'
+            (Invoke-RestMethod -Uri $ctx.Rpc -Method Post -ContentType 'application/json' -Body $b -TimeoutSec 5).result
+        } catch { '?' }
+        Write-Host ''
+        Write-Host "KarmaChain is READY   (deployment $($ctx.KARMACHAIN_DEPLOYMENT), failure domain $($ctx.Domain), $([int]$sw.Elapsed.TotalSeconds)s)"
+        Write-Host ''
+        Write-Host "  RPC URL   : $($ctx.Rpc)"
+        Write-Host "  Chain ID  : $($ctx.KARMACHAIN_CHAIN_ID_HEX)"
+        Write-Host "  Height    : $h"
+        Write-Host "  Nodes     : $($ctx.KARMACHAIN_NODE_IDS)"
+        Write-Host "  容错      : $($ctx.KARMACHAIN_MAX_OFFLINE_VALIDATORS) 个验证者可离线"
+        Write-Host ''
+        Write-Host '  Next: scripts/devnet-status.ps1  |  scripts/devnet-stop.ps1'
+        exit 0
+    }
+    foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
+        $state = docker inspect --format '{{.State.Status}}' "karmachain-$n" 2>$null
+        if ($state -eq 'exited') {
+            $code = [int](docker inspect --format '{{.State.ExitCode}}' "karmachain-$n" 2>$null)
+            if ($code -in 10, 12) {
+                docker logs "karmachain-$n" 2>&1 | Select-String 'karmachain-node' | Select-Object -Last 8
+                Write-Error "节点 $n 以退出码 $code 结束"; exit $code
+            }
+        }
+    }
+    if ($sw.Elapsed.TotalSeconds -ge $timeout) {
+        docker compose -f $ctx.Compose ps
+        Write-Error "${timeout}s 内未就绪"; exit 20
+    }
+    Start-Sleep -Seconds 3
 }
