@@ -1,0 +1,101 @@
+{
+    "Name": "karmachain",
+    "VM": "Subnet-EVM",
+    "VMVersion": "v0.8.0",
+    "RPCVersion": 44,
+    "Subnet": "karmachain",
+    "ExternalToken": false,
+    "TokenName": "KARMA Token",
+    "TokenSymbol": "KARMA",
+    "ChainID": "",
+    "Version": "1.4.0",
+    "Networks": {
+        "Local Network": {
+            "SubnetID": "2W9boARgCWL25z6pMFNtkCfNA5v28VGg9PmBgUJfuKndEdhrvw",
+            "BlockchainID": "Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd",
+            "RPCVersion": 44,
+            "TeleporterMessengerAddress": "",
+            "TeleporterRegistryAddress": "",
+            "RPCEndpoints": [
+                "http://127.0.0.1:9662/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc",
+                "http://127.0.0.1:9660/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc",
+                "http://127.0.0.1:9666/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc",
+                "http://127.0.0.1:9668/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc",
+                "http://127.0.0.1:9664/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc"
+            ],
+            "WSEndpoints": [
+                "ws://127.0.0.1:9666/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/ws",
+                "ws://127.0.0.1:9668/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/ws",
+                "ws://127.0.0.1:9664/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/ws",
+                "ws://127.0.0.1:9662/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/ws",
+                "ws://127.0.0.1:9660/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/ws"
+            ],
+            "BootstrapValidators": [
+                {
+                    "NodeID": "NodeID-7SEb6yKycVKCyJF79RELEUWYcq6Zt5V59",
+                    "Weight": 100,
+                    "Balance": 100000000,
+                    "BLSPublicKey": "0xaa7714e3842b7ec2aed91d663a5a7ad097dc2c5b3fc1b394dca5af6ba49960bf6d7f2c95214a0e8aadd1b128e3e48f93",
+                    "BLSProofOfPossession": "0x91ffea43f170dda3108b5fab18d7f16a6a26a00980dc3979dd1a7d499889b2d916a7f60238a2e7730e9ec40af9f315ee0b98226562ff3b6a75af663b818f46a8cb31fc6f73bd92109c2e9742c4d559229025eac54f21df8a575d3e0df88126a6",
+                    "ChangeOwnerAddr": "P-custom18jma8ppw3nhx5r4ap8clazz0dps7rv5u9xde7p",
+                    "ValidationID": "jbVejeab5dHjhakduNgg8vFh6iMrHJ9MsMDSzFLdedp7KQ2sL"
+                },
+                {
+                    "NodeID": "NodeID-7Wioqad7SdYpp51WugCWmqtwpehjnpWs7",
+                    "Weight": 100,
+                    "Balance": 100000000,
+                    "BLSPublicKey": "0x8093e3b7d74abd87ffd96114f75bdc395e5f9cb7f7f3231a9d704eab1c20390bb45bb1b7859590fc9befe3e9de0b5d24",
+                    "BLSProofOfPossession": "0xadeda08f6f66aa2375da5aafc6a44d2feece2c38a7d3d138d4a11dd50104136c66b76085ad03a52288a69d700c496e9d00dbbede542eda25238e71d73c618612bbda639f813710ca674ca083ff06b335982becd031477004a1d86241f405079c",
+                    "ChangeOwnerAddr": "P-custom18jma8ppw3nhx5r4ap8clazz0dps7rv5u9xde7p",
+                    "ValidationID": "Ydri7Det2RCns4kXTcpFvFz4gMN3snQmpJmdv9EQyktwc1uA7"
+                },
+                {
+                    "NodeID": "NodeID-AoW3GAeegUWmUGijJCDLTzPFSqx673ELP",
+                    "Weight": 100,
+                    "Balance": 100000000,
+                    "BLSPublicKey": "0x907ddf09cb67b1a061dde12c66ccc9eba70fc6ac745d7ac6faf7d519778e2c3e64b51b5e3d086f82610a9170b9c1032d",
+                    "BLSProofOfPossession": "0x93c406ec4cc64895e1f373a3af877f656dc911d0cbdd5e65fb794e7b668138008cbf347d6858b230cc7ce2d18d83b752196b15cbbcdf925b288c61486e0d10fd11eda55c7cede873e12237a81e0ad0bb1e34d51bc229f3163983431f1b97d6fa",
+                    "ChangeOwnerAddr": "P-custom18jma8ppw3nhx5r4ap8clazz0dps7rv5u9xde7p",
+                    "ValidationID": "2BBZfSeD9hb5E577oENAe2boY8Zevs7W5iCHZro9VNLiyWC4Xi"
+                },
+                {
+                    "NodeID": "NodeID-H2bv8UBAeFzc9JQZi15zTLJnyNySQDBZb",
+                    "Weight": 100,
+                    "Balance": 100000000,
+                    "BLSPublicKey": "0xa6c6498a1bdb230ae7cbd3931e457a77f87d79269b96184bd9e69ad16faae835912ed6b1440b2b765924f6b3f9105746",
+                    "BLSProofOfPossession": "0xaf181743e8667316ce0b7a2aa82d0974e04a94e6208aac21dd5bbcffb45f00de44667d6153121d268ad6774fef7930350cb76fd004b16e7f0c78b988ddaf4bfb9ec5fb3d0d29b633e478bfa88437f1a7f412adc1f8bed7173a3b0cdd22493711",
+                    "ChangeOwnerAddr": "P-custom18jma8ppw3nhx5r4ap8clazz0dps7rv5u9xde7p",
+                    "ValidationID": "9CdgeJyAfo8wXRGAE4sodDnXb9zGo8dn42mmzXLkkZr7j72ac"
+                },
+                {
+                    "NodeID": "NodeID-LV6EUXhaien3UJJsqS8Sxmy8a5kGrY5yr",
+                    "Weight": 100,
+                    "Balance": 100000000,
+                    "BLSPublicKey": "0x87a77cbe55b6f7c7ff6b6f713b498e581180e19bdcf730a8fde3db167234eba1be368f037d0814b52d1b963148d84be3",
+                    "BLSProofOfPossession": "0x97fd6d9015807f56d3a9fec3094b23ba10b49ce040316b779a53ec5e4180ed3d7330a0d6a088afc98a39ba8bb8a0599f116db63e5adc8dcf1766bfbd93b1d4ae3c2c45a36ce65b7156e17d8aec0344acc9c0201e9e46f238af231877894189df",
+                    "ChangeOwnerAddr": "P-custom18jma8ppw3nhx5r4ap8clazz0dps7rv5u9xde7p",
+                    "ValidationID": "2YJ3EWC8pvbkeQ9S6rH9ePe4d449JRJEm5QSSq9NAPc6PZmFMp"
+                }
+            ],
+            "ClusterName": "karmachain-local-node-local-network",
+            "ValidatorManagerAddress": "0x0Feedc0de0000000000000000000000000000000",
+            "ValidatorManagerBlockchainID": "Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd",
+            "ValidatorManagerRPCEndpoint": "http://127.0.0.1:9662/ext/bc/Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd/rpc",
+            "SpecializedValidatorManagerAddress": ""
+        }
+    },
+    "ImportedFromAPM": false,
+    "ImportedVMID": "",
+    "CustomVMRepoURL": "",
+    "CustomVMBranch": "",
+    "CustomVMBuildScript": "",
+    "TeleporterReady": false,
+    "TeleporterKey": "",
+    "TeleporterVersion": "",
+    "RunRelayer": false,
+    "SubnetEVMMainnetChainID": 0,
+    "ValidatorManagement": "Proof Of Authority",
+    "ValidatorManagerOwner": "0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC",
+    "ProxyContractOwner": "0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC",
+    "Sovereign": true
+}

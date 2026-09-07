@@ -1,0 +1,19 @@
+{
+  "$comment": "GENERATED FROM blockchain/protocol.json by tools/protocol/render-chain-config.mjs — DO NOT EDIT.",
+  "pruning-enabled": false,
+  "database-type": "leveldb",
+  "log-level": "info",
+  "eth-apis": [
+    "eth",
+    "eth-filter",
+    "net",
+    "web3",
+    "internal-eth",
+    "internal-blockchain",
+    "internal-transaction",
+    "internal-debug",
+    "internal-account",
+    "debug",
+    "debug-tracer"
+  ]
+}

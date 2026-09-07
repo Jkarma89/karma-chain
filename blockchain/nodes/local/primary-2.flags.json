@@ -1,0 +1,28 @@
+{
+  "bootstrap-ids": "NodeID-7Xhw2mDxuDS44j42TCB6U5579esbSt3Lg",
+  "bootstrap-ips": "172.28.0.16:21651",
+  "data-dir": "/data",
+  "db-type": "leveldb",
+  "genesis-file": "/config/primary-network.genesis.json",
+  "http-allowed-hosts": [
+    "127.0.0.1",
+    "localhost",
+    "172.28.0.11",
+    "172.28.0.12",
+    "172.28.0.13",
+    "172.28.0.14",
+    "172.28.0.15",
+    "172.28.0.16",
+    "172.28.0.17"
+  ],
+  "http-host": "0.0.0.0",
+  "http-port": "21652",
+  "index-enabled": "true",
+  "network-allow-private-ips": "true",
+  "network-id": "1337",
+  "public-ip": "172.28.0.17",
+  "staking-port": "21653",
+  "staking-signer-key-file": "/keys/signer.key",
+  "staking-tls-cert-file": "/keys/staker.crt",
+  "staking-tls-key-file": "/keys/staker.key"
+}

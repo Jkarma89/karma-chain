@@ -1,0 +1,84 @@
+# GENERATED FROM blockchain/protocol.json by tools/protocol/render-compose.mjs — DO NOT EDIT.
+# 部署形态 lan · 故障边界 ubuntu-2（linux, 192.168.1.22）
+#
+# 本文件只描述这一个故障边界。每台机器跑自己那份，机器之间没有编排依赖。
+# 已声明的共享失效因素：hypervisor:win-1
+
+x-node: &node
+  image: karmachain/node:local
+  build:
+    context: ../..
+    dockerfile: docker/node/Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "/opt/karmachain/healthcheck.sh"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 120s
+
+services:
+  l1-4:
+    <<: *node
+    container_name: karmachain-l1-4
+    depends_on:
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-4-data:/data
+      - ../../blockchain/validators/dev/node-4/:/keys:ro
+      - ../../blockchain/nodes/lan/l1-4.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-4.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+    ports:
+      - "21666:21666"
+      - "21667:21667"
+
+  primary-2:
+    <<: *node
+    container_name: karmachain-primary-2
+    volumes:
+      - karmachain-primary-2-data:/data
+      - ../../blockchain/validators/dev/primary-2/:/keys:ro
+      - ../../blockchain/nodes/lan/primary-2.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/primary-2.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+    ports:
+      - "21652:21652"
+      - "21653:21653"
+
+  rpc:
+    image: nginx:alpine
+    container_name: karmachain-rpc-ubuntu-2
+    restart: unless-stopped
+    volumes:
+      - ../../blockchain/nodes/lan/rpc-proxy.conf:/etc/nginx/conf.d/karmachain.conf:ro
+    ports:
+      - "8545:8545"
+    depends_on:
+      - l1-4
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8545/ext/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  karmachain-l1-4-data:
+    name: karmachain-l1-4-data
+  karmachain-primary-2-data:
+    name: karmachain-primary-2-data

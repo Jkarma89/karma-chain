@@ -1,0 +1,224 @@
+# GENERATED FROM blockchain/protocol.json by tools/protocol/render-compose.mjs — DO NOT EDIT.
+# 部署形态 local · 故障边界 local（linux, 127.0.0.1）
+#
+# 本文件只描述这一个故障边界。每台机器跑自己那份，机器之间没有编排依赖。
+# 已声明的共享失效因素：host:single-machine
+
+x-node: &node
+  image: karmachain/node:local
+  build:
+    context: ../..
+    dockerfile: docker/node/Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "/opt/karmachain/healthcheck.sh"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 120s
+
+services:
+  l1-1:
+    <<: *node
+    container_name: karmachain-l1-1
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.11
+    depends_on:
+      primary-1:
+        condition: service_healthy
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-1-data:/data
+      - ../../blockchain/validators/dev/node-1/:/keys:ro
+      - ../../blockchain/nodes/local/l1-1.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-1.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  l1-2:
+    <<: *node
+    container_name: karmachain-l1-2
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.12
+    depends_on:
+      primary-1:
+        condition: service_healthy
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-2-data:/data
+      - ../../blockchain/validators/dev/node-2/:/keys:ro
+      - ../../blockchain/nodes/local/l1-2.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-2.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  l1-3:
+    <<: *node
+    container_name: karmachain-l1-3
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.13
+    depends_on:
+      primary-1:
+        condition: service_healthy
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-3-data:/data
+      - ../../blockchain/validators/dev/node-3/:/keys:ro
+      - ../../blockchain/nodes/local/l1-3.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-3.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  l1-4:
+    <<: *node
+    container_name: karmachain-l1-4
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.14
+    depends_on:
+      primary-1:
+        condition: service_healthy
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-4-data:/data
+      - ../../blockchain/validators/dev/node-4/:/keys:ro
+      - ../../blockchain/nodes/local/l1-4.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-4.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  l1-5:
+    <<: *node
+    container_name: karmachain-l1-5
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.15
+    depends_on:
+      primary-1:
+        condition: service_healthy
+      primary-2:
+        condition: service_healthy
+    volumes:
+      - karmachain-l1-5-data:/data
+      - ../../blockchain/validators/dev/node-5/:/keys:ro
+      - ../../blockchain/nodes/local/l1-5.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-5.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  primary-1:
+    <<: *node
+    container_name: karmachain-primary-1
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.16
+    volumes:
+      - karmachain-primary-1-data:/data
+      - ../../blockchain/validators/dev/primary-1/:/keys:ro
+      - ../../blockchain/nodes/local/primary-1.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/primary-1.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  primary-2:
+    <<: *node
+    container_name: karmachain-primary-2
+    networks:
+      karmachain:
+        ipv4_address: 172.28.0.17
+    volumes:
+      - karmachain-primary-2-data:/data
+      - ../../blockchain/validators/dev/primary-2/:/keys:ro
+      - ../../blockchain/nodes/local/primary-2.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/primary-2.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+
+  rpc:
+    image: nginx:alpine
+    container_name: karmachain-rpc-local
+    restart: unless-stopped
+    networks:
+      karmachain:
+    volumes:
+      - ../../blockchain/nodes/local/rpc-proxy.conf:/etc/nginx/conf.d/karmachain.conf:ro
+    ports:
+      - "8545:8545"
+    depends_on:
+      - l1-1
+      - l1-2
+      - l1-3
+      - l1-4
+      - l1-5
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8545/ext/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+networks:
+  karmachain:
+    name: karmachain
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
+
+volumes:
+  karmachain-l1-1-data:
+    name: karmachain-l1-1-data
+  karmachain-l1-2-data:
+    name: karmachain-l1-2-data
+  karmachain-l1-3-data:
+    name: karmachain-l1-3-data
+  karmachain-l1-4-data:
+    name: karmachain-l1-4-data
+  karmachain-l1-5-data:
+    name: karmachain-l1-5-data
+  karmachain-primary-1-data:
+    name: karmachain-primary-1-data
+  karmachain-primary-2-data:
+    name: karmachain-primary-2-data

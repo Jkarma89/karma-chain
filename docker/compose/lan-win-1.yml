@@ -1,0 +1,60 @@
+# GENERATED FROM blockchain/protocol.json by tools/protocol/render-compose.mjs — DO NOT EDIT.
+# 部署形态 lan · 故障边界 win-1（windows, 192.168.1.3）
+#
+# 本文件只描述这一个故障边界。每台机器跑自己那份，机器之间没有编排依赖。
+# 已声明的共享失效因素：hypervisor:win-1
+
+x-node: &node
+  image: karmachain/node:local
+  build:
+    context: ../..
+    dockerfile: docker/node/Dockerfile
+  restart: unless-stopped
+  stop_grace_period: 30s
+  healthcheck:
+    test: ["CMD", "/opt/karmachain/healthcheck.sh"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 120s
+
+services:
+  l1-1:
+    <<: *node
+    container_name: karmachain-l1-1
+    volumes:
+      - karmachain-l1-1-data:/data
+      - ../../blockchain/validators/dev/node-1/:/keys:ro
+      - ../../blockchain/nodes/lan/l1-1.flags.json:/config/flags.json:ro
+      - ../../blockchain/nodes/l1-1.identity.json:/config/identity.json:ro
+      - ../../blockchain/nodes/aliases.json:/config/aliases.json:ro
+      - ../../blockchain/nodes/chain-config:/config/chains:ro
+      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
+      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
+      - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
+      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
+    ports:
+      - "21660:21660"
+      - "21661:21661"
+
+  rpc:
+    image: nginx:alpine
+    container_name: karmachain-rpc-win-1
+    restart: unless-stopped
+    volumes:
+      - ../../blockchain/nodes/lan/rpc-proxy.conf:/etc/nginx/conf.d/karmachain.conf:ro
+    ports:
+      - "8545:8545"
+    depends_on:
+      - l1-1
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8545/ext/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  karmachain-l1-1-data:
+    name: karmachain-l1-1-data

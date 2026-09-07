@@ -13,8 +13,16 @@ const TOKENS = [
   /\b1337\b/, // networkId
   /\b4edd\b/i, // chainId hex
   /\b8545\b/, // host RPC port
-  /\b966[0-9]\b/, // validator ports 9660-9669
+  // 节点端口于 configVersion 1.4.0 整体迁移（原 96xx 段落在 Windows 的 Hyper-V 保留区间内）。
+  // 词表必须随之迁移 —— 否则守卫盯着一段不存在的端口，等于静默失效。
+  /\b2166[0-9]\b/, // validator ports
+  /\b2165[0-9]\b/, // primary node ports
   /KarmaCoin/, // token name
+  // T068：拓扑地址同样是协议参数，且是**安装特有**的数据。写死在脚本或生成器里，
+  // 换一套硬件就得改代码 —— 而声明里改一处即可（FR-027 / 宪法第十六条）。
+  // 取自 topology.deployments 的实际地址，随声明变化而更新词表（与端口迁移同一规矩）。
+  /\b192\.168\.1\.(?:3|13|21|22|23)\b/, // 跨机形态各故障边界的局域网地址
+  /\b172\.28\.0\.\d{1,3}\b/, // 单机形态的容器网段（containerNetwork.subnet 派生）
 ];
 
 /** 允许出现字面量的路径（前缀匹配，POSIX 风格），value = 归类理由。 */
@@ -23,6 +31,9 @@ const ALLOWED = {
   'blockchain/protocol-rationale.json': '理由文档（伴随事实来源）',
   'blockchain/compose.env': '生成物（render-compose-env，漂移测试锁定）',
   'blockchain/genesis/': '生成物 + 基准记录（render-genesis，漂移测试锁定）',
+  'blockchain/chain-identity/': '建链产物（extract-identity / extract-primary-genesis 生成，chain-identity.test 交叉校验锁定）',
+  'blockchain/nodes/': '生成物（render-node-flags / render-aliases，docs-drift 漂移测试锁定）',
+  'docker/compose/': '生成物（render-compose，docs-drift 漂移测试锁定）',
   'blockchain/accounts/dev-accounts.json': 'DEVELOPMENT ONLY 密钥文件的警示文案',
   'blockchain/validators/dev/': '密钥目录 README（记录端口与 NodeID）',
   'docker-compose.yml': '裸 compose 的 :- 兜底（docs-drift.test 与 protocol.json 锁定同步）',
@@ -35,6 +46,7 @@ const ALLOWED = {
   'tests/unit/no-hardcode.test.mjs': '本扫描器自身的白名单与词表',
   'tests/integration/start-stop.test.mjs': '刻意双写：断言派生 chainIdHex 锚点',
   'tests/e2e/param-change.test.mjs': '改参数演练需要新旧两个 chainId 字面量',
+  'tests/fixtures/': '实测基准：记录链**当时实际**是什么值，字面量即证据本身，不是配置来源（功能 002 Phase 0 取证）',
 };
 
 const SKIP_DIRS = new Set(['.git', 'node_modules', '.devnet', '.claude', '.specify', '.vscode', '.idea']);

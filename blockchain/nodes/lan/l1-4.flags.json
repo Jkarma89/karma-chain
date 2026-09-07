@@ -1,0 +1,33 @@
+{
+  "bootstrap-ids": "NodeID-7Xhw2mDxuDS44j42TCB6U5579esbSt3Lg,NodeID-MFrZFVCXPv5iCn6M9K6XduxGTYp891xXZ",
+  "bootstrap-ips": "192.168.1.21:21651,192.168.1.22:21653",
+  "chain-aliases-file": "/config/aliases.json",
+  "chain-config-dir": "/config/chains",
+  "data-dir": "/data",
+  "db-type": "leveldb",
+  "genesis-file": "/config/primary-network.genesis.json",
+  "http-allowed-hosts": [
+    "127.0.0.1",
+    "localhost",
+    "192.168.1.3",
+    "192.168.1.13",
+    "192.168.1.21",
+    "192.168.1.22",
+    "192.168.1.23"
+  ],
+  "http-host": "0.0.0.0",
+  "http-port": "21666",
+  "index-allow-incomplete": "true",
+  "index-enabled": "false",
+  "network-allow-private-ips": "true",
+  "network-id": "1337",
+  "partial-sync-primary-network": "true",
+  "plugin-dir": "/plugins",
+  "public-ip": "192.168.1.22",
+  "staking-port": "21667",
+  "staking-signer-key-file": "/keys/signer.key",
+  "staking-tls-cert-file": "/keys/staker.crt",
+  "staking-tls-key-file": "/keys/staker.key",
+  "sybil-protection-enabled": "true",
+  "track-subnets": "2W9boARgCWL25z6pMFNtkCfNA5v28VGg9PmBgUJfuKndEdhrvw"
+}
