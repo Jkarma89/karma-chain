@@ -1,8 +1,9 @@
-// PowerShell 薄封装的可移植性守卫。
+// 宿主薄封装（`scripts/*.ps1` 与 `scripts/*.sh`）的可移植性守卫。
 //
 // 契约（001 cli-interface.md）要求 `.ps1` 与 `.sh` 是**等价**的薄封装。但等价不只是逻辑等价 ——
-// 2026-09-08 实测发现三类只在 **Windows PowerShell 5.1** 上出现的故障，而它们在 pwsh 7 下都不复现，
-// 因此从未被察觉（我一直用 pwsh 7 验证，而运维方用的是系统自带的 5.1）。
+// 2026-09-08 的跨机部署一次性暴露出四类问题：前三类只在 **Windows PowerShell 5.1** 上出现
+// （它们在 pwsh 7 下都不复现，因此长期没被察觉 —— 我一直用 pwsh 7 验证，
+// 而运维方用的是系统自带的 5.1），第四类反过来只在 **Linux** 上出现。
 //
 // ## 一、缺 UTF-8 BOM 会让 5.1 按 GBK 解码，并**吞掉换行**
 //
@@ -36,8 +37,24 @@
 // 却在最后一步 `npm run node:render` 崩掉 —— 一个纯属外来的失败盖在成功的操作上。
 // 修法不是去掉 StrictMode（它在我们自己的代码里抓到过真 bug），而是**不在宿主上调 npm**：
 // 直接调 `node tools/protocol/render-all.mjs`。容器内的 npm 不受影响（另一个会话）。
+//
+// ## 四、在 Windows 上创建的 `.sh` 没有可执行位，Linux 上 clone 出来就跑不了
+//
+// NTFS 没有 POSIX 权限位，git 于是把所有 `.sh` 记成 `100644`。Windows 侧毫无症状
+// （Git Bash 不看这个位），Linux 侧 clone 出来的脚本没有 `+x`，直接执行报
+// `command not found` —— 而这个措辞会把人引向"脚本不存在 / PATH 不对"，而不是权限。
+//
+// 2026-09-08 在 ubuntu-1 上实测到：`sudo KARMACHAIN_DOMAIN=ubuntu-1 scripts/devnet-start.sh`
+// → `sudo: scripts/devnet-start.sh: command not found`。这直接打穿 SC-007 的
+// "从克隆到可用链 3 步"：Linux 上得先 chmod 才能开始，那就不是 3 步。
+//
+// 只管 `scripts/*.sh`（用户直接执行的入口）。`docker/lib/*.sh` 是被 `.` source 的库，
+// **应当**保持 644；容器 entrypoint 由各自 Dockerfile 的 `RUN chmod +x` 兜住。
+//
+// 判据只能取 git 索引里的模式位，不能看工作区 —— 在 Windows 上 stat 出来的权限没有意义。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
@@ -60,7 +77,7 @@ function eachCodeLine(file, visit) {
   });
 }
 
-describe('PowerShell 脚本在 Windows PowerShell 5.1 上的可移植性', () => {
+describe('宿主薄封装脚本的跨平台可移植性', () => {
   test('存在 .ps1 脚本可测 —— 否则本套件在空转', () => {
     assert.ok(ps1Files.length >= 10, `期望至少 10 个 .ps1，实际 ${ps1Files.length}`);
   });
@@ -117,6 +134,27 @@ describe('PowerShell 脚本在 Windows PowerShell 5.1 上的可移植性', () =>
       assert.match(src, /_devnet-common\.ps1/,
         `${f} 用了 Invoke-Quiet 但没有点引用 _devnet-common.ps1`);
     }
+  });
+
+  test('每个 scripts/*.sh 在 git 索引里都是 100755 —— 否则 Linux 上 clone 完跑不了', () => {
+    let out;
+    try {
+      out = execFileSync('git', ['ls-files', '-s', '--', 'scripts'], {
+        cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      // 不是 git 工作树（例如从 tarball 解出来跑测试）—— 无从判定，不误报。
+      return;
+    }
+    const wrong = out.split('\n')
+      .map((l) => l.match(/^(\d{6})\s+\S+\s+\d+\t(scripts\/.+\.sh)$/))
+      .filter((m) => m && m[1] !== '100755')
+      .map((m) => `${m[2]}（${m[1]}）`);
+    assert.deepEqual(wrong, [],
+      `以下 scripts/*.sh 在 git 索引里没有可执行位：\n  ${wrong.join('\n  ')}\n`
+      + '  NTFS 没有权限位，在 Windows 上新建的脚本会被记成 100644。Windows 侧毫无症状，\n'
+      + '  Linux 上 clone 出来直接执行会报 command not found —— 措辞会把人引向 PATH 而不是权限。\n'
+      + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
   });
 
   test('每个 .sh 都有同名 .ps1，反之亦然（契约要求等价薄封装）', () => {
