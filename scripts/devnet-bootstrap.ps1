@@ -15,7 +15,11 @@ Push-Location $ctx.Root
 try {
     node tools/protocol/extract-identity.mjs        .devnet/bootstrap/sidecar.json    --out blockchain/chain-identity/karmachain.identity.json
     node tools/protocol/extract-primary-genesis.mjs .devnet/bootstrap/node-flags.json --out blockchain/chain-identity/primary-network.genesis.json
-    npm run --silent node:render | Out-Null
+    # 建链改变了 chain-identity 制品，因此重新生成全部派生物。
+    # 不用 npm run：_devnet-common.ps1 的 Set-StrictMode -Version Latest 是会话级的，会泄漏进
+    # npm 自己的 npm.ps1 shim（它访问不存在的 $MyInvocation.Statement），报 PropertyNotFoundStrict。
+    # 直接调 node 既绕开该 shim，也覆盖全部 10 个生成器（node:render 只覆盖节点级那几个）。
+    node tools/protocol/render-all.mjs | Out-Null
 } finally { Pop-Location }
 Write-Host ''
 Write-Host 'devnet-bootstrap: 完成。下一步：scripts/devnet-start.ps1'

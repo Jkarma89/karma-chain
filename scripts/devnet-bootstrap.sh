@@ -31,7 +31,9 @@ echo
 echo "devnet-bootstrap: 提取制品 ..."
 node tools/protocol/extract-identity.mjs       .devnet/bootstrap/sidecar.json   --out blockchain/chain-identity/karmachain.identity.json
 node tools/protocol/extract-primary-genesis.mjs .devnet/bootstrap/node-flags.json --out blockchain/chain-identity/primary-network.genesis.json
-npm run --silent node:render >/dev/null
+# 建链改变了 chain-identity 制品，因此重新生成全部派生物。
+# 与 .ps1 版本保持同一入口（那边不能用 npm —— StrictMode 会弄坏 npm.ps1 shim）。
+node tools/protocol/render-all.mjs >/dev/null
 
 echo
 echo "devnet-bootstrap: 完成。下一步：scripts/devnet-start"
