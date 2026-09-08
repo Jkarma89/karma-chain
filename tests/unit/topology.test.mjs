@@ -129,8 +129,12 @@ describe('容错推导', () => {
     assert.equal(deriveTopology(BASE).faultTolerance.maxOfflineValidators, 1);
   });
 
+  // 显式针对 local 形态，**不依赖当前生效的是哪个形态** ——
+  // activeDeployment 本来就是可切换的开关（2026-09-08 切到 lan 时这两条断言因此失败过）。
   test('单边界形态不承诺整机失效容错', () => {
-    const ft = deriveTopology(BASE).faultTolerance;
+    const p = clone();
+    p.topology.activeDeployment = 'local';
+    const ft = deriveTopology(p).faultTolerance;
     assert.equal(ft.domainCount, 1);
     assert.equal(ft.tolerateWholeDomainLoss, false, '1 个边界失效等于全部失效，不能声称可容忍');
   });
@@ -266,18 +270,31 @@ describe('有效边界与整域失效容忍', () => {
   });
 
   test('单边界形态不给整域承诺', () => {
-    const ft = loadProtocol().topology.deployments.local
-      ? deriveTopology(clone()).faultTolerance : null;
+    const p = clone();
+    p.topology.activeDeployment = 'local';   // 同上：不借用 activeDeployment
+    const ft = deriveTopology(p).faultTolerance;
     assert.equal(ft.domainCount, 1);
     assert.equal(ft.effectiveDomainCount, 1);
     assert.equal(ft.tolerateWholeDomainLoss, false, '1 个边界谈不上"某个边界失效后继续"');
   });
 
-  test('真实的 lan 声明当前无法容忍整域失效 —— 宿主只有 2 台物理机', () => {
+  // 这条断言的历史值得留着：2026-09-07 它写作"必须为 false"，因为当时取证发现声明的
+  // 5 个边界里有 3 个是虚拟机、真实宿主只有 2 台。它的作用是**不让承诺悄悄变绿** ——
+  // 要变绿必须有人显式改这里并附上新证据。2026-09-08 硬件换成 5 台独立物理机、
+  // 重新清点通过（五台 MAC 互不相同、无虚拟机厂商 OUI、win-1 已无 vmware-vmx 进程），
+  // 因此断言方向随之翻转。它现在守的是反向：**不许在没有 5 个独立边界时还声称能容忍整域失效**。
+  test('真实的 lan 声明可容忍整域失效，且每个边界恰好 1 个验证者', () => {
     const p = loadProtocol();
     if (!p.topology.deployments.lan) return;
     const ft = deriveTopology({ ...p, topology: { ...p.topology, activeDeployment: 'lan' } }).faultTolerance;
-    assert.equal(ft.tolerateWholeDomainLoss, false,
-      'protocol.json 若声明了独立的 5 台物理机，此断言应当被显式更新，而不是悄悄变绿');
+
+    assert.equal(ft.effectiveDomainCount, 5,
+      '5 个声明边界必须对应 5 个**有效**边界 —— 若有共享失效因素把它们合并了，就不该声称能容忍整域失效');
+    assert.equal(ft.effectiveDomainCount, ft.domainCount, '不应存在把边界合并的共享因素');
+    for (const g of ft.effectiveDomains) {
+      assert.equal(g.validators, 1, `有效边界 ${g.ids.join('+')} 应恰好 1 个验证者，实际 ${g.validators}`);
+      assert.deepEqual(g.factors, [], `有效边界 ${g.ids.join('+')} 不应带共享失效因素`);
+    }
+    assert.equal(ft.tolerateWholeDomainLoss, true);
   });
 });

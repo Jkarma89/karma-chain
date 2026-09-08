@@ -2,7 +2,6 @@
 # 部署形态 lan · 故障边界 ubuntu-3（linux, 192.168.1.23）
 #
 # 本文件只描述这一个故障边界。每台机器跑自己那份，机器之间没有编排依赖。
-# 已声明的共享失效因素：hypervisor:win-2
 
 x-node: &node
   image: karmachain/node:local

@@ -74,7 +74,7 @@
   },
 
   "topology": {
-    "activeDeployment": "local",
+    "activeDeployment": "lan",
 
     "nodes": [
       { "id": "l1-1", "role": "l1-validator", "validatorIndex": 1 },
@@ -102,42 +102,42 @@
       },
 
       "lan": {
-        "description": "5 个声明边界，但 2026-09-07 取证发现其中 3 个是虚拟机、宿主只有 2 台物理机：U22Node1/U22Node2 是 win-1 上的 VMware 客户机，U22Node3 是 win-2 上的。虚拟机的故障边界是它的虚拟化宿主，因此本形态当前只有 2 个真实边界（win-1 承载 3 个验证者 + 2 个 Primary，win-2 承载 2 个），远超容错上限 1 —— 任一台物理机失效都会使链安全停摆。sharedFailureFactors 已如实声明 hypervisor 因素，校验器据此告警。恢复整域容错需要 5 台物理机（n=5 时每边界至多 ⌊5/4⌋=1 个验证者）。详见 docs/adr/0007-failure-domain-independence.md。运维方 2026-09-06 已确认独立供电、交换机分开、两台 Windows 自动更新已关闭，那三项因素因此不再声明。",
+        "description": "5 台独立物理机，5 个故障边界，每边界恰好 1 个 L1 验证者。2026-09-08 换过硬件并重新清点：五台的 MAC 互不相同、无虚拟机厂商 OUI、win-1 上已无 vmware-vmx 进程 —— 此前（2026-09-07）声明的 5 个边界里有 3 个是 win-1/win-2 上的 VMware 客户机，那次的 hypervisor 因素已随硬件更换消除。ubuntu-1/ubuntu-2 的 MAC OUI 为 DC:A6:32（Raspberry Pi Trading），即 arm64 —— 节点镜像走 TARGETARCH，binaries.env 备有 arm64 的 sha256。2 个 Primary 节点放在 Ubuntu 机器上：它们是验证者的引导目标，而 Windows 上的容器运行时需要用户登录才启动（ADR-0006）。清点方法与维护责任见 docs/adr/0007-failure-domain-independence.md。",
         "failureDomains": [
           {
             "id": "win-1",
             "platform": "windows",
             "address": "192.168.1.3",
             "nodes": ["l1-1"],
-            "sharedFailureFactors": ["hypervisor:win-1"]
+            "sharedFailureFactors": []
           },
           {
             "id": "win-2",
             "platform": "windows",
             "address": "192.168.1.13",
             "nodes": ["l1-2"],
-            "sharedFailureFactors": ["hypervisor:win-2"]
+            "sharedFailureFactors": []
           },
           {
             "id": "ubuntu-1",
             "platform": "linux",
             "address": "192.168.1.21",
             "nodes": ["l1-3", "primary-1"],
-            "sharedFailureFactors": ["hypervisor:win-1"]
+            "sharedFailureFactors": []
           },
           {
             "id": "ubuntu-2",
             "platform": "linux",
             "address": "192.168.1.22",
             "nodes": ["l1-4", "primary-2"],
-            "sharedFailureFactors": ["hypervisor:win-1"]
+            "sharedFailureFactors": []
           },
           {
             "id": "ubuntu-3",
             "platform": "linux",
             "address": "192.168.1.23",
             "nodes": ["l1-5"],
-            "sharedFailureFactors": ["hypervisor:win-2"]
+            "sharedFailureFactors": []
           }
         ]
       }
