@@ -241,9 +241,28 @@ export async function probeNode(node, blockchainId) {
   }
 }
 
-/** 宿主采集的容器事实；文件缺失即降级。 */
+/** 容器事实的有效期。采集与判定之间只隔一次 docker run，2 分钟是很宽的余量。 */
+const CONTAINER_FACTS_TTL_MS = 120_000;
+
+/**
+ * 宿主采集的容器事实。文件缺失、旧格式（无时间戳）、或**已过期**都降级为纯网络判定 ——
+ * 少一路证据，不报错。
+ *
+ * 为什么必须判过期（2026-09-09 实测踩到）：这个文件由 `scripts/devnet-status` 在每次运行
+ * 前重写，但**直接调用本工具时不会**。一份两天前留下的旧文件把 7 个节点全标成 running，
+ * 于是刚被 `devnet-stop` 停掉的本机节点没有走下面"容器不在运行"那个分支，而落进网络推断，
+ * 报出 `unreachable`「整域缺席，去看那台机器」—— 正是 classify 里那段注释说要避免的误报。
+ *
+ * **过期的事实比没有事实更坏**：它看起来像证据，而且恰好把判定推向错误的分支。
+ */
 function readContainers() {
-  try { return JSON.parse(readFileSync(CONTAINERS_PATH, 'utf8')); } catch { return {}; }
+  try {
+    const raw = JSON.parse(readFileSync(CONTAINERS_PATH, 'utf8'));
+    const at = Number(raw?.collectedAt);
+    if (!Number.isFinite(at)) return {};                                  // 旧格式：不可信
+    if (Date.now() - at * 1000 > CONTAINER_FACTS_TTL_MS) return {};       // 过期：不可信
+    return raw.nodes ?? {};
+  } catch { return {}; }
 }
 
 const expectedNodeId = (id) => {

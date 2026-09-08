@@ -22,9 +22,16 @@ ENV_FILE="${KARMACHAIN_ENV_FILE:-./docker/compose/active.env}"
 
 command -v docker >/dev/null 2>&1 || { echo "devnet-status: docker not found" >&2; exit 10; }
 
+# shellcheck source=./_devnet-common.sh
+. "$(dirname "$0")/_devnet-common.sh"
+DOMAIN="${KARMACHAIN_DOMAIN:-$KARMACHAIN_DEFAULT_DOMAIN}"
+
 mkdir -p ./.devnet
+# collectedAt 让消费方能判断这份事实是否新鲜。**不是可选的**：本文件在每次运行前重写，
+# 但直接调用 tools/inspect/node-status.mjs 时不会 —— 一份过期文件会把"本机主动停止"
+# 误判成"整域缺席"。node-status 对无时间戳或超期的文件降级为纯网络判定。
 {
-  printf '{'
+  printf '{"collectedAt":%s,"nodes":{' "$(date +%s)"
   first=1
   for n in ${KARMACHAIN_NODE_IDS}; do
     c="karmachain-${n}"
@@ -37,7 +44,11 @@ mkdir -p ./.devnet
     # 容器内的健康检查自报状态：它持有 stalled 的超时窗口，网络探测算不出来
     self=''
     if [ "$status" = "running" ]; then
-      self="$(docker exec "$c" /opt/karmachain/healthcheck.sh --state 2>/dev/null \
+      # MSYS_NO_PATHCONV=1 是必需的：Git Bash 会把 /opt/... 当成本地路径改写，
+      # docker exec 于是失败，而 `2>/dev/null || true` 把它**静默吞掉** ——
+      # 症状是 selfState 恒为空，也就是 Windows 宿主上永远拿不到容器自报的 stalled，
+      # 而那个状态只有容器判得出来（它持有超时窗口）。2026-09-09 实测发现。
+      self="$(env MSYS_NO_PATHCONV=1 docker exec "$c" /opt/karmachain/healthcheck.sh --state 2>/dev/null \
               | sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' || true)"
     fi
     [ $first -eq 1 ] || printf ','
@@ -45,11 +56,19 @@ mkdir -p ./.devnet
     printf '"%s":{"status":"%s","exitCode":%s,"lastError":"%s","selfState":"%s"}' \
       "$n" "$status" "${code:-0}" "$err" "$self"
   done
-  printf '}\n'
+  printf '}}\n'
 } > ./.devnet/containers.json
 
 # 与 devnet-verify 同一模式：接到节点所在的容器网络上。
 # 单机形态下节点地址是容器网段（172.28.0.x），不接这个网就一个都探不到；
 # 跨机形态下地址是各机器的局域网 IP，容器照样出得去，同一条命令通用。
-# MSYS_NO_PATHCONV=1 见 devnet-verify.sh 的说明。
-exec env MSYS_NO_PATHCONV=1 docker run --rm   --network karmachain   -v "$(pwd):/workspace"   karmachain/verify:local node tools/inspect/node-status.mjs "$@"
+#
+# 网络名由公共件推导，**不能写死** —— 此前这里是 `--network karmachain`，
+# 那是单机形态才渲染出的网络，跨机形态下这条命令必然失败（与 devnet-verify 同一缺陷，
+# 2026-09-09 才发现漏改了本文件）。MSYS_NO_PATHCONV=1 见 _devnet-common.sh 的说明。
+NETWORK="$(devnet_node_network "$DOMAIN")" || { echo "devnet-status: 前置条件未满足（见上）" >&2; exit 10; }
+
+exec env MSYS_NO_PATHCONV=1 docker run --rm \
+  --network "$NETWORK" \
+  -v "$(pwd):/workspace" \
+  karmachain/verify:local node tools/inspect/node-status.mjs "$@"
