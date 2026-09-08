@@ -176,7 +176,7 @@ description: "Task list for 002-resilient-validator-network"
 
 ### Tests for User Story 4
 
-- [ ] T056 [P] [US4] `tests/e2e/domain-failure.test.mjs`：实现场景 F，断言整域失效时链继续出块、缺席节点标记为 `unreachable` 而非节点故障、恢复后自动追平
+- [x] T056 [P] [US4] `tests/e2e/domain-failure.test.mjs`：实现场景 F，断言整域失效时链继续出块、缺席节点标记为 `unreachable` 而非节点故障、恢复后自动追平 —— **2026-09-09 在 5 台独立物理机上跑满 30 分钟窗口通过**（30/30 笔确认、高度 36→66、恢复无误报）。三项断言各自的实现方式与视角问题见该文件头部说明
 - [X] T057 [P] [US4] `tests/integration/cross-host-reachability.test.mjs`：实现 V-06，5 台机器两两 staking 端口可达
 
 ### Implementation for User Story 4
@@ -264,7 +264,8 @@ description: "Task list for 002-resilient-validator-network"
 
 - [X] T096 [US4] 容错推导引入**有效边界**：共享同一失效因素的声明边界用并查集合并（因素可传递），`tolerateWholeDomainLoss` 改按合并后判定。此前共享因素只产生 WARN 而承诺仍按声明边界算 —— 2026-09-07 取证发现 `lan` 声明的 5 个边界里有 3 个是虚拟机、真实宿主只有 2 台物理机（win-1 承载 3 个验证者），而校验器仍打印"可容忍 1 个边界整体失效 [OK]"：**一个在现实里为假的绿灯**，正是 ADR-0007 自己警告过的缺陷形态。改动涉及 `load.mjs`（新增 `effectiveDomains()` 与 `effectiveDomainCount`/`effectiveDomains`/`declaredWithinLimit`）、`validate-topology.mjs`（输出合并结果）、`tests/unit/topology.test.mjs`（6 条断言，含一条显式禁止 `lan` 的承诺悄悄变绿）
 
-- [ ] T097 [US4] **已裁定并暂缓，等硬件**：恢复整域失效容忍需要 5 台独立物理机（n=5 ⇒ 每有效边界至多 ⌊5/4⌋=1 个）。当前 2 台，缺 3 台。运维方 2026-09-07 裁定：**按 5 台使用、保持 5 个验证者、接受当前可用性等级**（安全性不受影响 —— V-05 已证超限时安全停摆、区块零回滚；受影响的是可用性）。`hypervisor:` 因素保留声明（物理事实，不阻塞部署），`[FAIL]` 行的含义为"已知并接受的限制"。降到 4 验证者 + 4 台物理机的替代路径未采纳（要改 ADR-0004、重新建链）。见 `docs/adr/0007-failure-domain-independence.md` 的"决定（2026-09-07）"与"恢复整域容错需要什么"
+- [x] T097 [US4] **已达成（2026-09-09）**：整域失效容忍要求每有效边界至多 ⌊n/4⌋=1 个验证者。2026-09-08 硬件更换为 **5 台独立物理机**并通过重新清点（5 个 MAC 互不相同、无虚拟化厂商 OUI、宿主上无 hypervisor 进程），因此 5 个边界的 `sharedFailureFactors` 全部为空数组，`devnet-topology --deployment lan` 报 `[OK] 可容忍 1 个边界整体失效`、零告警。T056 的 30 分钟窗口在该硬件上跑满通过，SC-005 达成。
+  > **历史（2026-09-07 的裁定，已被硬件更换取代）**：**已裁定并暂缓，等硬件**：恢复整域失效容忍需要 5 台独立物理机（n=5 ⇒ 每有效边界至多 ⌊5/4⌋=1 个）。当前 2 台，缺 3 台。运维方 2026-09-07 裁定：**按 5 台使用、保持 5 个验证者、接受当前可用性等级**（安全性不受影响 —— V-05 已证超限时安全停摆、区块零回滚；受影响的是可用性）。`hypervisor:` 因素保留声明（物理事实，不阻塞部署），`[FAIL]` 行的含义为"已知并接受的限制"。降到 4 验证者 + 4 台物理机的替代路径未采纳（要改 ADR-0004、重新建链）。见 `docs/adr/0007-failure-domain-independence.md` 的"决定（2026-09-07）"与"恢复整域容错需要什么"
 
 - [X] T099 修 `devnet-start` 在"卷已 reset 但制品仍在"时的诊断：此前会**等满 300 秒**才给一句"未就绪"，毫无指向性。T091 的往返测试抓到。判据只能是"问 P 链"，不能看文件系统 —— 空卷上的 avalanchego 会为**它自己那条全新的 P 链**建出 `/data/db`，"db 目录存在"区分不了"已建链"与"全新空链"（先按文件系统写过一版，实测无效）。现改为 compose up 之后向本机 Primary 查 `platform.getBlockchains`，实测 **3 秒**明确失败并给出 stop → bootstrap → start 的顺序
 
