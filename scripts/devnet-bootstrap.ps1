@@ -1,4 +1,4 @@
-# scripts/devnet-bootstrap.ps1 —— 一次性建链（功能 002）。仓库中唯一用到 Avalanche CLI 的地方。
+﻿# scripts/devnet-bootstrap.ps1 —— 一次性建链（功能 002）。仓库中唯一用到 Avalanche CLI 的地方。
 . (Join-Path $PSScriptRoot '_devnet-common.ps1')
 $ctx = Get-DevnetContext; Assert-Docker
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Error '需要 Node（提取制品）'; exit 10 }

@@ -1,4 +1,4 @@
-# scripts/devnet-reset.ps1 —— 从创世重建（功能 002）。
+﻿# scripts/devnet-reset.ps1 —— 从创世重建（功能 002）。
 # 它不再是崩溃后的出路 —— 崩溃自愈由节点自身完成（FR-005）。删卷后必须重新 bootstrap。
 . (Join-Path $PSScriptRoot '_devnet-common.ps1')
 $ctx = Get-DevnetContext; Assert-Docker

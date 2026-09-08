@@ -1,4 +1,4 @@
-# scripts/devnet-stop.ps1 —— 停止开发网络（功能 002）。不保存任何东西：002 没有快照机制。
+﻿# scripts/devnet-stop.ps1 —— 停止开发网络（功能 002）。不保存任何东西：002 没有快照机制。
 . (Join-Path $PSScriptRoot '_devnet-common.ps1')
 $ctx = Get-DevnetContext; Assert-Docker
 docker compose -f $ctx.Compose stop

@@ -1,4 +1,4 @@
-# scripts/devnet-status.ps1 —— 逐节点报告恢复状态、高度、peers、所属故障边界（功能 002 / US6）。
+﻿# scripts/devnet-status.ps1 —— 逐节点报告恢复状态、高度、peers、所属故障边界（功能 002 / US6）。
 # 与 scripts/devnet-status.sh 等价。
 #
 # 用法：scripts\devnet-status.ps1 [--json] [--deployment <name>] [--sample-seconds <n>]
@@ -10,14 +10,14 @@ $ctx = Get-DevnetContext; Assert-Docker
 $facts = @{}
 foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
     $c = "karmachain-$n"
-    $status = docker inspect --format '{{.State.Status}}' $c 2>$null
+    $status = Invoke-Quiet { docker inspect --format '{{.State.Status}}' $c }
     if (-not $status) { continue }
-    $code = docker inspect --format '{{.State.ExitCode}}' $c 2>$null
+    $code = Invoke-Quiet { docker inspect --format '{{.State.ExitCode}}' $c }
     $err = (docker logs --tail 40 $c 2>&1 | Select-String 'karmachain-node' | Select-Object -Last 1 | ForEach-Object { $_.Line })
     if ($err) { $err = ($err -replace '[\\"]', ' ') ; if ($err.Length -gt 160) { $err = $err.Substring(0, 160) } }
     $self = ''
     if ($status -eq 'running') {
-        $json = docker exec $c /opt/karmachain/healthcheck.sh --state 2>$null
+        $json = Invoke-Quiet { docker exec $c /opt/karmachain/healthcheck.sh --state }
         if ($json) { try { $self = ($json | ConvertFrom-Json).state } catch { $self = '' } }
     }
     $facts[$n] = @{ status = $status; exitCode = [int]$code; lastError = "$err"; selfState = "$self" }

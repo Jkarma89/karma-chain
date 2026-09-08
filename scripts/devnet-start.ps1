@@ -1,4 +1,4 @@
-# scripts/devnet-start.ps1 —— 启动 KarmaChain 开发网络（功能 002）
+﻿# scripts/devnet-start.ps1 —— 启动 KarmaChain 开发网络（功能 002）
 # 与 scripts/devnet-start.sh 等价。没有"恢复快照"路径：节点各自从数据卷恢复（研究 R-01）。
 . (Join-Path $PSScriptRoot '_devnet-common.ps1')
 $ctx = Get-DevnetContext; Assert-Docker
@@ -60,9 +60,9 @@ while ($true) {
         exit 0
     }
     foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
-        $state = docker inspect --format '{{.State.Status}}' "karmachain-$n" 2>$null
+        $state = Invoke-Quiet { docker inspect --format '{{.State.Status}}' "karmachain-$n" }
         if ($state -eq 'exited') {
-            $code = [int](docker inspect --format '{{.State.ExitCode}}' "karmachain-$n" 2>$null)
+            $code = [int](Invoke-Quiet { docker inspect --format '{{.State.ExitCode}}' "karmachain-$n" })
             if ($code -in 10, 12) {
                 docker logs "karmachain-$n" 2>&1 | Select-String 'karmachain-node' | Select-Object -Last 8
                 Write-Error "节点 $n 以退出码 $code 结束"; exit $code

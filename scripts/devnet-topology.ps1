@@ -1,4 +1,4 @@
-# scripts/devnet-topology.ps1 —— 校验并展示拓扑（功能 002 / US5）。
+﻿# scripts/devnet-topology.ps1 —— 校验并展示拓扑（功能 002 / US5）。
 # 与 scripts/devnet-topology.sh 等价。
 #
 # 用法：scripts\devnet-topology.ps1 [--deployment <name>] [--json] [--protocol <path>]

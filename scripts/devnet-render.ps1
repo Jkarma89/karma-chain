@@ -1,4 +1,4 @@
-# scripts/devnet-render.ps1 —— 由唯一事实来源重新生成全部派生物（功能 002 / US5、FR-027）。
+﻿# scripts/devnet-render.ps1 —— 由唯一事实来源重新生成全部派生物（功能 002 / US5、FR-027）。
 # 与 scripts/devnet-render.sh 等价。
 #
 # 用法：scripts\devnet-render.ps1 [--check]

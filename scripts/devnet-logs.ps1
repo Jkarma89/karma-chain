@@ -1,4 +1,4 @@
-# scripts/devnet-logs.ps1 —— 按节点查看日志（功能 002 / US6、FR-031）。
+﻿# scripts/devnet-logs.ps1 —— 按节点查看日志（功能 002 / US6、FR-031）。
 # 与 scripts/devnet-logs.sh 等价；脱敏理由见 .sh 版本的说明。
 #
 # 用法：scripts\devnet-logs.ps1 [<node>] [--chain] [--stdout] [--file <name>] [-f] [-n N] [--raw]
@@ -23,7 +23,7 @@ if (-not $node) {
     Write-Host "可选节点：$($ctx.KARMACHAIN_NODE_IDS)"
     Write-Host ''
     foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
-        $ls = docker exec "karmachain-$n" ls -1 /data/logs 2>$null
+        $ls = Invoke-Quiet { docker exec "karmachain-$n" ls -1 /data/logs }
         if ($ls) { Write-Host '日志文件：'; $ls | ForEach-Object { Write-Host "  $_" }; break }
     }
     Write-Host ''

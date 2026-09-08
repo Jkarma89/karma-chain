@@ -1,4 +1,4 @@
-# scripts/devnet-contracts.ps1 —— 列出链上所有合约（创世内置 + 运行期部署）。
+﻿# scripts/devnet-contracts.ps1 —— 列出链上所有合约（创世内置 + 运行期部署）。
 #
 # 用法：scripts\devnet-contracts.ps1 [--json] [--from <block>] [--no-probe]
 # 退出码：0 成功 | 1 链不可达 | 10 Docker 不可用
