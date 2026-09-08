@@ -53,7 +53,17 @@ ubuntu-1 上 `uname -m` 返回 `aarch64`，`docker compose -f docker/compose/lan
 因此 `SHA_SUBNET_EVM_ARM64` **首次得到实测确认**（此前只是从 Releases 抄下来的值）。
 win-2 的 amd64 构建同一次也通过，`SHA_SUBNET_EVM_AMD64` 照旧成立。
 
-由此这条链是 **2 台 amd64 + 3 台 arm64 的混合架构部署**，而五台机器的创世块哈希
+逐台 `uname -m` 的结果（2026-09-09 补全）：
+
+| 边界 | `uname -m` | 取样方式 |
+|---|---|---|
+| win-1 | amd64 | `docker version --format '{{.Server.Arch}}'` |
+| win-2 | amd64 | 构建日志 `case "amd64" in` |
+| ubuntu-1 | `aarch64` | 直接取样 |
+| ubuntu-2 | `aarch64` | 直接取样 |
+| ubuntu-3 | `x86_64` | 直接取样 |
+
+由此这条链是 **3 台 amd64 + 2 台 arm64 的混合架构部署**，而五台机器的创世块哈希
 逐字节相同（`0x19cfde1f…92ed`，等于仓库基准）—— SC-008 因此顺带成了一次
 **跨架构一致性核对**，比原本的措辞更有分量。
 
@@ -62,10 +72,14 @@ win-2 的 amd64 构建同一次也通过，`SHA_SUBNET_EVM_AMD64` 照旧成立�
 stub），改从 ubuntu-1 搬 arm64 镜像解决；若误从 win-1 搬 amd64 镜像，失败会发生在
 容器启动而不是 `docker load`，很容易误判成节点问题。已写入 `docs/devnet.md` 9.2 ⑧。
 
-**尚未逐台确认**：ubuntu-2、ubuntu-3 的 `uname -m` 没有直接取样。ubuntu-2 依 MAC
-（Raspberry Pi OUI）与"成功运行了 ubuntu-1 导出的 arm64 镜像"两点可判定为 arm64；
-ubuntu-3 的 MAC `D8-C0-A6` 不是树莓派 OUI，其架构目前只由"能运行同一份 arm64 镜像"
-间接支持。补一次 `uname -m` 即可确证。
+**一处被推翻的推断（留作记录）。** 上文初稿曾由"ubuntu-3 能运行同一份 arm64 镜像"
+推断它是 arm64。逐台取样后证明**它是 x86_64** —— 推断错了。它的 MAC `D8-C0-A6` 本来
+就不是树莓派 OUI，而我把"跑起来了"当成了架构证据；实际上"跑起来了"只说明它用的
+**不是**那份 arm64 镜像（很可能是它自己构建的 amd64 镜像 —— 它的构建容器 DNS 未必和
+ubuntu-2 一样坏）。
+
+教训与 2026-09-07 那次"5 台其实是 2 台"同类：**"它工作正常"不构成对底层事实的证据**。
+架构、物理机身份这类事实必须直接取样，不能从行为反推。
 
 ### 历史：2026-09-07 曾发现声明的 5 个边界只对应 2 台物理机
 

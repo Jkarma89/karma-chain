@@ -112,7 +112,9 @@ scripts/devnet-verify.sh --quick    # 跳过合约编译与 RPC 方法探测（�
 
 > **为什么要在容器里跑**：逐节点检查要直连每个节点的 HTTP 端口，而单机形态下那是容器网段（`172.28.0.0/24`）——
 > 宿主到不了，只有对外的 RPC 代理端口发布到了宿主。`scripts/devnet-verify` 因此用
-> `docker run --network karmachain` 起验证容器。在宿主直接跑 `node tools/verify/verify-network.mjs` 时，
+> `docker run --network <节点所在网络>` 起验证容器 —— 网络名不写死，而是问运行中的
+> `karmachain-rpc-<domain>` 容器（单机形态是 `karmachain`，跨机形态是 compose 的隐式默认网络）。
+> 在宿主直接跑 `node tools/verify/verify-network.mjs` 时，
 > `node` / `validator` / `fault-tolerance` 三项会降级为 `[SKIP]` 并提示改用脚本；其余照常执行。
 > 跨机形态下节点地址是各机器的局域网 IP，宿主上直接跑也能覆盖全部检查。
 
@@ -361,7 +363,7 @@ curl -s -X POST -H 'content-type: application/json' \
 **每个边界至多 1 个验证者**才能扛住整域失效 —— 也就是需要 5 台**独立物理机**。
 
 **2026-09-08 起，5 台独立物理机已就位**（win-1、win-2 为 amd64 Windows；
-ubuntu-1/2/3 为 **arm64** Linux）。清点结论：5 个 MAC 互不相同、无虚拟化厂商 OUI、
+ubuntu-1、ubuntu-2 为 **arm64** Linux，ubuntu-3 为 amd64 Linux —— 这条链是跨架构的）。清点结论：5 个 MAC 互不相同、无虚拟化厂商 OUI、
 宿主上无 `vmware-vmx` 进程。`scripts/devnet-topology --deployment lan` 因此报
 `[OK] 可容忍 1 个边界整体失效`，零告警。
 
@@ -471,7 +473,8 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 **⑧ 架构可以混。** 镜像**逐台各自构建**（`docker/node/Dockerfile` 按 `TARGETARCH` 选
 subnet-evm 的二进制与校验值），因此 amd64 与 arm64 机器可以混在同一条链里 ——
-本项目当前就是 2 台 amd64 + 3 台 arm64，创世哈希与链身份完全一致。
+本项目当前就是 **3 台 amd64（win-1、win-2、ubuntu-3）+ 2 台 arm64（ubuntu-1、ubuntu-2）**，
+创世哈希与链身份完全一致。
 
 推论：`docker save` / `docker load` 搬镜像**只在同架构之间有效**。arm64 机器不能用
 amd64 机器导出的镜像（反之亦然），报错发生在容器启动而不是 load，容易误判。
