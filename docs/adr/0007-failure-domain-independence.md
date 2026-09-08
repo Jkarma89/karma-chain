@@ -46,6 +46,27 @@ KarmaChain 阶段二意图把 5 个 L1 验证者分布到 5 台机器、每台�
 arm64 构建验证过** —— 树莓派上的首次 `devnet-start`（含镜像构建）就是它们的第一次实测。
 若校验值不符，构建会以校验失败明确报错，不会静默产出错误的镜像。
 
+### 后续（2026-09-08）：arm64 校验值已被真实构建验证，且这条链是跨架构的
+
+ubuntu-1 上 `uname -m` 返回 `aarch64`，`docker compose -f docker/compose/lan-ubuntu-1.yml build`
+构建成功 —— Dockerfile 里那句 `echo "${SHA_EVM}  ${EVM_TGZ}" | sha256sum -c -` 通过了，
+因此 `SHA_SUBNET_EVM_ARM64` **首次得到实测确认**（此前只是从 Releases 抄下来的值）。
+win-2 的 amd64 构建同一次也通过，`SHA_SUBNET_EVM_AMD64` 照旧成立。
+
+由此这条链是 **2 台 amd64 + 3 台 arm64 的混合架构部署**，而五台机器的创世块哈希
+逐字节相同（`0x19cfde1f…92ed`，等于仓库基准）—— SC-008 因此顺带成了一次
+**跨架构一致性核对**，比原本的措辞更有分量。
+
+一条实务推论：`docker save` / `docker load` 搬镜像**只在同架构之间有效**。
+本次 ubuntu-2 的构建容器解析不了域名（宿主 `/etc/resolv.conf` 指向 systemd-resolved 的
+stub），改从 ubuntu-1 搬 arm64 镜像解决；若误从 win-1 搬 amd64 镜像，失败会发生在
+容器启动而不是 `docker load`，很容易误判成节点问题。已写入 `docs/devnet.md` 9.2 ⑧。
+
+**尚未逐台确认**：ubuntu-2、ubuntu-3 的 `uname -m` 没有直接取样。ubuntu-2 依 MAC
+（Raspberry Pi OUI）与"成功运行了 ubuntu-1 导出的 arm64 镜像"两点可判定为 arm64；
+ubuntu-3 的 MAC `D8-C0-A6` 不是树莓派 OUI，其架构目前只由"能运行同一份 arm64 镜像"
+间接支持。补一次 `uname -m` 即可确证。
+
 ### 历史：2026-09-07 曾发现声明的 5 个边界只对应 2 台物理机
 
 本文初版依据运维方的逐项答复，把 5 个边界的 `sharedFailureFactors` 全部记为空数组，并据此声明

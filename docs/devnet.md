@@ -360,18 +360,26 @@ curl -s -X POST -H 'content-type: application/json' \
 5 个等权验证者时可容忍 `f ≤ ⌊5/4⌋ = 1` 个离线。叠加故障边界后，
 **每个边界至多 1 个验证者**才能扛住整域失效 —— 也就是需要 5 台**独立物理机**。
 
-本项目当前的实际情况是 **2 台物理机**（3 个"边界"是这两台上的虚拟机），因此：
+**2026-09-08 起，5 台独立物理机已就位**（win-1、win-2 为 amd64 Windows；
+ubuntu-1/2/3 为 **arm64** Linux）。清点结论：5 个 MAC 互不相同、无虚拟化厂商 OUI、
+宿主上无 `vmware-vmx` 进程。`scripts/devnet-topology --deployment lan` 因此报
+`[OK] 可容忍 1 个边界整体失效`，零告警。
 
-| 场景 | 结果 |
-|---|---|
-| 任一**单个验证者**故障 | 链继续出块，该节点重启后自动追平 |
-| 任一**台物理机**失效 | 链**安全停摆** —— 不分叉、区块零回滚、数据不丢、恢复后自动继续 |
-| 强制终止 / 断电 / `docker kill` | 各节点从自己的数据卷恢复，**不需要重置**，链从中断前高度继续 |
+| 场景 | 结果 | 实证 |
+|---|---|---|
+| 强制终止 / 断电 / `docker kill` | 各节点从自己的数据卷恢复，**不需要重置**，链从中断前高度继续 | ✅ 50 轮强制终止，零丢失零重置 |
+| 任一**单个验证者**故障 | 链继续出块，该节点重启后自动追平 | ✅ 30 分钟窗口，30/30 笔确认 |
+| 任一**故障边界整体失效** | 链继续出块（余量降为 0） | ⏳ 架构已满足且拓扑校验通过，30 分钟观测窗口（SC-005 / T056）**尚未在这套硬件上跑过** |
+| 同时失去**两个**边界 | 链**安全停摆** —— 不分叉、区块零回滚、数据不丢、恢复后自动继续 | ✅ 已验证 |
 
-也就是说：**"崩溃后必须重置全链"这个缺陷已经消除**（与机器数量无关）；
-**"整机失效不停摆"尚未达成**（需要 5 台独立物理机）。
-`scripts/devnet-topology --deployment lan` 会如实打印这一点，
-完整依据见 [ADR-0007](adr/0007-failure-domain-independence.md)。
+也就是说：**"崩溃后必须重置全链"（缺陷 A）已消除**，**"零物理冗余"（缺陷 B）已消除**；
+"整域失效仍出块"这一条的**长时观测**还欠着。完整依据见
+[ADR-0007](adr/0007-failure-domain-independence.md)。
+
+> 跨机形态的既有验证（2026-09-08，5 台机器）：`devnet-verify` **14/14**（`.sh` 与 `.ps1` 各一次）、
+> 7/7 节点 healthy 且各 6 个对等节点、5 台机器的创世块哈希逐字节相同
+> （`0x19cfde1f…92ed`，等于仓库基准 —— 这同时是一次 **amd64/arm64 跨架构**核对）、
+> 局域网上转账 0.4 秒确认。
 
 ### 9.2 前置条件（逐台核对，缺一项都会在部署后才暴露）
 
@@ -393,6 +401,11 @@ Get-CimInstance Win32_Process -Filter "Name='vmware-vmx.exe'" | Select-Object Co
 
 Linux 客户机内用 `systemd-detect-virt`（返回 `vmware`／`kvm`／`none`）。
 发现共享宿主时，必须在 `blockchain/protocol.json` 的对应边界补上 `hypervisor:<宿主>` 因素。
+
+> 为什么这一项排在最前：2026-09-07 清点时发现，当时声称的"5 台机器"其实是 **2 台物理机**
+> —— 3 个边界是那两台上的虚拟机。所有测试都是绿的，`devnet-verify` 14/14，
+> 唯一的破口是 ARP 表里两个"不同机器"共用同一个 MAC。这就是 T-5 守卫后来改成
+> **合并共享因素后再算有效边界数**（并置为错误而非告警）的由来。
 
 **② 每台机器静态 IP 或 DHCP 保留。** 地址钉死在 `topology.deployments` 里，节点据此向对等节点通告自己。
 租约一变，该机器上的节点就在通告一个不属于它的地址 —— 而节点对此**完全无声**：正常启动、日志无异常，
@@ -433,6 +446,58 @@ sudo ufw allow 21664/tcp && sudo ufw allow 21665/tcp
 
 准确的端口归属由拓扑决定，不要手抄 —— 用 `scripts/devnet-topology --deployment lan` 查看。
 
+宿主 RPC 端口 8545 **不需要**跨机放行：每台机器自己的 nginx 代理只服务本机。
+只有想从别的机器直接查某台的 RPC 时才放行（例如逐台核对创世哈希，见 9.4）。
+
+**⑥ Windows：PowerShell 执行策略。** Windows 客户端默认 `Restricted`，一个 `.ps1` 都不让跑：
+
+```powershell
+Get-ExecutionPolicy -List
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+`RemoteSigned` 允许本地未签名脚本，而 `git clone` 出来的文件不带互联网区域标记，因此不会被拦。
+不想改设置的话，可以只对单次生效：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\devnet-start.ps1`
+（`$env:KARMACHAIN_DOMAIN` 先设好，子进程会继承）。
+
+**⑦ Linux：`.sh` 的可执行位。** 仓库自 `604e459` 起把 `scripts/*.sh` 记为 `100755`，
+新 clone 直接可执行。但**在那之前克隆的仓库，`git pull` 不会改已有文件的权限**，
+症状是 `sudo scripts/devnet-start.sh` 报 `command not found` —— 这个措辞会把人引向
+"脚本不存在 / PATH 不对"，而真正的原因是权限。补一次即可：`chmod +x scripts/*.sh`。
+
+若本地已手工 `chmod` 过而后又要 `git pull`，会撞 `Your local changes ... would be overwritten`
+（模式变更算本地改动）。确认 `git diff --summary` 全是 `mode change 100644 => 100755` 后
+`git checkout -- scripts/` 再 pull。
+
+**⑧ 架构可以混。** 镜像**逐台各自构建**（`docker/node/Dockerfile` 按 `TARGETARCH` 选
+subnet-evm 的二进制与校验值），因此 amd64 与 arm64 机器可以混在同一条链里 ——
+本项目当前就是 2 台 amd64 + 3 台 arm64，创世哈希与链身份完全一致。
+
+推论：`docker save` / `docker load` 搬镜像**只在同架构之间有效**。arm64 机器不能用
+amd64 机器导出的镜像（反之亦然），报错发生在容器启动而不是 load，容易误判。
+
+**⑨ 构建容器内的 DNS 要能解析。** 守护进程能拉 Docker Hub **不等于**构建容器能解析域名 ——
+`docker build` 里的 `apt-get` 与 `curl github.com` 走的是容器的 DNS。典型成因是宿主
+`/etc/resolv.conf` 指向 systemd-resolved 的 stub `127.0.0.53`，Docker 原样带进容器而那里不可达。
+症状：
+
+```
+Err:1 http://deb.debian.org/debian bookworm InRelease
+  Temporary failure resolving 'deb.debian.org'
+```
+
+一次性修法：
+
+```bash
+sudo tee /etc/docker/daemon.json <<'EOF'
+{ "dns": ["<内网 DNS 或网关>", "8.8.8.8"] }
+EOF
+sudo systemctl restart docker
+```
+
+**重启 docker 会重启容器**，所以别在链跑起来之后做这件事。
+另一条路是从**同架构**的另一台机器搬镜像（见 ⑧ 与 9.3 第 1 步）。
+
 ### 9.3 部署步骤
 
 **第 1 步：切换生效形态（在任一台机器上做一次，改动进 git）**
@@ -457,7 +522,26 @@ scripts/devnet-bootstrap        # 唯一会用到 Avalanche CLI 的地方
 
 **第 3 步：分发**
 
-仓库走 git。此外**只需把 2 个 Primary 节点的数据卷**拷到它们所属的机器（`ubuntu-1`、`ubuntu-2`）：
+仓库走 git。建链产出的 `blockchain/chain-identity/*.json` **必须先提交并推上去**，
+其余机器再 `git pull` —— 不能各自重新建链。原因见
+[ADR-0009](adr/0009-chain-identity-as-second-class-fact.md)：SubnetID / BlockchainID /
+ValidationID 是可复现的，但 **Primary Network 创世嵌入了建链时刻**（`startTime` 与两个
+`locktime`），不可复现。用了不同副本的节点会以 `db contains invalid genesis hash` 拒绝启动。
+
+镜像**每台各自构建**（`docker compose -f docker/compose/lan-<domain>.yml build`）。
+建议单独构建一次而不是让 `devnet-start` 顺带构建 —— 后者把 `docker compose up` 的输出
+吞进变量、只在失败时打印，几分钟的构建看起来像卡死。
+若某台机器的构建容器解析不了域名（见 9.2 ⑨），从**同架构**的另一台机器搬：
+
+```bash
+# 在能构建的那台上
+docker save karmachain/node:local nginx:alpine -o ~/karmachain-<arch>.tar
+scp ~/karmachain-<arch>.tar <user>@<对端>:~/
+# 在对端
+docker load -i ~/karmachain-<arch>.tar     # tag 与 compose 的 image: 一致，之后不会再触发构建
+```
+
+数据卷方面**只需把 2 个 Primary 节点的卷**拷到它们所属的机器（`ubuntu-1`、`ubuntu-2`）：
 
 ```bash
 # 在建链的那台机器上导出
@@ -492,7 +576,22 @@ $env:KARMACHAIN_DOMAIN='<本机的边界 id>'; scripts\devnet-start.ps1   # Wind
 **填错会被拦下**：`devnet-start` 在启动节点之前核对该边界声明的地址是否属于本机网卡，
 不符即以退出码 13 失败并给出修正方式 —— 这道检查必须在宿主侧做，因为容器在 NAT 之后看不到宿主地址。
 
-启动顺序无所谓，机器之间没有编排依赖。先起来的验证者会等对等节点出现。
+机器之间没有编排依赖，因此**顺序不影响最终结果**。但有一件事必须先知道，否则会误判成故障：
+
+> **先起来的机器必定超时（退出码 20）。** L1 有 5 个等权验证者，发起查询需已连接权重 ≥ 75%，
+> 也就是**至少 4 个验证者在线**链才推得动、RPC 才会应答。因此第 1、2、3 台机器上
+> `devnet-start` 一定会等满 `KARMACHAIN_STARTUP_TIMEOUT`（默认 300 秒）然后失败 ——
+> 而节点其实是好的，容器带 `restart: unless-stopped` 仍在运行。
+>
+> 把其余边界起完，再对先前那几台**各重跑一次** `devnet-start` 即可（它是幂等的，
+> 容器还在就只接着轮询）。第 4 台起来的那一刻链就活了，那台会直接打印 READY。
+>
+> 超时信息里会转达每个本机节点自己的判断（`healthcheck --state`），
+> `等其余边界：只看见 2/4 个对等验证者` 与 `stalled — 需要处置` 是两回事，不要混。
+
+建议顺序（省一轮等待，不是硬要求）：**先起承载 Primary 的两台**（`ubuntu-1`、`ubuntu-2`）。
+`primary-2` 的 `bootstrap-ips` 只指向 `ubuntu-1`，5 个验证者的指向这两台；
+Primary Network 也是 2 个验证者的集合，缺一个就只有 50% 权益，P 链推不动。
 
 ### 9.4 验证
 
@@ -518,15 +617,23 @@ Windows **显式拒绝**从该账户启动 WSL（`Wsl/WSL_E_LOCAL_SYSTEM_NOT_SUP
 自动登录或在计划任务里存口令都能绕过，但都要在机器上留下一份可被滥用的凭据，
 换来的只是省掉一次登录 —— 不划算。
 
-登录后需手动做的事（**注意 Windows 宿主同时是虚拟化宿主，各自门控着不止一个节点**）：
+登录后需手动做的事：
 
 | 宿主 | 手动步骤 | 随之恢复的节点 |
 |---|---|---|
-| `win-1` | ① 启动 Docker Desktop ② 启动 VMware 并开机 U22Node1、U22Node2 | `l1-1`；虚拟机内自动回来的 `l1-3`、`l1-4`、`primary-1`、`primary-2` |
-| `win-2` | ① 启动 Docker Desktop ② 启动 VMware 并开机 U22Node3 | `l1-2`；虚拟机内自动回来的 `l1-5` |
+| `win-1` | 启动 Docker Desktop | `l1-1` |
+| `win-2` | 启动 Docker Desktop | `l1-2` |
 
-虚拟机**内部**不需要人工介入。因此**停电后全链恢复需要有人登录 `win-1`**，在此之前链会停摆 ——
-停摆是安全的（不分叉、零回滚），数据也不会丢。
+**停电后的实际处境**（5 台物理机形态）：3 台 Linux 自动回来，带回 `l1-3`、`l1-4`、`l1-5`
+与两个 Primary —— 但那只有 **3/5 = 60% 验证者**，低于 75% 查询门槛，链仍处于停摆。
+**只需有人登录任意一台 Windows**（`win-1` 或 `win-2` 皆可）启动 Docker Desktop，
+到 4/5 = 80% 即恢复出块；另一台可以晚些再来。
+
+停摆是安全的（不分叉、区块零回滚），数据也不会丢。
+
+> 与虚拟机形态相比这是一处实质改善：此前 `win-1` 同时是虚拟化宿主，门控着 5 个节点，
+> 停电后**必须**有人登录那一台特定机器；现在两台 Windows 各只门控 1 个验证者，
+> 登录哪一台都行。
 
 `scripts/devnet-status` 会把"边界缺席"与"节点故障"区分开，用它判断该去登录哪台机器，
 而不是去排查节点本身。
@@ -539,9 +646,14 @@ scripts/devnet-node kill l1-3
 scripts/devnet-verify              # fault-tolerance 应显示 4/5 online, 余量 0
 scripts/devnet-node start l1-3     # 应当自动追平
 
-# 整个边界失效（应当：按 9.1 的承诺等级，当前会安全停摆）
+# 整个边界失效（5 台物理机形态：应当继续出块，余量降为 0）
 # 在目标机器上：scripts/devnet-stop
-# 在其他机器上：scripts/devnet-status  —— 该边界应标记为缺席，而非节点故障
+# 在其他机器上：scripts/devnet-status   —— 该边界应标记为缺席（unreachable），而非节点故障
+#                scripts/devnet-verify  —— fault-tolerance 应显示 4/5 online, 余量 0
+# 恢复：在目标机器上 scripts/devnet-start，随后 devnet-status 应能观测到 catching-up
+
+# 同时失去两个边界（应当：安全停摆，不分叉、零回滚）
+# 在两台机器上分别 scripts/devnet-stop，其余机器上 devnet-verify 应报超出容错
 
 # 单节点数据丢失（应当：从对等节点重新同步，其余节点不受影响）
 docker volume rm karmachain-l1-3-data   # 需先停掉该节点
@@ -557,6 +669,13 @@ scripts/devnet-start
 | 节点启动即退出码 12 | 数据卷里的链与当前声明不一致（出生证明守卫）。跨机部署时最常见的原因是把**别的节点**的卷导入错了机器 |
 | 节点启动即退出码 10 | 身份材料缺失 —— 检查 `blockchain/validators/dev/<node>/` 是否随仓库一起到位 |
 | `ping` 不通但节点正常 | 正常。放行 TCP 端口不会放行 ICMP，`ping` 不能用来判断部署是否成功 |
+| `devnet-start` 退出码 20，但节点容器都在跑且 healthy | 在线验证者未达 75% 门槛。**分批启动时前几台必然如此**，见 9.3 第 4 步。把其余边界起完再重跑 |
+| `devnet-status` 报某节点 `stalled — 需要处置` | 只有在"其余验证者全部在场"时才会这样报，此时问题确实在本机：看 `devnet-logs <node>`。若报的是 `等其余边界：只看见 N/M 个对等验证者`，那要去看别的机器 |
+| Windows：`无法加载文件 …因为在此系统上禁止运行脚本` | PowerShell 执行策略，见 9.2 ⑥ |
+| Linux：`sudo scripts/devnet-start.sh: command not found`（文件明明在） | `.sh` 缺可执行位，见 9.2 ⑦。措辞会把人引向 PATH，但真正的原因是权限 |
+| `docker build` 里 `Temporary failure resolving 'deb.debian.org'` | 构建容器的 DNS，见 9.2 ⑨ |
+| `docker load` 进来的镜像启动即失败 | 架构不匹配（amd64 的镜像搬到了 arm64 机器，或反之），见 9.2 ⑧ |
+| `devnet-verify` / `devnet-contracts` 报"找不到运行中的 karmachain-rpc-\<domain\>" | 本机网络没起来。这两个命令要把工具容器接到**节点所在的容器网络**上，因此需要先 `devnet-start` |
 
 ---
 
