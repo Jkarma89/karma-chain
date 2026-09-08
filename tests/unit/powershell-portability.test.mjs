@@ -48,8 +48,9 @@
 // → `sudo: scripts/devnet-start.sh: command not found`。这直接打穿 SC-007 的
 // "从克隆到可用链 3 步"：Linux 上得先 chmod 才能开始，那就不是 3 步。
 //
-// 只管 `scripts/*.sh`（用户直接执行的入口）。`docker/lib/*.sh` 是被 `.` source 的库，
-// **应当**保持 644；容器 entrypoint 由各自 Dockerfile 的 `RUN chmod +x` 兜住。
+// 只管**用户直接执行的入口**。被 `.` source 的库应当保持 644，它们按约定以 `_` 开头
+// （`scripts/_devnet-common.sh`、`scripts/_devnet-common.ps1`）；`docker/lib/*.sh` 同理；
+// 容器 entrypoint 由各自 Dockerfile 的 `RUN chmod +x` 兜住。
 //
 // 判据只能取 git 索引里的模式位，不能看工作区 —— 在 Windows 上 stat 出来的权限没有意义。
 import { test, describe } from 'node:test';
@@ -64,18 +65,31 @@ const SCRIPTS = resolve(REPO_ROOT, 'scripts');
 const ps1Files = readdirSync(SCRIPTS).filter((f) => f.endsWith('.ps1')).sort();
 const BOM = Buffer.from([0xEF, 0xBB, 0xBF]);
 
-// 逐行走一个 .ps1，只把**代码行**交给 visit —— 行注释与块注释 `<# ... #>` 都跳过。
+// 逐条走一个 .ps1 的**逻辑行**，只把代码交给 visit —— 行注释与块注释 `<# ... #>` 都跳过。
 // 三个守卫共用：其中两个的违规写法恰好会出现在解释它为什么不可靠的文档里。
+//
+// 为什么必须按逻辑行而不是物理行：PowerShell 用行尾反引号续行，而守卫的判断依赖
+// 同一条语句里的其他 token。实例：`devnet-verify.ps1` 把 `docker run` 拆成多行后，
+// 末行只剩 `karmachain/verify:local npm run verify -- @args` —— npm 守卫看不到
+// `docker`，于是把一条容器内的调用误判成宿主调用。行号取逻辑行的起始行。
 function eachCodeLine(file, visit) {
   const lines = readFileSync(join(SCRIPTS, file), 'utf8').split('\n');
   let inBlockComment = false;
-  lines.forEach((line, i) => {
+  let pending = null;
+  lines.forEach((raw, i) => {
+    const line = raw.replace(/\r$/, '');
     if (/<#/.test(line)) inBlockComment = true;
     const wasInBlock = inBlockComment;
     if (/#>/.test(line)) inBlockComment = false;
     if (wasInBlock || /^\s*#/.test(line)) return;
-    visit(line, i + 1);
+
+    const continues = /`\s*$/.test(line);
+    const body = continues ? line.replace(/`\s*$/, ' ') : line;
+    if (pending) pending.text += body;
+    else pending = { text: body, lineNo: i + 1 };
+    if (!continues) { visit(pending.text, pending.lineNo); pending = null; }
   });
+  if (pending) visit(pending.text, pending.lineNo);
 }
 
 describe('宿主薄封装脚本的跨平台可移植性', () => {
@@ -147,12 +161,19 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
       // 不是 git 工作树（例如从 tarball 解出来跑测试）—— 无从判定，不误报。
       return;
     }
-    const wrong = out.split('\n')
-      .map((l) => l.match(/^(\d{6})\s+\S+\s+\d+\t(scripts\/.+\.sh)$/))
-      .filter((m) => m && m[1] !== '100755')
-      .map((m) => `${m[2]}（${m[1]}）`);
+    const entries = out.split('\n')
+      .map((l) => l.match(/^(\d{6})\s+\S+\s+\d+\tscripts\/([^/]+\.sh)$/))
+      .filter(Boolean)
+      .map((m) => ({ mode: m[1], name: m[2] }));
+    assert.ok(entries.length >= 10, `期望至少 10 个 scripts/*.sh，实际 ${entries.length}`);
+
+    // 入口必须可执行；`_` 开头的是被 source 的库，应当保持 644 —— 两个方向都断言，
+    // 否则"给库也加上 +x"这种反向漂移不会被发现。
+    const wrong = entries
+      .filter(({ mode, name }) => (name.startsWith('_') ? mode !== '100644' : mode !== '100755'))
+      .map(({ mode, name }) => `scripts/${name}（${mode}，期望 ${name.startsWith('_') ? '100644' : '100755'}）`);
     assert.deepEqual(wrong, [],
-      `以下 scripts/*.sh 在 git 索引里没有可执行位：\n  ${wrong.join('\n  ')}\n`
+      `以下 scripts/*.sh 的模式位不对：\n  ${wrong.join('\n  ')}\n`
       + '  NTFS 没有权限位，在 Windows 上新建的脚本会被记成 100644。Windows 侧毫无症状，\n'
       + '  Linux 上 clone 出来直接执行会报 command not found —— 措辞会把人引向 PATH 而不是权限。\n'
       + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
@@ -200,8 +221,12 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
     }
   });
 
+  // `_` 开头的公共件两侧都排除：它们不是用户入口，配对与否无契约意义
+  // （而 _devnet-common.sh / .ps1 恰好成对，靠它们碰巧对上不算证明）。
   test('每个 .sh 都有同名 .ps1，反之亦然（契约要求等价薄封装）', () => {
-    const shNames = readdirSync(SCRIPTS).filter((f) => f.endsWith('.sh')).map((f) => f.replace(/\.sh$/, '')).sort();
+    const shNames = readdirSync(SCRIPTS)
+      .filter((f) => f.endsWith('.sh') && !f.startsWith('_'))
+      .map((f) => f.replace(/\.sh$/, '')).sort();
     const psNames = ps1Files.filter((f) => !f.startsWith('_')).map((f) => f.replace(/\.ps1$/, '')).sort();
     assert.deepEqual(psNames, shNames,
       `.sh 与 .ps1 不成对：\n  只有 .sh：${shNames.filter((n) => !psNames.includes(n)).join(', ') || '（无）'}`
