@@ -54,8 +54,9 @@
 // 判据只能取 git 索引里的模式位，不能看工作区 —— 在 Windows 上 stat 出来的权限没有意义。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -155,6 +156,48 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
       + '  NTFS 没有权限位，在 Windows 上新建的脚本会被记成 100644。Windows 侧毫无症状，\n'
       + '  Linux 上 clone 出来直接执行会报 command not found —— 措辞会把人引向 PATH 而不是权限。\n'
       + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
+  });
+
+  // 上面那条 `2>$null` 守卫只证明"没用错写法"，**没有**证明 Invoke-Quiet 真的管用 ——
+  // 于是它第一版的 bug 溜了过去（`2>&1` 拦不住 EAP=Stop 升级出来的终止性 NativeCommandError，
+  // 见 _devnet-common.ps1 里的说明）。静态守卫必须配一条真跑一遍的行为测试。
+  //
+  // 用 `cmd /c "echo boom 1>&2 & exit 3"` 而不是 docker：它同样是"写 stderr + 退出码非零"
+  // 的原生命令，但不依赖 Docker 是否装了、是否在跑。
+  test('Invoke-Quiet 确实吞掉原生命令的 stderr 且不中断脚本（需要 Windows PowerShell）', (t) => {
+    const shell = join(process.env.SystemRoot ?? 'C:\\Windows',
+      'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    if (process.platform !== 'win32' || !existsSync(shell)) {
+      t.skip('非 Windows，或找不到 Windows PowerShell 5.1');
+      return;
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'karmachain-quiet-'));
+    try {
+      const probe = join(dir, 'probe.ps1');
+      writeFileSync(probe, [
+        `. '${join(SCRIPTS, '_devnet-common.ps1')}'`,
+        '$r = Invoke-Quiet { cmd /c "echo boom 1>&2 & exit 3" }',
+        "if ($null -eq $r) { Write-Host 'RESULT=NULL' } else { Write-Host 'RESULT=GOT' }",
+        "Write-Host 'REACHED-END'",
+        '',
+      ].join('\r\n'), 'ascii');
+
+      const r = spawnSync(shell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', probe],
+        { encoding: 'utf8' });
+
+      assert.match(r.stdout, /RESULT=NULL/, `失败应返回 $null，实际 stdout：\n${r.stdout}`);
+      // 这一条是关键：第一版 bug 下脚本在此之前就被终止了，这行永远打不出来。
+      assert.match(r.stdout, /REACHED-END/,
+        'Invoke-Quiet 让调用方脚本中止了 —— 它的语义是"探一下，失败就算了"，不该抛出。\n'
+        + `stderr：\n${r.stderr}`);
+      assert.equal(r.stderr.trim(), '',
+        `stderr 泄漏到了控制台：\n${r.stderr}\n`
+        + '  跨机形态下脚本会遍历 active.env 里全部 7 个节点 id，每轮轮询有 6 个必然失败 ——\n'
+        + '  泄漏的话启动过程会被刷屏，真正的失败被埋掉。');
+      assert.equal(r.status, 0, `探针脚本应正常结束，实际退出码 ${r.status}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   test('每个 .sh 都有同名 .ps1，反之亦然（契约要求等价薄封装）', () => {

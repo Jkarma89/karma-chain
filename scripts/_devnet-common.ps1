@@ -39,12 +39,31 @@ function Get-DevnetContext {
 不抑制的话启动过程会被 6×N 段报错刷屏，把真正的失败埋掉。
 .sh 版本用 `2>/dev/null || echo missing` 兜住，.ps1 此前没有对应处理。
 
-做法：`2>&1` 把 stderr 并进 stdout（因此不会泄漏到控制台），再用退出码判断是否采用输出。
+做法：`2>&1` 把 stderr 并进 stdout，**并且**用 try/catch 兜住终止性错误。
+
+为什么 `2>&1` 单独不够（2026-09-08 在 win-2 上实测，这是本 helper 第一版的 bug）：
+本文件顶部的 `$ErrorActionPreference='Stop'` 会把"原生命令写了 stderr"升级成
+**终止性** NativeCommandError，而它是在脚本块**内部**抛出的 —— 调用点的 `2>&1`
+来不及合流，异常直接穿到顶层，红字照样打印、脚本当场中止。
+
+实测症状：`devnet-start.ps1` 在 win-2 上遍历 active.env 里全部 7 个节点 id 去
+`docker inspect`，第一个不在本机的 `karmachain-l1-1` 就让整个脚本挂掉：
+    docker : error: no such object: karmachain-l1-1
+    FullyQualifiedErrorId : NativeCommandError
+win-1 上一直没暴露：那台第一次轮询 `eth_chainId` 就命中，`foreach` 那段没执行到。
+
+catch 块必须是空的 —— 本 helper 的语义就是"探一下，失败就算了"，$null 已表达失败。
+在这里改 $ErrorActionPreference 是行不通的：脚本块的父作用域是它的**定义处**
+（调用方脚本），不是本函数，所以设局部变量对它不可见。
 #>
 function Invoke-Quiet {
     param([Parameter(Mandatory)][scriptblock]$Command)
-    $out = & $Command 2>&1
-    if ($LASTEXITCODE -eq 0) { return $out }
+    try {
+        $out = & $Command 2>&1
+        if ($LASTEXITCODE -eq 0) { return $out }
+    } catch {
+        # 原生命令写了 stderr 而 EAP=Stop 把它升级成异常 —— 那正是"失败"，按 $null 处理。
+    }
     return $null
 }
 
