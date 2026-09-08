@@ -5,9 +5,13 @@ $ErrorActionPreference = 'Stop'
 
 function Get-DevnetContext {
     $root = Resolve-Path (Join-Path $PSScriptRoot '..')
-    $envFile = Join-Path $root 'docker/compose/active.env'
+    # KARMACHAIN_ENV_FILE 只为测试留的接缝，与 devnet-start.sh 的同名接缝对应
+    # （此前只有 .sh 有，两版因此不等价 —— .ps1 的分支无从测试）：
+    # 跨机形态的守卫只在多边界时生效，而把生效形态切过去会打断正在跑的开发网。
+    $envFile = if ($env:KARMACHAIN_ENV_FILE) { $env:KARMACHAIN_ENV_FILE }
+               else { Join-Path $root 'docker/compose/active.env' }
     if (-not (Test-Path $envFile)) {
-        Write-Error "$envFile 不存在 —— 先运行 'npm run node:render'"; exit 10
+        Write-Error "$envFile 不存在 —— 先运行 scripts\devnet-render.ps1"; exit 10
     }
     $ctx = @{ Root = $root }
     foreach ($line in Get-Content $envFile) {

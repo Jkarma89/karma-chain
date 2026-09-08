@@ -71,7 +71,39 @@ while ($true) {
     }
     if ($sw.Elapsed.TotalSeconds -ge $timeout) {
         docker compose -f $ctx.Compose ps
-        Write-Error "${timeout}s 内未就绪"; exit 20
+        Write-Host "devnet-start: FAILED [category: node] ${timeout}s 内未就绪（KARMACHAIN_STARTUP_TIMEOUT）" -ForegroundColor Red
+
+        # "未就绪"本身不指向任何原因。转达**本机节点自己的判断** —— healthcheck --state
+        # 已经能区分"等其余边界"与"本机卡住"，在这里重算一遍就是第二份逻辑。
+        foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
+            $c = "karmachain-$n"
+            if ((Invoke-Quiet { docker inspect --format '{{.State.Status}}' $c }) -ne 'running') { continue }
+            # 刻意**不**在容器里嵌一段 jq 程序：PowerShell 传原生参数时会重写嵌套引号
+            # （PS 5.1 尤其不可靠），实测那样这几行会静默不打印。PowerShell 自带
+            # ConvertFrom-Json，在宿主侧解析更简单也更稳。
+            $raw = Invoke-Quiet { docker exec $c /opt/karmachain/healthcheck.sh --state }
+            if (-not $raw) { continue }
+            try {
+                $st = ($raw -join "`n") | ConvertFrom-Json
+                Write-Host "  ${n}: $($st.state) — $($st.detail)"
+            } catch {
+                # --state 输出不是合法 JSON —— 转达失败不该让本已失败的启动更难看
+            }
+        }
+
+        # 跨机分批启动时**先起来的机器必然超时**，这不是故障。2026-09-08 首次跨机部署时
+        # 前 3 台都撞了这一下，而当时只有一句"300s 内未就绪"，毫无指向性。
+        if ([int]$ctx.KARMACHAIN_DOMAIN_COUNT -gt 1) {
+            $nVal = @($ctx.KARMACHAIN_VALIDATOR_IDS.Split(' ') | Where-Object { $_ }).Count
+            $minOnline = $nVal - [int]$ctx.KARMACHAIN_MAX_OFFLINE_VALIDATORS
+            Write-Host ''
+            Write-Host "  跨机形态：L1 有 $nVal 个等权验证者，发起查询需已连接权重 >= 75%，"
+            Write-Host "  因此至少 $minOnline 个验证者在线，链才推得动、RPC 才会应答。"
+            Write-Host '  分批启动时先起来的机器必然走到这里 —— 把其余边界起完，再对本机重跑一次'
+            Write-Host '  scripts\devnet-start.ps1 即可（它是幂等的，容器还在就只接着轮询）。'
+            Write-Host "  各边界：$($ctx.KARMACHAIN_DOMAIN_ADDRESSES)"
+        }
+        exit 20
     }
     Start-Sleep -Seconds 3
 }

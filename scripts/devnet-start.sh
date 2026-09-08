@@ -196,6 +196,33 @@ while :; do
   if [ $(( $(date +%s) - start )) -ge "$TIMEOUT" ]; then
     docker compose -f "$COMPOSE" ps >&2
     echo "devnet-start: FAILED [category: node] ${TIMEOUT}s 内未就绪（KARMACHAIN_STARTUP_TIMEOUT）" >&2
+
+    # "未就绪"本身不指向任何原因。转达**本机节点自己的判断** —— healthcheck --state
+    # 已经能区分"等其余边界"与"本机卡住"，在这里重算一遍就是第二份逻辑。
+    for n in $KARMACHAIN_NODE_IDS; do
+      c="karmachain-$n"
+      docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null | grep -q running || continue
+      # MSYS_NO_PATHCONV=1 是必需的，不是可选的：Git Bash 会把以 / 开头的参数当成本地路径
+      # 改写，容器里的 sh 收到被改写过的串后报 `Syntax error: "(" unexpected`，
+      # 而 `|| continue` 会把这个失败**静默吞掉** —— 表现为这几行根本不打印。实测踩过。
+      # 在 Linux 宿主上该变量只是个无害的未知变量。
+      line="$(env MSYS_NO_PATHCONV=1 docker exec "$c" sh -c \
+        '/opt/karmachain/healthcheck.sh --state | jq -r "\"\(.state) — \(.detail)\""' 2>/dev/null)" || continue
+      [ -n "$line" ] && echo "  ${n}: ${line}" >&2
+    done
+
+    # 跨机分批启动时**先起来的机器必然超时**，这不是故障。2026-09-08 首次跨机部署时
+    # 前 3 台都撞了这一下，而当时只有一句"300s 内未就绪"，毫无指向性。
+    if [ "${KARMACHAIN_DOMAIN_COUNT:-1}" -gt 1 ]; then
+      _n_val="$(echo "$KARMACHAIN_VALIDATOR_IDS" | wc -w | tr -d ' ')"
+      _min_online=$(( _n_val - KARMACHAIN_MAX_OFFLINE_VALIDATORS ))
+      echo "" >&2
+      echo "  跨机形态：L1 有 ${_n_val} 个等权验证者，发起查询需已连接权重 >= 75%，" >&2
+      echo "  因此至少 ${_min_online} 个验证者在线，链才推得动、RPC 才会应答。" >&2
+      echo "  分批启动时先起来的机器必然走到这里 —— 把其余边界起完，再对本机重跑一次" >&2
+      echo "  scripts/devnet-start 即可（它是幂等的，容器还在就只接着轮询）。" >&2
+      echo "  各边界：${KARMACHAIN_DOMAIN_ADDRESSES}" >&2
+    fi
     exit 20
   fi
   sleep 3
