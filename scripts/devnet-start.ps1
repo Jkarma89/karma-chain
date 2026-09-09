@@ -44,7 +44,12 @@ if ([int]$ctx.KARMACHAIN_DOMAIN_COUNT -gt 1) {
 # 也正因为 Windows 上不存在该 bug，这段**无法在 win-1 上反向验证** —— 改宿主文件时
 # 容器里那份会同步变化，两个哈希一起动，测不出不一致。它的验证只能在 Linux 宿主上做。
 function Warn-StaleMounts($ctx) {
-    $stale = @()
+    # 归并成"哪些节点 × 哪些文件"，而不是逐条列出笛卡尔积 —— 单机形态下 7 个节点全在本机，
+    # 逐条会打出 28 行，而 protocol/genesis/identity 是所有节点共用的，逐节点重复没有信息量。
+    # 与 devnet-start.sh 的输出形状保持一致。
+    $staleNodes = [System.Collections.Generic.List[string]]::new()
+    $staleFiles = [System.Collections.Generic.List[string]]::new()
+    $staleRpc = $false
     $checks = @(
         @{ Host = 'blockchain/protocol.json';                          Inside = '/config/protocol.json' },
         @{ Host = 'blockchain/genesis/karmachain.genesis.json';        Inside = '/config/karmachain.genesis.json' },
@@ -64,7 +69,10 @@ function Warn-StaleMounts($ctx) {
             $out = Invoke-Quiet { docker exec $c md5sum $chk.Inside }
             if (-not $out) { continue }            # 取不到就跳过，少一路证据不误报
             $ch = ($out -join ' ').Trim().Split(' ')[0].ToLower()
-            if ($hh -ne $ch) { $stale += "$n : $($chk.Inside)" }
+            if ($hh -ne $ch) {
+                if ($staleNodes -notcontains $n) { $staleNodes.Add($n) }
+                if ($staleFiles -notcontains $chk.Inside) { $staleFiles.Add($chk.Inside) }
+            }
         }
     }
     $rpcC = "karmachain-rpc-$($ctx.Domain)"
@@ -74,23 +82,32 @@ function Warn-StaleMounts($ctx) {
         $out = Invoke-Quiet { docker exec $rpcC md5sum /etc/nginx/conf.d/karmachain.conf }
         if ($out) {
             $ch = ($out -join ' ').Trim().Split(' ')[0].ToLower()
-            if ($hh -ne $ch) { $stale += "rpc : /etc/nginx/conf.d/karmachain.conf" }
+            if ($hh -ne $ch) { $staleRpc = $true }
         }
     }
-    if (-not $stale) { return }
+    if ($staleNodes.Count -eq 0 -and -not $staleRpc) { return }
 
     Write-Host ''
     Write-Host 'devnet-start: 警告 —— 容器内的配置文件与宿主上的**不是同一份**：' -ForegroundColor Yellow
-    $stale | ForEach-Object { Write-Host "    $_" }
+    if ($staleNodes.Count -gt 0) {
+        Write-Host "    节点：$($staleNodes -join ' ')"
+        Write-Host "    文件：$($staleFiles -join ' ')"
+    }
+    if ($staleRpc) { Write-Host '    rpc: /etc/nginx/conf.d/karmachain.conf' }
     Write-Host ''
     Write-Host '  成因：Docker 对单文件 bind mount 绑的是 inode，而 git pull／重新渲染是原子替换'
     Write-Host '  （写临时文件 + rename），inode 变了，容器仍指向旧的那个。restart 与 up -d 都无效。'
     Write-Host ''
-    Write-Host '  后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，'
-    Write-Host '  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。'
-    Write-Host ''
-    Write-Host '  修法（重建容器，数据卷不受影响）：'
-    Write-Host "    docker compose -f $($ctx.Compose) up -d --force-recreate"
+    # 后果按类别说 —— 两者严重程度差得远，混成一句话会让人对真正严重的那种脱敏。
+    if ($staleNodes.Count -gt 0) {
+        Write-Host '  节点配置陈旧的后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，'
+        Write-Host '  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。'
+        Write-Host "  修法：docker compose -f $($ctx.Compose) up -d --force-recreate"
+    }
+    if ($staleRpc) {
+        Write-Host '  代理配置陈旧的后果：只影响本机的 RPC 入口行为（超时、故障转移这些），不影响节点与共识。'
+        Write-Host "  修法：docker compose -f $($ctx.Compose) up -d --force-recreate rpc"
+    }
     Write-Host ''
 }
 
@@ -130,7 +147,9 @@ while ($true) {
         if ($state -eq 'exited') {
             $code = [int](Invoke-Quiet { docker inspect --format '{{.State.ExitCode}}' "karmachain-$n" })
             if ($code -in 10, 12) {
-                docker logs "karmachain-$n" 2>&1 | Select-String 'karmachain-node' | Select-Object -Last 8
+                # 取末尾即可：判据是"最近一次启动为何失败"。不加 --tail 会读整个日志，
+                # 而节点反复重启后那可能很大（测试侧同类问题见 1c73d3b）。
+                docker logs --tail 2000 "karmachain-$n" 2>&1 | Select-String 'karmachain-node' | Select-Object -Last 8
                 Write-Error "节点 $n 以退出码 $code 结束"; exit $code
             }
         }

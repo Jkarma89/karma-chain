@@ -187,7 +187,15 @@ chain_id() {
 # 并给出确切的修法。
 warn_stale_mounts() {
   command -v md5sum >/dev/null 2>&1 || return 0        # 没有 md5sum 就不判，不误报
-  stale=''
+  # 分两类累计：节点配置陈旧与代理配置陈旧的**后果完全不同**，不该共用一句话。
+  # 初稿只有一个列表，于是代理配置陈旧时也照样说"节点正带着旧参数在跑" ——
+  # 2026-09-09 在 ubuntu-1 上实测到那句话，它是错的（当时四个节点配置都是新鲜的）。
+  # 归并成"哪些节点 × 哪些文件"，而不是逐条列出笛卡尔积。
+  # 单机形态下 7 个节点全在本机，逐条列会打出 28 行 —— 实测（用假 docker 构造）确认过。
+  # 而这几个文件里 protocol/genesis/identity 是所有节点共用的，逐节点重复毫无信息量。
+  stale_node_ids=''
+  stale_files=''
+  stale_rpc=''
   for n in ${KARMACHAIN_NODE_IDS}; do
     c="karmachain-${n}"
     docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null | grep -q running || continue
@@ -202,8 +210,10 @@ warn_stale_mounts() {
       hh="$(md5sum "$hostf" 2>/dev/null | cut -d' ' -f1)"
       ch="$(env MSYS_NO_PATHCONV=1 docker exec "$c" md5sum "$inside" 2>/dev/null | cut -d' ' -f1)"
       [ -n "$hh" ] && [ -n "$ch" ] || continue         # 取不到就跳过，少一路证据不误报
-      [ "$hh" = "$ch" ] || stale="${stale}
-    ${n}: ${inside}（宿主 ${hh%????????????????????????}… ≠ 容器 ${ch%????????????????????????}…）"
+      if [ "$hh" != "$ch" ]; then
+        case " $stale_node_ids " in *" $n "*) ;; *) stale_node_ids="$stale_node_ids $n" ;; esac
+        case " $stale_files "    in *" $inside "*) ;; *) stale_files="$stale_files $inside" ;; esac
+      fi
     done
   done
 
@@ -214,26 +224,36 @@ warn_stale_mounts() {
     hh="$(md5sum "$rpch" 2>/dev/null | cut -d' ' -f1)"
     ch="$(env MSYS_NO_PATHCONV=1 docker exec "$rpcc" md5sum /etc/nginx/conf.d/karmachain.conf 2>/dev/null | cut -d' ' -f1)"
     if [ -n "$hh" ] && [ -n "$ch" ] && [ "$hh" != "$ch" ]; then
-      stale="${stale}
-    rpc: /etc/nginx/conf.d/karmachain.conf（宿主 ≠ 容器）"
+      stale_rpc="    rpc: /etc/nginx/conf.d/karmachain.conf"
     fi
   fi
 
-  [ -n "$stale" ] || return 0
+  [ -n "${stale_node_ids}${stale_rpc}" ] || return 0
+
   echo "" >&2
-  echo "devnet-start: 警告 —— 容器内的配置文件与宿主上的**不是同一份**：${stale}" >&2
+  echo "devnet-start: 警告 —— 容器内的配置文件与宿主上的**不是同一份**：" >&2
+  if [ -n "$stale_node_ids" ]; then
+    echo "    节点：${stale_node_ids# }" >&2
+    echo "    文件：${stale_files# }" >&2
+  fi
+  [ -z "$stale_rpc" ] || printf '%s
+' "$stale_rpc" >&2
   echo "" >&2
   echo "  成因：Docker 对单文件 bind mount 绑的是 inode，而 git pull／重新渲染是原子替换" >&2
   echo "  （写临时文件 + rename），inode 变了，容器仍指向旧的那个。restart 与 up -d 都无效 ——" >&2
   echo "  容器配置本身没变，compose 不会重建它。" >&2
   echo "" >&2
-  echo "  后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，" >&2
-  echo "  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。" >&2
-  echo "" >&2
-  echo "  修法（重建容器，数据卷不受影响）：" >&2
-  echo "    docker compose -f ${COMPOSE} up -d --force-recreate" >&2
-  echo "  只想换代理配置时可以只重建它：" >&2
-  echo "    docker compose -f ${COMPOSE} up -d --force-recreate rpc" >&2
+  # 后果按类别说。两者严重程度差得远，混成一句话会让人对真正严重的那种脱敏。
+  if [ -n "$stale_node_ids" ]; then
+    echo "  节点配置陈旧的后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，" >&2
+    echo "  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。" >&2
+    echo "  修法：docker compose -f ${COMPOSE} up -d --force-recreate" >&2
+  fi
+  if [ -n "$stale_rpc" ]; then
+    echo "  代理配置陈旧的后果：只影响本机的 RPC 入口行为（超时、故障转移这些），" >&2
+    echo "  不影响节点与共识。" >&2
+    echo "  修法：docker compose -f ${COMPOSE} up -d --force-recreate rpc" >&2
+  fi
   echo "" >&2
 }
 
@@ -289,7 +309,8 @@ while :; do
       code="$(docker inspect --format '{{.State.ExitCode}}' "karmachain-$n" 2>/dev/null || echo 20)"
       case "$code" in
         10|12)
-          docker logs "karmachain-$n" 2>&1 | grep karmachain-node | tail -8 >&2
+          # 取末尾即可：判据是"最近一次启动为何失败"。不加 --tail 会读整个日志。
+          docker logs --tail 2000 "karmachain-$n" 2>&1 | grep karmachain-node | tail -8 >&2
           echo "devnet-start: 节点 $n 以退出码 $code 结束（见上）" >&2
           exit "$code"
           ;;
