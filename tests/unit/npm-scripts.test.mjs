@@ -50,16 +50,19 @@ function nodeFlagsOf(cmd) {
 }
 
 describe('package.json 的测试入口', () => {
-  test('test:e2e 必须串行跑文件（--test-concurrency=1）', () => {
-    const s = scripts['test:e2e'];
-    assert.ok(s, 'package.json 里应当有 test:e2e');
-    assert.match(s, /--test-concurrency[= ]1\b/,
-      `test:e2e 缺 --test-concurrency=1，实际："${s}"\n`
+  // e2e 与 integration 都要串行；unit 不用（见下一条）。
+  for (const key of ['test:e2e', 'test:integration']) {
+    test(`${key} 必须串行跑文件（--test-concurrency=1）`, () => {
+      const s = scripts[key];
+      assert.ok(s, `package.json 里应当有 ${key}`);
+      assert.match(s, /--test-concurrency[= ]1\b/,
+        `${key} 缺 --test-concurrency=1，实际："${s}"\n`
       + '  node --test 默认按 CPU 数**并行跑文件**，而 e2e 每一个都在杀／删卷／重启同一套\n'
       + '  共享开发网 —— 并行等于互相抽地基。2026-09-09 实测：13 个文件 7 个失败，\n'
       + '  失败信息全是"开发网不可用"与"cancelled"，与被测系统无关。\n'
-      + '  注意 describe 里的 { concurrency: 1 } 管不了这件事：那只约束文件内的测试。');
-  });
+        + '  注意 describe 里的 { concurrency: 1 } 管不了这件事：那只约束文件内的测试。');
+    });
+  }
 
   test('每条测试入口传给 node 的标志都真实存在（挡住拼错标志名）', () => {
     const bad = [];
@@ -76,13 +79,21 @@ describe('package.json 的测试入口', () => {
       + '（正确的名字是 --test-concurrency）。');
   });
 
-  test('单元与集成入口不必串行 —— 它们不改动共享状态', () => {
-    // 反向记录一笔：这两个入口**故意**保持并行，因为它们是只读的（集成里唯一会注入故障的
-    // status-recovery-states 已按本机实况自行跳过）。若哪天它们也开始改共享状态，
-    // 这条测试就是提醒"该考虑串行了"的位置。
-    for (const key of ['test', 'test:integration']) {
-      assert.ok(scripts[key], `package.json 里应当有 ${key}`);
-    }
+  test('单元入口可以并行 —— 它确实不碰共享状态', () => {
+    // 反向记录一笔，而这一次是**量过**的。
+    //
+    // 本文件初稿写的是"单元与集成入口不必串行 —— 它们不改动共享状态"。那句话对集成而言
+    // 是错的，而我当时没有去查：`tests/integration/start-stop.test.mjs` 会发交易、部署合约
+    // （改链高度与合约数量），另有 5 个文件会动容器（docker kill / devnet-stop / devnet-node）。
+    // 与读取活链的 list-contracts 并发跑，正好解释了 2026-09-09 那次偶发失败 ——
+    // 同一套件重跑与单跑各 7/7，只在并行时挂过一次。所以集成也改成串行了。
+    //
+    // 单元入口保持并行是**查过**的：它们只读文件、跑 git ls-files、spawn 一次 `node --help`，
+    // 以及一个写在各自 mkdtemp 临时目录里的 PowerShell 探针 —— 没有共享可写状态。
+    // 若哪天单元测试开始碰活链或容器，这条就是提醒改串行的位置。
+    assert.ok(scripts.test, 'package.json 里应当有 test');
+    assert.doesNotMatch(scripts.test, /tests\/(integration|e2e)/,
+      '单元入口不该扫到 integration／e2e —— 那两类会改动共享状态，必须走各自的串行入口');
   });
 
   test('每条测试入口都指向 tests/ 下的路径，不会误扫全仓库', () => {
