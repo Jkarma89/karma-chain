@@ -107,12 +107,38 @@ function Get-ContainerRpcUrl($ctx) {
     "http://karmachain-rpc-$($ctx.Domain):$($ctx.KARMACHAIN_RPC_PORT)$($ctx.KARMACHAIN_RPC_PATH)"
 }
 
+# "连不上守护进程"与"没权限跟它说话"是两件事，报同一句话会把人引错方向。
+#
+# 2026-09-09 实测（devnet-start.sh 的同一处）：在 ubuntu-1 上不加 sudo 跑，
+# 得到「Docker daemon is not running」—— 而那台机器上 Docker 正常、两个节点都 healthy。
+# 运维方按字面去查守护进程，白费时间；真正要做的只是 sudo 或加入 docker 组。
+#
+# Windows 上权限这条基本不出现（Docker Desktop 以当前用户身份跑），但**把 docker 自己的
+# 错误输出打出来**在这边同样有价值：Docker Desktop 没启动是头号成因（ADR-0006），
+# 而它的原文（`error during connect: ... 系统找不到指定的文件`）比一句概括有用得多。
 function Assert-Docker {
     if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
         Write-Error 'docker not found — install Docker Desktop (WSL2 backend)'; exit 10
     }
-    docker info *> $null
-    if ($LASTEXITCODE -ne 0) { Write-Error 'Docker daemon is not running'; exit 10 }
+    # 直接在调用点合流 stderr 是可行的（与 Invoke-Quiet 不同 —— 那里的问题出在
+    # 脚本块边界上，见该函数的说明）。
+    $out = docker info 2>&1
+    if ($LASTEXITCODE -eq 0) { return }
+
+    $text = ($out | Out-String)
+    if ($text -match 'permission denied|Permission denied') {
+        Write-Host '没有权限访问 Docker 守护进程（守护进程本身可能是正常的）' -ForegroundColor Red
+        Write-Host '  Linux 上：sudo，或 sudo usermod -aG docker $USER 后重新登录。'
+        Write-Host '  本机上请**统一**用一种方式 —— 一会儿 sudo 一会儿不 sudo，'
+        Write-Host '  会让 docker 上下文与 ~/.docker 配置分属两个用户，出现「容器/卷找不到」的错觉。'
+        exit 10
+    }
+    Write-Host '连不上 Docker 守护进程 —— 它没在运行？' -ForegroundColor Red
+    Write-Host '  Windows 上最常见的原因是 Docker Desktop 没启动（ADR-0006：容器随用户会话启动）。'
+    Write-Host '  docker info 的输出：'
+    ($text -split "`n" | Where-Object { $_.Trim() } | Select-Object -First 5) |
+        ForEach-Object { Write-Host "    $($_.TrimEnd())" }
+    exit 10
 }
 
 function Get-ChainId([string]$rpc) {

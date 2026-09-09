@@ -30,7 +30,29 @@ RPC="http://127.0.0.1:${KARMACHAIN_RPC_PORT}${KARMACHAIN_RPC_PATH}"
 }
 
 command -v docker >/dev/null 2>&1 || { echo "devnet-start: docker not found — install Docker Desktop (Windows: WSL2 backend) or Docker Engine + Compose v2" >&2; exit 10; }
-docker info >/dev/null 2>&1 || { echo "devnet-start: Docker daemon is not running" >&2; exit 10; }
+# "连不上守护进程"与"没权限跟它说话"是两件事，报同一句话会把人引错方向。
+#
+# 2026-09-09 实测：在 ubuntu-1 上不加 sudo 跑本脚本，得到「Docker daemon is not running」
+# —— 而那台机器上 Docker 正常、两个节点都 healthy。运维方按字面去查守护进程，
+# 白费时间；真正要做的只是 sudo 或把用户加进 docker 组。
+# Linux 上用户默认不在 docker 组，所以这是常见入口，不是边角情况。
+if ! docker_info_err="$(docker info 2>&1 >/dev/null)"; then
+  case "$docker_info_err" in
+    *"permission denied"*|*"Permission denied"*)
+      echo "devnet-start: 没有权限访问 Docker 守护进程（守护进程本身可能是正常的）" >&2
+      echo "  两条出路，择一：" >&2
+      echo "    1. 这一次用 sudo：sudo -E env KARMACHAIN_DOMAIN=${DOMAIN} scripts/devnet-start.sh" >&2
+      echo "    2. 长期免 sudo：sudo usermod -aG docker \$USER，然后**重新登录**（或 newgrp docker）" >&2
+      echo "  提示：本机上请**统一**用一种方式 —— 一会儿 sudo 一会儿不 sudo，" >&2
+      echo "  会让 docker 上下文与 ~/.docker 配置分属两个用户，出现「容器/卷找不到」的错觉。" >&2
+      exit 10 ;;
+    *)
+      echo "devnet-start: 连不上 Docker 守护进程 —— 它没在运行？" >&2
+      echo "  docker info 的输出：" >&2
+      printf '%s\n' "$docker_info_err" | sed 's/^/    /' | head -5 >&2
+      exit 10 ;;
+  esac
+fi
 docker compose version >/dev/null 2>&1 || { echo "devnet-start: 'docker compose' (v2) not available" >&2; exit 10; }
 
 [ -f ./blockchain/chain-identity/karmachain.identity.json ] || {
