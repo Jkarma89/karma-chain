@@ -10,13 +10,29 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   pub, sendTx, waitReady, devnetAvailable, sh, VALIDATOR_IDS, RPC,
+  pickLocalVictims, localVictimSkip,
 } from './lib/devnet.mjs';
 
-const VICTIM = VALIDATOR_IDS[VALIDATOR_IDS.length - 1];   // 最后一个验证者，避开承载 RPC 的那个
+// 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
+// 原先按下标从全局列表里挑（单机形态下 7 个容器都在本机，那样写没问题），
+// 跨机形态下会因为那个节点在别的机器上而失败。挑不到就跳过并说明原因。
+const LOCAL = pickLocalVictims(1);
+const VICTIM = LOCAL?.[0];
 const CONTAINER = `karmachain-${VICTIM}`;
-const VOLUME = `karmachain-${VICTIM}-data`;
 
-const compose = (...args) => sh('docker', ['compose', '-f', 'docker/compose/local-local.yml', ...args]);
+// 走 scripts/devnet-node，**不要**自己拼 compose 文件路径。
+//
+// 原先这里写死的是 `docker/compose/local-local.yml`（单机形态那份）。跨机形态下这是
+// **本会话里最危险的一个缺陷**：它不会报错，而是按单机配置重建那个节点 ——
+// 挂上 blockchain/nodes/local/ 的标志（容器网段地址而非局域网地址）、接到 karmachain 网络，
+// 并顺带把 depends_on 的依赖也起来。2026-09-09 在 win-1 上误跑到它，结果就是
+// win-1 上凭空多出两个 karmachain-primary-* 容器（拓扑里它们属于 ubuntu-1/ubuntu-2），
+// 而 devnet-status 的"容器事实优先"规则会拿这些**同名的本地容器**去描述远端节点，
+// 把远端好着的 Primary 报成 stopped。
+//
+// devnet-node.sh 从 active.env 解析当前生效的 compose，两种形态都对；
+// 它的 `wipe` 正好是"停 + 删容器 + 删卷"，`start` 正好是"up -d 该服务"。
+const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
 const state = () => {
   try {
     return execFileSync('docker', ['inspect', '--format', '{{.State.Status}}', CONTAINER], { encoding: 'utf8' }).trim();
@@ -24,7 +40,8 @@ const state = () => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-describe('V-03 —— 引导中途被强制终止', { concurrency: 1 }, () => {
+describe('V-03 —— 引导中途被强制终止',
+  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });
@@ -33,13 +50,11 @@ describe('V-03 —— 引导中途被强制终止', { concurrency: 1 }, () => {
     const heightBefore = Number(await pub.getBlockNumber());
 
     // 1. 清掉它的数据卷，制造"必须从零引导"的处境（同时是 FR-006 的场景）
-    compose('stop', VICTIM);
-    compose('rm', '-f', VICTIM);
-    sh('docker', ['volume', 'rm', '-f', VOLUME]);
+    node('wipe', VICTIM);
     t.diagnostic(`${VICTIM} 的数据卷已删除`);
 
     // 2. 启动它，让它开始引导
-    compose('up', '-d', VICTIM);
+    node('start', VICTIM);
     await sleep(8000);
     assert.equal(state(), 'running', '应当处于引导中');
 
@@ -49,7 +64,7 @@ describe('V-03 —— 引导中途被强制终止', { concurrency: 1 }, () => {
     await sleep(2000);
 
     // 4. 再次启动 —— 关键判据：它能自己走出去，不需要人工清理
-    compose('up', '-d', VICTIM);
+    node('start', VICTIM);
 
     let healthy = false;
     for (let i = 0; i < 60; i += 1) {

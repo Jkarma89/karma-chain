@@ -7,14 +7,23 @@
 // 恢复到上限内后必须自动继续，且**此前已确认的区块一个都不许回滚**。
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, wallet, RECIPIENT } from './lib/devnet.mjs';
+import {
+  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, wallet, RECIPIENT,
+  pickLocalVictims, localVictimSkip,
+} from './lib/devnet.mjs';
 import { parseEther } from 'viem';
 
-const VICTIMS = [VALIDATOR_IDS[3], VALIDATOR_IDS[4]];   // 两个，超出上限 1
+// 需要**两个**靶子才能超出容错上限（f=1），而且两个都得在本机 —— docker 只能操作本机容器。
+// 原先按下标取 VALIDATOR_IDS[3]、[4]，单机形态下都在本机；跨机形态下每个边界至多 1 个
+// 验证者（T-5 守卫保证），因此**任何一台机器都凑不出 2 个** —— 本场景在跨机形态下
+// 只能靠人工（在两台机器上各执行一次 devnet-stop），或在单机形态下跑。
+// docs/devnet.md 9.6 的演练清单里记着人工做法。
+const VICTIMS = pickLocalVictims(2);
 const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-describe('场景 D —— 超出容错上限后停摆而非分叉', { concurrency: 1 }, () => {
+describe('场景 D —— 超出容错上限后停摆而非分叉',
+  { skip: VICTIMS ? undefined : localVictimSkip(2), concurrency: 1 }, () => {
   let checkpoint;   // 越界前的最后一个已确认区块
 
   before(async () => {

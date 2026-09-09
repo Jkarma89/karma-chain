@@ -80,6 +80,48 @@ export const sh = (cmd, args) => execFileSync(cmd, args, {
   cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
 });
 
+// —— 本机实况：故障注入只能操作**本机**的容器 ——
+//
+// 这一组是跨机形态逼出来的。原先各测试都按下标从全局验证者列表里挑靶子
+// （`VALIDATOR_IDS[2]`、`VALIDATOR_IDS.at(-1)` 之类），单机形态下 7 个容器都在本机，
+// 那样写没问题；跨机形态下 `docker kill karmachain-l1-5` 会因为 l1-5 在别的机器上而失败。
+// 2026-09-09 实测：11 个 e2e 里有 6 个因此失败，全是同一个结构性原因，与实现无关。
+
+/** 本机是否真的有这个节点的容器。 */
+export const containerExists = (id) => {
+  try { sh('docker', ['inspect', '--format', '{{.State.Status}}', `karmachain-${id}`]); return true; }
+  catch { return false; }
+};
+
+/** 本机实际承载的节点 / 验证者（跨机形态下只有本边界那几个）。每次调用现查。 */
+export const localNodeIds = () => NODE_IDS.filter(containerExists);
+export const localValidatorIds = () => VALIDATOR_IDS.filter(containerExists);
+
+/**
+ * 挑本机的验证者当靶子，不够就返回 null 让调用方跳过。
+ *
+ * @param count 需要几个（`beyond-tolerance` 要 2 个才能超出容错上限）
+ * @param requireDomainPeers 是否要求靶子所在边界**还有别的节点**。
+ *   判据是"杀一个验证者 → 节点级故障而非边界缺席"时必须为真：若该边界只有它一个节点，
+ *   杀掉它**确实**是整域缺席，报 `unreachable` 是对的（那属 domain-failure.test.mjs）。
+ */
+export function pickLocalVictims(count = 1, { requireDomainPeers = false } = {}) {
+  const sizeOf = topology.topologyNodes
+    .reduce((m, n) => m.set(n.domain, (m.get(n.domain) ?? 0) + 1), new Map());
+  const domainOf = new Map(topology.topologyNodes.map((n) => [n.id, n.domain]));
+  const usable = localValidatorIds()
+    .filter((id) => !requireDomainPeers || sizeOf.get(domainOf.get(id)) >= 2)
+    .reverse();          // 从后往前：靠后的验证者一般不与 Primary 同处一台
+  return usable.length >= count ? usable.slice(0, count) : null;
+}
+
+/** 靶子不足时的 skip 理由。TAP 的 skip 是**单行**字段，别用换行（会被转义成 \n 字面量）。 */
+export const localVictimSkip = (count, { requireDomainPeers = false } = {}) =>
+  `本机可用的验证者容器不足 ${count} 个（本机承载：${localValidatorIds().join('、') || '无'}；`
+  + `拓扑声明：${VALIDATOR_IDS.join('、')}）—— 故障注入只能操作本机容器。`
+  + (requireDomainPeers ? ' 且靶子所在边界须另有节点，否则杀掉它是整域缺席（见 domain-failure.test.mjs）。' : '')
+  + ' 在承载足够验证者的机器上跑本文件即可。';
+
 /** 强制杀死全部节点容器 —— 不给任何优雅退出的机会。 */
 export function killAll() {
   const ids = sh('docker', ['ps', '-q', '--filter', 'name=karmachain-']).trim().split(/\s+/).filter(Boolean);

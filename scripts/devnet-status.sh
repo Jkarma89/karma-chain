@@ -25,6 +25,20 @@ command -v docker >/dev/null 2>&1 || { echo "devnet-status: docker not found" >&
 # shellcheck source=./_devnet-common.sh
 . "$(dirname "$0")/_devnet-common.sh"
 DOMAIN="${KARMACHAIN_DOMAIN:-$KARMACHAIN_DEFAULT_DOMAIN}"
+COMPOSE="./docker/compose/${KARMACHAIN_DEPLOYMENT}-${DOMAIN}.yml"
+
+# 只采集**本边界**声明的那几个节点的容器事实 —— 判据取自本机的 compose 文件。
+#
+# 为什么不能对全部 KARMACHAIN_NODE_IDS 都 docker inspect（原先的写法）：
+# 容器名（karmachain-<node>）在整个部署里是全局唯一的，但**同名容器可能在本机残留**
+# —— 例如切换部署形态后旧形态的容器没清掉。那时本机会拿这些陈旧容器的事实去描述
+# **远端**节点，而 node-status 的"容器事实优先于网络推断"规则会照它下判断。
+#
+# 2026-09-09 实测：win-1 上残留了 local 形态的 karmachain-primary-1／-2（它们按拓扑
+# 属于 ubuntu-1／ubuntu-2），于是 devnet-status 把远端好着的两个 Primary 报成
+# `stopped —— 容器已退出（码 137）`。远端节点的容器事实，本机根本无从知道，
+# 唯一正确的做法是不去猜。
+LOCAL_SERVICES=" $(docker compose -f "$COMPOSE" config --services 2>/dev/null | tr '\n' ' ') "
 
 mkdir -p ./.devnet
 # collectedAt 让消费方能判断这份事实是否新鲜。**不是可选的**：本文件在每次运行前重写，
@@ -34,6 +48,8 @@ mkdir -p ./.devnet
   printf '{"collectedAt":%s,"nodes":{' "$(date +%s)"
   first=1
   for n in ${KARMACHAIN_NODE_IDS}; do
+    # 不属于本边界就跳过 —— 同名的本地残留容器不能用来描述远端节点（见上）
+    case "$LOCAL_SERVICES" in *" $n "*) ;; *) continue ;; esac
     c="karmachain-${n}"
     status="$(docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null || echo '')"
     [ -n "$status" ] || continue

@@ -7,10 +7,16 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS } from './lib/devnet.mjs';
+import {
+  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip,
+} from './lib/devnet.mjs';
 
 // 不挑承载 RPC 代理上游首位的那个，避免把"入口失效"和"验证者失效"混为一谈
-const VICTIM = VALIDATOR_IDS[2];
+// 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
+// 原先按下标从全局列表里挑（单机形态下 7 个容器都在本机，那样写没问题），
+// 跨机形态下会因为那个节点在别的机器上而失败。挑不到就跳过并说明原因。
+const LOCAL = pickLocalVictims(1);
+const VICTIM = LOCAL?.[0];
 const CONTAINER = `karmachain-${VICTIM}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
@@ -19,7 +25,8 @@ const inspect = (fmt) => {
 };
 const restartCount = () => Number(inspect('{{.RestartCount}}') || 0);
 
-describe('场景 C —— 单个验证者挂掉，链照常出块', { concurrency: 1 }, () => {
+describe('场景 C —— 单个验证者挂掉，链照常出块',
+  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
     assert.equal(VALIDATOR_IDS.length, 5, '本场景假定 5 个等权验证者');

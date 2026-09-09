@@ -19,12 +19,15 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  RPC, VALIDATOR_IDS, pub, sh, sendTx, devnetAvailable,
+  RPC, VALIDATOR_IDS, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip,
 } from './lib/devnet.mjs';
 
 const MINUTES = Number(process.env.KARMACHAIN_SC003_MINUTES ?? 30);
-// 取最后一个验证者：它不与 Primary 同处一个节点，影响面最小
-const VICTIM = VALIDATOR_IDS[VALIDATOR_IDS.length - 1];
+// 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
+// 原先按下标从全局列表里挑（单机形态下 7 个容器都在本机，那样写没问题），
+// 跨机形态下会因为那个节点在别的机器上而失败。挑不到就跳过并说明原因。
+const LOCAL = pickLocalVictims(1);
+const VICTIM = LOCAL?.[0];
 
 const docker = (...args) => {
   try { sh('docker', args); return true; } catch { return false; }
@@ -34,7 +37,7 @@ const containerState = (id) => {
   catch { return 'missing'; }
 };
 
-const SKIP = await devnetAvailable()
+const SKIP = !LOCAL ? localVictimSkip(1) : await devnetAvailable()
   ? undefined
   : `开发网未运行（${RPC}）—— 先执行 scripts/devnet-bootstrap 与 scripts/devnet-start`;
 

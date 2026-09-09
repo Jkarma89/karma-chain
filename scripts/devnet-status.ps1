@@ -7,8 +7,16 @@
 $ctx = Get-DevnetContext; Assert-Docker
 
 # 宿主侧采集容器级事实（容器内没有 docker 可用）；采集不到就降级为纯网络判定
+#
+# 只采集**本边界**声明的那几个节点 —— 判据取自本机的 compose 文件。容器名在整个部署里
+# 全局唯一，但同名容器可能在本机残留（例如切换部署形态后旧形态的容器没清掉），
+# 那时会拿陈旧容器的事实去描述**远端**节点。理由与实测见 devnet-status.sh 的同段注释。
+$localServices = @(Invoke-Quiet { docker compose -f $ctx.Compose config --services } |
+    Where-Object { $_ } | ForEach-Object { $_.Trim() })
+
 $facts = @{}
 foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
+    if ($localServices -notcontains $n) { continue }
     $c = "karmachain-$n"
     $status = Invoke-Quiet { docker inspect --format '{{.State.Status}}' $c }
     if (-not $status) { continue }

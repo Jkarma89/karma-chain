@@ -10,10 +10,16 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS } from './lib/devnet.mjs';
+import {
+  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip,
+} from './lib/devnet.mjs';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
-const VICTIM = VALIDATOR_IDS[1];
+// 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
+// 原先按下标从全局列表里挑（单机形态下 7 个容器都在本机，那样写没问题），
+// 跨机形态下会因为那个节点在别的机器上而失败。挑不到就跳过并说明原因。
+const LOCAL = pickLocalVictims(1);
+const VICTIM = LOCAL?.[0];
 const CONTAINER = `karmachain-${VICTIM}`;
 const VOLUME = `karmachain-${VICTIM}-data`;
 const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
@@ -25,7 +31,8 @@ const expectedNodeId = () => JSON.parse(
   readFileSync(resolve(REPO_ROOT, `blockchain/nodes/${VICTIM}.identity.json`), 'utf8'),
 ).nodeId;
 
-describe('场景 E —— 单节点数据损坏，故障不外溢', { concurrency: 1 }, () => {
+describe('场景 E —— 单节点数据损坏，故障不外溢',
+  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
   let heightAtWipe;
 
   before(async () => {
