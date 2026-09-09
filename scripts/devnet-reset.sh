@@ -19,5 +19,22 @@ COMPOSE="./docker/compose/${KARMACHAIN_DEPLOYMENT}-${DOMAIN}.yml"
 
 command -v docker >/dev/null 2>&1 || { echo "devnet-reset: docker not found" >&2; exit 10; }
 docker compose -f "$COMPOSE" down -v --remove-orphans
+
+# `down -v` **只删 compose 自己创建的卷**。跨机部署时那两个 Primary 卷是手工
+# `docker volume create` 出来再导入数据的（docs/devnet.md 9.3 第 3 步），compose 不认它们 ——
+# 于是 reset 会删掉验证者卷却留下 Primary 卷，而本脚本却宣称"全部节点卷已删除"。
+# 后果不只是措辞不实：重新建链后节点会碰上一份旧的 P 链数据。
+# 2026-09-09 在 ubuntu-1 上由 compose 的那句 WARN 顺出来的。
+#
+# 因此按名字再补删一遍。不存在的卷会失败，忽略即可 —— 本机只有本边界那几个。
+removed_extra=''
+for n in ${KARMACHAIN_NODE_IDS}; do
+  v="karmachain-${n}-data"
+  if docker volume rm "$v" >/dev/null 2>&1; then
+    removed_extra="${removed_extra} ${v}"
+  fi
+done
+[ -z "$removed_extra" ] || echo "devnet-reset: 另外删除了非 compose 创建的卷：${removed_extra# }"
+
 echo "devnet-reset: 全部节点卷已删除。"
 echo "  下一步：scripts/devnet-bootstrap  然后  scripts/devnet-start"

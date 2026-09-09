@@ -557,6 +557,20 @@ docker run --rm -v karmachain-primary-1-data:/data -v "$PWD:/in:ro" \
   alpine tar xzf /in/primary-1.tgz -C /data
 ```
 
+> **之后每次 `docker compose up` 都会对这两个卷打一句 WARN**，这是预期的、无害的：
+>
+> ```
+> WARN volume "karmachain-primary-1-data" already exists but was not created by
+>      Docker Compose. Use `external: true` to use an existing volume
+> ```
+>
+> 因为卷是手工建的，没有 compose 的标签。**不要**照它的建议改成 `external: true` ——
+> 那会让 compose 从此不再创建卷，单机形态与全新部署都会因此起不来。
+>
+> 它有一个真实后果，已在 `devnet-reset` 里处理掉：`docker compose down -v`
+> **只删 compose 自己创建的卷**，所以 reset 会删掉验证者卷却留下这两个 Primary 卷。
+> `devnet-reset` 因此在 `down -v` 之后按名字再补删一遍，并如实报告多删了哪些。
+
 **为什么只要这 2 个**：Subnet 与 Blockchain 是 P 链上的交易，只存在于持有 P 链的节点数据库里 ——
 那就是这 2 个 Primary 节点。5 个验证者从**空卷**启动即可：它们按 `bootstrap-ips` 找到 Primary 同步 P 链，
 L1 从仓库里的创世起链。已实测（research.md R-15）：删掉 5 个验证者卷后启动，6 秒就绪、
