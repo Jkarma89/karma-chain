@@ -333,6 +333,37 @@ scripts/devnet-verify.sh
 **不要**手改 `blockchain/genesis/karmachain.genesis.json`、`docs/protocol-parameters.md`、
 `blockchain/compose.env` —— 它们都是生成物，漂移测试会拦下手改。
 
+> ### ⚠️ Linux 宿主：第 4 步必须**重建容器**，`restart` 与 `up -d` 都不够
+>
+> 容器把这些生成物按**单个文件**挂进去（`/config/flags.json`、`/config/protocol.json`、
+> `/config/karmachain.genesis.json`…），而 **Docker 对单文件 bind mount 绑的是 inode，
+> 不是路径**。重新渲染与 `git pull` 都是"写临时文件 + rename"的原子替换 —— inode 变了，
+> 容器的挂载仍指向**旧 inode**。于是：
+>
+> * 宿主文件已经更新，**容器里那份纹丝不动**；
+> * `docker restart` 无效（不重新解析挂载）；
+> * `docker compose up -d` 也无效 —— 容器**配置**没变，compose 不会重建它。
+>
+> 后果是节点带着**旧参数**继续跑。而出生证明守卫比的是卷里的 stamp 与**容器内**的
+> `protocol.json` —— 两边都旧时它看不出问题，正是宪法第十五条要防的「半新半旧」，
+> 而这条路径绕过了它。
+>
+> **正确做法**：
+> ```bash
+> docker compose -f docker/compose/<deployment>-<domain>.yml up -d --force-recreate
+> ```
+> `scripts/devnet-reset` 之后再 `devnet-start` 是安全的（卷被删、容器被 `down -v` 移除，
+> 下次是全新创建）。危险的是**不 reset 只重启**这条路。
+>
+> **这个坑只在 Linux 宿主上存在。** Docker Desktop（Windows／macOS）的文件共享层按
+> **路径**解析，替换立刻可见 —— 也就是说**在 Windows 上开发、在 Linux 上部署时它不可见**，
+> 正好是最坏的组合。2026-09-09 实测：同一次 `git pull` 之后，win-1 的三个节点配置
+> 全部一致，而 ubuntu-1 的 `rpc-proxy.conf` 宿主 `41cf07ed…` ≠ 容器 `c20d3592…`，
+> 且 `nginx -s reload` 打印了 `signal process started`，看着像成功 —— 重载的是旧配置。
+>
+> `scripts/devnet-start` 现在会在启动前逐个比对本机容器内外的哈希，不一致就告警并给出
+> 上面那条命令。它**只告警不失败**（节点正在服务，打成失败会挡住恢复路径）。
+
 ### 客户端缓存：reset 之后 MetaMask 显示旧余额 / nonce 报错
 
 **每次 `scripts/devnet-reset` 之后都要做一次。** 重置换了创世但 Chain ID 不变，MetaMask 按 Chain ID 缓存余额、nonce 与交易历史，无法察觉底层链已被替换，因此会继续显示旧数据；更麻烦的是缓存的 nonce 比新链的真实值大，直接发交易会失败或卡在待处理。
@@ -694,6 +725,7 @@ scripts/devnet-start
 | `docker load` 进来的镜像启动即失败 | 架构不匹配（amd64 的镜像搬到了 arm64 机器，或反之），见 9.2 ⑧ |
 | `devnet-verify` / `devnet-contracts` 报"找不到运行中的 karmachain-rpc-\<domain\>" | 本机网络没起来。这两个命令要把工具容器接到**节点所在的容器网络**上，因此需要先 `devnet-start` |
 | 某台机器**间歇性**变慢：`devnet-status` 偶尔把它报成 `unreachable`，或到它的连接偶尔要 3／7／15 秒 | **链路丢包**（那几个秒数是 TCP SYN 重传退避）。先 `ping -n 80 <地址>` 量丢包，再 `ip -s link show` 看 NIC 计数器。**注意计数器全零不能排除网线问题** —— 帧完全没到达时不会被计数。诊断特征与排查次序见 [ADR-0007](adr/0007-failure-domain-independence.md) 的"单机链路故障的诊断特征"。别把它当成"探测抖动" |
+| **Linux**：`git pull` 或重新渲染之后，改动**没有生效** —— 节点仍用旧参数，或 nginx 重载了却还是旧配置 | 单文件 bind mount 绑 inode，而替换换了 inode（详见 §8 的警告框）。`restart` 与 `up -d` 都无效，必须 `up -d --force-recreate`。`devnet-start` 会逐个比对容器内外的哈希并告警。**Windows 上不会出现这个现象**，所以别拿那边的经验推断 |
 
 ---
 

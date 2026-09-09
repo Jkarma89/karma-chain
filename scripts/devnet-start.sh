@@ -138,6 +138,88 @@ chain_id() {
     | sed -n 's/.*"result"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
+# 挂载新鲜度：容器里看到的配置文件，与宿主上的那份是否还是同一内容。
+#
+# ## 为什么这不是多余的检查（2026-09-09 在 ubuntu-1 上实测）
+#
+# Docker 对**单个文件**的 bind mount 绑的是 **inode**，不是路径。而 `git pull`／重新渲染
+# 都是"写临时文件 + rename"的原子替换 —— inode 变了，容器的挂载仍指向**旧 inode**。
+# 于是宿主文件已经更新，容器里那份纹丝不动，`docker restart` 也救不了：
+# 只有**重建容器**才会重新解析挂载。更麻烦的是 `docker compose up -d` **不会**因为
+# "挂载文件的内容变了"而重建容器（容器配置本身没变），所以 devnet-start 也是空过。
+#
+# 实测证据：ubuntu-1 上 `git pull` 之后
+#   宿主   blockchain/nodes/lan/rpc-proxy.conf   md5 41cf07ed…
+#   容器内 /etc/nginx/conf.d/karmachain.conf     md5 c20d3592…
+# 而 `nginx -s reload` 打印了 `signal process started`，看着像成功 —— 重载的是旧配置。
+#
+# **这个坑只在 Linux 宿主上存在**：Docker Desktop（Windows／macOS）的文件共享层按
+# **路径**解析，替换能被看到。win-1 上三个节点配置文件实测全部一致。
+# 也就是说在 Windows 上开发、在 Linux 上部署时，它是不可见的 —— 正好是最坏的组合。
+#
+# ## 为什么只警告、不失败
+#
+# 节点此刻是在正常服务的，把 devnet-start 打成失败会挡住恢复路径（沿用既有教训：
+# 打在正常路径上的诊断守卫必须保守）。但 flags/protocol/genesis 变旧的后果是
+# "节点带着旧参数在跑"，正是宪法第十五条要防的半新半旧 —— 因此话要说重，
+# 并给出确切的修法。
+warn_stale_mounts() {
+  command -v md5sum >/dev/null 2>&1 || return 0        # 没有 md5sum 就不判，不误报
+  stale=''
+  for n in ${KARMACHAIN_NODE_IDS}; do
+    c="karmachain-${n}"
+    docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null | grep -q running || continue
+    for pair in \
+      "blockchain/protocol.json|/config/protocol.json" \
+      "blockchain/nodes/${KARMACHAIN_DEPLOYMENT}/${n}.flags.json|/config/flags.json" \
+      "blockchain/genesis/karmachain.genesis.json|/config/karmachain.genesis.json" \
+      "blockchain/chain-identity/karmachain.identity.json|/config/karmachain.identity.json"
+    do
+      hostf="./${pair%%|*}"; inside="${pair#*|}"
+      [ -f "$hostf" ] || continue
+      hh="$(md5sum "$hostf" 2>/dev/null | cut -d' ' -f1)"
+      ch="$(env MSYS_NO_PATHCONV=1 docker exec "$c" md5sum "$inside" 2>/dev/null | cut -d' ' -f1)"
+      [ -n "$hh" ] && [ -n "$ch" ] || continue         # 取不到就跳过，少一路证据不误报
+      [ "$hh" = "$ch" ] || stale="${stale}
+    ${n}: ${inside}（宿主 ${hh%????????????????????????}… ≠ 容器 ${ch%????????????????????????}…）"
+    done
+  done
+
+  # RPC 代理的配置也是单文件挂载 —— 这正是本次撞到的那一个
+  rpcc="karmachain-rpc-${DOMAIN}"
+  rpch="./blockchain/nodes/${KARMACHAIN_DEPLOYMENT}/rpc-proxy.conf"
+  if docker inspect --format '{{.State.Status}}' "$rpcc" 2>/dev/null | grep -q running && [ -f "$rpch" ]; then
+    hh="$(md5sum "$rpch" 2>/dev/null | cut -d' ' -f1)"
+    ch="$(env MSYS_NO_PATHCONV=1 docker exec "$rpcc" md5sum /etc/nginx/conf.d/karmachain.conf 2>/dev/null | cut -d' ' -f1)"
+    if [ -n "$hh" ] && [ -n "$ch" ] && [ "$hh" != "$ch" ]; then
+      stale="${stale}
+    rpc: /etc/nginx/conf.d/karmachain.conf（宿主 ≠ 容器）"
+    fi
+  fi
+
+  [ -n "$stale" ] || return 0
+  echo "" >&2
+  echo "devnet-start: 警告 —— 容器内的配置文件与宿主上的**不是同一份**：${stale}" >&2
+  echo "" >&2
+  echo "  成因：Docker 对单文件 bind mount 绑的是 inode，而 git pull／重新渲染是原子替换" >&2
+  echo "  （写临时文件 + rename），inode 变了，容器仍指向旧的那个。restart 与 up -d 都无效 ——" >&2
+  echo "  容器配置本身没变，compose 不会重建它。" >&2
+  echo "" >&2
+  echo "  后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，" >&2
+  echo "  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。" >&2
+  echo "" >&2
+  echo "  修法（重建容器，数据卷不受影响）：" >&2
+  echo "    docker compose -f ${COMPOSE} up -d --force-recreate" >&2
+  echo "  只想换代理配置时可以只重建它：" >&2
+  echo "    docker compose -f ${COMPOSE} up -d --force-recreate rpc" >&2
+  echo "" >&2
+}
+
+# 挂载新鲜度检查必须在幂等分支**之前** —— 否则"已在运行"时直接 exit 0，
+# 而那恰好是最需要提醒的情形：git pull 之后跑一次 devnet-start，它说"无需操作"，
+# 你就以为新配置生效了。
+warn_stale_mounts
+
 # 幂等：已在运行且 RPC 已应答时直接返回（FR-006）
 if [ "$(chain_id)" = "$KARMACHAIN_CHAIN_ID_HEX" ]; then
   echo "devnet-start: 已在运行并正常应答 —— 无需操作"

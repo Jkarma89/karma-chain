@@ -32,6 +32,72 @@ if ([int]$ctx.KARMACHAIN_DOMAIN_COUNT -gt 1) {
     }
 }
 
+# 挂载新鲜度：容器里看到的配置文件，与宿主上的那份是否还是同一内容。
+# 与 devnet-start.sh 的 warn_stale_mounts 等价，理由见那里的长注释。要点：
+# Docker 对**单文件** bind mount 绑的是 inode，而 git pull／重新渲染是原子替换（rename），
+# 于是容器仍指向旧 inode —— restart 与 up -d 都无效，只有重建容器才重新解析挂载。
+#
+# **这个坑只在 Linux 宿主上存在。** Docker Desktop（本脚本的运行环境）按**路径**解析，
+# 替换立刻可见，因此这段在 Windows 上几乎永远不会报警。保留它有两个理由：
+#   1. 契约要求 .ps1 与 .sh 等价，行为不该按平台分叉；
+#   2. Docker Desktop 的文件共享后端换过好几次实现，不该假定它永远按路径解析。
+# 也正因为 Windows 上不存在该 bug，这段**无法在 win-1 上反向验证** —— 改宿主文件时
+# 容器里那份会同步变化，两个哈希一起动，测不出不一致。它的验证只能在 Linux 宿主上做。
+function Warn-StaleMounts($ctx) {
+    $stale = @()
+    $checks = @(
+        @{ Host = 'blockchain/protocol.json';                          Inside = '/config/protocol.json' },
+        @{ Host = 'blockchain/genesis/karmachain.genesis.json';        Inside = '/config/karmachain.genesis.json' },
+        @{ Host = 'blockchain/chain-identity/karmachain.identity.json'; Inside = '/config/karmachain.identity.json' }
+    )
+    foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
+        $c = "karmachain-$n"
+        if ((Invoke-Quiet { docker inspect --format '{{.State.Status}}' $c }) -ne 'running') { continue }
+        $perNode = $checks + @{
+            Host   = "blockchain/nodes/$($ctx.KARMACHAIN_DEPLOYMENT)/$n.flags.json"
+            Inside = '/config/flags.json'
+        }
+        foreach ($chk in $perNode) {
+            $hostPath = Join-Path $ctx.Root $chk.Host
+            if (-not (Test-Path $hostPath)) { continue }
+            $hh = (Get-FileHash -Algorithm MD5 -Path $hostPath).Hash.ToLower()
+            $out = Invoke-Quiet { docker exec $c md5sum $chk.Inside }
+            if (-not $out) { continue }            # 取不到就跳过，少一路证据不误报
+            $ch = ($out -join ' ').Trim().Split(' ')[0].ToLower()
+            if ($hh -ne $ch) { $stale += "$n : $($chk.Inside)" }
+        }
+    }
+    $rpcC = "karmachain-rpc-$($ctx.Domain)"
+    $rpcH = Join-Path $ctx.Root "blockchain/nodes/$($ctx.KARMACHAIN_DEPLOYMENT)/rpc-proxy.conf"
+    if ((Invoke-Quiet { docker inspect --format '{{.State.Status}}' $rpcC }) -eq 'running' -and (Test-Path $rpcH)) {
+        $hh = (Get-FileHash -Algorithm MD5 -Path $rpcH).Hash.ToLower()
+        $out = Invoke-Quiet { docker exec $rpcC md5sum /etc/nginx/conf.d/karmachain.conf }
+        if ($out) {
+            $ch = ($out -join ' ').Trim().Split(' ')[0].ToLower()
+            if ($hh -ne $ch) { $stale += "rpc : /etc/nginx/conf.d/karmachain.conf" }
+        }
+    }
+    if (-not $stale) { return }
+
+    Write-Host ''
+    Write-Host 'devnet-start: 警告 —— 容器内的配置文件与宿主上的**不是同一份**：' -ForegroundColor Yellow
+    $stale | ForEach-Object { Write-Host "    $_" }
+    Write-Host ''
+    Write-Host '  成因：Docker 对单文件 bind mount 绑的是 inode，而 git pull／重新渲染是原子替换'
+    Write-Host '  （写临时文件 + rename），inode 变了，容器仍指向旧的那个。restart 与 up -d 都无效。'
+    Write-Host ''
+    Write-Host '  后果：节点正带着**旧参数**在跑。这是宪法第十五条要防的「半新半旧」，'
+    Write-Host '  而出生证明守卫比的是卷里的 stamp 与容器内的 protocol.json —— 两边都旧时它看不出来。'
+    Write-Host ''
+    Write-Host '  修法（重建容器，数据卷不受影响）：'
+    Write-Host "    docker compose -f $($ctx.Compose) up -d --force-recreate"
+    Write-Host ''
+}
+
+# 必须在幂等分支**之前** —— 否则"已在运行"时直接 exit 0，而那恰好是最需要提醒的情形：
+# git pull 之后跑一次 devnet-start，它说"无需操作"，你就以为新配置生效了。
+Warn-StaleMounts $ctx
+
 if ((Get-ChainId $ctx.Rpc) -eq $ctx.KARMACHAIN_CHAIN_ID_HEX) {
     Write-Host 'devnet-start: 已在运行并正常应答 —— 无需操作'; exit 0
 }
