@@ -19,7 +19,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  RPC, VALIDATOR_IDS, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip,
+  RPC, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip,
   spreadProblems,
 } from './lib/devnet.mjs';
 
@@ -59,7 +59,6 @@ describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { s
     assert.ok(docker('kill', `karmachain-${VICTIM}`), `应能强制杀死 ${VICTIM}`);
     assert.notEqual(containerState(VICTIM), 'running', `${VICTIM} 应已停止`);
 
-    const others = VALIDATOR_IDS.filter((id) => id !== VICTIM);
     const failures = [];
     const heights = [];
     let sent = 0;
@@ -124,8 +123,10 @@ describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { s
       assert.ok(Date.now() < deadline, `120 秒内未恢复，${VICTIM} 状态 ${containerState(VICTIM)}`);
       await new Promise((r) => setTimeout(r, 5_000));
     }
-    for (const id of VALIDATOR_IDS) {
-      assert.equal(containerState(id), 'running', `${id} 应当在运行`);
-    }
+    // 靶子在本机，查容器状态是有效的；其余验证者在别的机器上，只能问"是否仍在服务 L1"。
+    // 这一处是同一个缺陷的最后一个残留 —— 我先修了窗口内的循环，漏了这个收尾的。
+    assert.equal(containerState(VICTIM), 'running', `${VICTIM} 应当在运行`);
+    const spread = await spreadProblems([VICTIM]);
+    assert.deepEqual(spread, [], `链应恢复满余量，但：\n  ${spread.join('\n  ')}`);
   });
 });
