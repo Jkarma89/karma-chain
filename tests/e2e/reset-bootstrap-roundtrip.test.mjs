@@ -23,9 +23,28 @@ import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 const IDENTITY_PATH = resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json');
 const GENESIS_HASH_PATH = resolve(REPO_ROOT, 'blockchain/genesis/karmachain.genesis.hash');
 
-const SKIP = process.env.KARMACHAIN_ALLOW_DESTRUCTIVE === '1'
-  ? undefined
-  : '销毁性测试：会删除全部链数据并重新建链（数分钟）。设 KARMACHAIN_ALLOW_DESTRUCTIVE=1 后运行。';
+// 第二道闸门：**跨机形态下重新建链会废掉整套部署**，光有 ALLOW_DESTRUCTIVE 不够。
+//
+// 重新建链会重写 `blockchain/chain-identity/primary-network.genesis.json`，而 Primary Network
+// 创世**嵌入建链时刻**、不可复现（ADR-0009）。本机拿到新的那份之后，其余机器上的节点
+// 仍持有旧的 —— 它们下次启动会以 `db contains invalid genesis hash` 拒绝启动，
+// 整套部署必须从分发那一步重做。SubnetID／BlockchainID 是确定性的（本测试正是要断言这点），
+// 但那不足以救回来：不确定的那一半足以让节点起不来。
+//
+// 2026-09-09 加这道闸门：当时 5 台机器的 lan 形态正在运行，而这个测试只看
+// ALLOW_DESTRUCTIVE 一个开关 —— 谁在跑完整 e2e 时顺手设上它，就会毁掉部署。
+const domainCount = Number(
+  (readFileSync(resolve(REPO_ROOT, 'docker/compose/active.env'), 'utf8')
+    .match(/^KARMACHAIN_DOMAIN_COUNT=(\d+)/m)?.[1]) ?? 1,
+);
+
+const SKIP = process.env.KARMACHAIN_ALLOW_DESTRUCTIVE !== '1'
+  ? '销毁性测试：会删除全部链数据并重新建链（数分钟）。设 KARMACHAIN_ALLOW_DESTRUCTIVE=1 后运行。'
+  : (domainCount > 1 && process.env.KARMACHAIN_ALLOW_CROSS_HOST_REBOOTSTRAP !== '1')
+    ? `当前是跨机形态（${domainCount} 个故障边界）。重新建链会重写不可复现的 Primary Network 创世，`
+      + '其余机器上的节点下次启动会以 db contains invalid genesis hash 拒绝启动 —— 整套部署要重做。'
+      + ' 确实要在跨机形态下做这件事，再加 KARMACHAIN_ALLOW_CROSS_HOST_REBOOTSTRAP=1。'
+    : undefined;
 
 /** 跑一个薄封装脚本。两个脚本都是非交互的，无需喂确认。 */
 const sh = (script, { args = [], env: extraEnv = {}, timeout = 900_000 } = {}) => {

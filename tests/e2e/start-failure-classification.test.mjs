@@ -41,7 +41,11 @@ const env = Object.fromEntries([...ENV_RAW.matchAll(/^([A-Z][A-Z0-9_]*)=(.*)$/gm
   .map(([, k, v]) => [k, v.replace(/^"|"$/g, '')]));
 
 const RPC_PORT = Number(env.KARMACHAIN_RPC_PORT);
-const COMPOSE_FILE = `docker/compose/${env.KARMACHAIN_DEPLOYMENT}-${env.KARMACHAIN_DEFAULT_DOMAIN}.yml`;
+// 取**生效的**边界，不是 active.env 里的默认值：跨机形态下每台机器用 KARMACHAIN_DOMAIN
+// 指定自己那一个，而 DEFAULT_DOMAIN 是全局的同一个值（win-1）。在别的机器上按默认值
+// 拼出来的 compose 文件与 rpc 容器名都是**别人的**。win-1 上两者相同所以一直没暴露。
+const DOMAIN = process.env.KARMACHAIN_DOMAIN || env.KARMACHAIN_DEFAULT_DOMAIN;
+const COMPOSE_FILE = `docker/compose/${env.KARMACHAIN_DEPLOYMENT}-${DOMAIN}.yml`;
 const SQUATTER = 'kc-t090-port-squatter';
 
 const SKIP = process.env.KARMACHAIN_ALLOW_DISRUPTIVE === '1'
@@ -80,7 +84,7 @@ describe('T090 —— devnet-start 的退出码 11 与 20', { skip: SKIP }, () =
     // "Running 但 PORTS 只列出容器内端口、未发布到宿主" 的状态，compose 判断配置未变、
     // 不重建也不绑端口，于是冲突根本不发生 —— 用例退化成"等 300 秒然后报 20"，
     // 看起来像脚本的分类逻辑错了，实际是前置条件没成立。删掉容器才能强制它重建并绑定。
-    docker('rm', '-f', `karmachain-rpc-${env.KARMACHAIN_DEFAULT_DOMAIN}`);
+    docker('rm', '-f', `karmachain-rpc-${DOMAIN}`);
     assert.ok(docker('run', '-d', '--name', SQUATTER, '-p', `${RPC_PORT}:80`, 'nginx:alpine'),
       '应能起一个占端口的容器');
     try {
@@ -89,7 +93,7 @@ describe('T090 —— devnet-start 的退出码 11 与 20', { skip: SKIP }, () =
         .split('\n').filter((l) => l.includes(`:${RPC_PORT}->`));
       assert.ok(holders.some((l) => l.startsWith(SQUATTER)),
         `占端口的容器未就位，当前占 ${RPC_PORT} 的是：${holders.join(' / ') || '（无）'}`);
-      assert.ok(!docker('inspect', `karmachain-rpc-${env.KARMACHAIN_DEFAULT_DOMAIN}`),
+      assert.ok(!docker('inspect', `karmachain-rpc-${DOMAIN}`),
         '代理容器必须已删除，否则 compose 不会重建它、也就不会尝试绑端口');
 
       const r = runStart();
