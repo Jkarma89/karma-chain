@@ -21,6 +21,7 @@
 | `devnet-bootstrap` | **一次性建链**。运行 `docker/bootstrap/` 镜像（唯一含 Avalanche CLI 的地方），产出 `blockchain/chain-identity/karmachain.identity.json` 与 Primary Network 创世。默认拒绝覆盖已有制品，需 `--force` | 0 成功；12 已有制品且未加 `--force`；20 建链失败 |
 | `devnet-topology [--deployment <name>]` | 校验并展示拓扑：节点→故障边界归属、每边界验证者数、**推导出的容错上限**、共享失效因素告警 | 0 合法；**13 违反容错约束**（新增码，见下）；10 声明缺失 |
 | `devnet-render` | 由 `protocol.json` + 建链制品生成全部节点配置与每机 compose；`--check` 模式做漂移检查 | 0 一致；1 漂移 |
+| `devnet-logs [<node>] [--chain|--stdout|--file <name>] [-f] [-n N] [--raw]` | 按节点查看日志。省略 `<node>` 时列出可选节点与日志文件。**默认对 `*-content` 字段脱敏**（FR-026），`--raw` 显式关掉。只能看**本机**承载的节点 —— 别的节点要到它所在的机器上看 | 0 成功；10 前置依赖缺失或本机无该节点容器 |
 
 ### 新增退出码 13：拓扑违反容错约束
 
@@ -104,8 +105,8 @@ KarmaChain nodes   deployment: lan   height 1284
 |---|---|---|
 | `healthy` / `starting` / `bootstrapping` / `catching-up` | **非故障** | 前两个要等，后两个是恢复过程；契约第 1 条明确 `catching-up` 不得计为故障 |
 | `stopped` | `node` | 进程未运行 |
-| `unreachable` | `node` | 整个故障边界缺席 —— 处置对象是那台机器 |
-| `stalled` | `node` | 引导／追赶超时无进展 |
+| `unreachable` | `node` | **两种含义，离线语义相反**：① 其他节点的 peer 列表里有它 → 本机到它的**路径**问题，链里它还在，**不计入离线**；② 同边界全部节点不应答 → **整域缺席**，计入离线、处置对象是那台机器。混淆两者会虚报余量不足 |
+| `stalled` | `node` | 未在服务 L1 超过窗口，**且其余验证者全部在场**（否则成因在别的机器，本机无可处置之处）。判据与理由见 `contracts/node-runtime.md` |
 | `identity-mismatch` | `configuration` | 挂载的密钥与制品声明不同源（FR-017） |
 | `data-corrupt` | `storage` | 数据库打不开或与创世不符 → **重建该节点的卷**（FR-006），不是改声明 |
 

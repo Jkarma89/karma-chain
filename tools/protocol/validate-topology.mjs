@@ -1,6 +1,10 @@
 // tools/protocol/validate-topology.mjs
 //
 // 校验并展示拓扑：节点 → 故障边界归属、每边界验证者数、推导出的容错上限、共享失效因素告警。
+//
+// 本工具是 **FR-019**（故障边界的划分与节点归属 MUST 是显式声明，MUST NOT 隐含于部署方式）
+// 的执行者：归属只来自 blockchain/protocol.json 的 topology 声明，而不是"谁跟谁部署在一起"。
+// 声明与实际不符时，靠的是 devnet-start 的地址核对（退出码 13），不是靠这里推断。
 // 契约见 specs/002-resilient-validator-network/contracts/cli-interface.md。
 //
 // 退出码（001 已占用 10/11/12/20，本特性新增 13）：

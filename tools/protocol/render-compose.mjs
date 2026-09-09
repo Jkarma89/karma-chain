@@ -17,6 +17,9 @@ import { loadProtocol, deriveTopology, REPO_ROOT } from './load.mjs';
 
 export const OUTPUT_DIR = resolve(REPO_ROOT, 'docker', 'compose');
 export const NODE_IMAGE = 'karmachain/node:local';
+// 每个节点一个独占命名卷 —— **FR-001** 的落地方式：数据的可用性只取决于这个卷，
+// 与任何编排工具无关（缺陷 A 的修复基础，研究 R-01）。卷即故障单元，
+// 因此单节点数据损坏可以只重建它（FR-006 / SC-011）。
 const volumeOf = (id) => `karmachain-${id}-data`;
 const containerOf = (id) => `karmachain-${id}`;
 

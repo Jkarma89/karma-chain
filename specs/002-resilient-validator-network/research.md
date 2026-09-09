@@ -608,7 +608,19 @@ docker run --rm -v karmachain-primary-1-data:/data -v "$PWD:/in:ro" alpine tar x
 
 ## R-11 Windows 故障边界的开机自启
 
-**Decision**: 列为**待定实现方案**，在 tasks 阶段确定并记入 ADR。已知约束与候选方案如下。
+**Decision**（2026-09-07 已裁定，见 [ADR-0006](../../docs/adr/0006-windows-failure-domain-autostart.md)）：
+**采纳候选 3 —— 不做开机自启，接受人工恢复。** 宿主重启后由人登录并手动启动 Docker，
+节点随之由 `restart: unless-stopped` 恢复。Linux 边界不受影响（`docker.service` 是开机自启的系统服务）。
+
+候选 2（WSL2 内直接跑 Docker Engine + 计划任务）在实测中被排除：Windows **显式拒绝**
+从 LOCAL SYSTEM 账户启动 WSL（`Wsl/WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED`）。候选 1 要求自动登录
+或在计划任务里存口令，两者都会在机器上留下一份可被滥用的凭据，换来的只是省掉一次登录 —— 不划算。
+
+> 本条原先停在"列为**待定实现方案**，在 tasks 阶段确定并记入 ADR"。ADR 已于 2026-09-07 写就，
+> 但本处未同步，直到 2026-09-09 的一致性核查才发现。**决策记录停在"待定"会误导** ——
+> 读者无从知道它已经有答案。
+
+以下保留当时的约束与候选清单，作为该裁定的依据。
 
 **约束**：Windows 上的 Docker Desktop 随用户会话启动，没有受支持的"开机即以服务运行"方式。宿主重启后若无人登录，该边界的节点不会回来（spec 边缘用例已列）。Linux 侧由系统服务在开机时拉起，无此问题。
 

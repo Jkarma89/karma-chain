@@ -128,6 +128,8 @@ scripts/devnet-verify.sh --quick    # 跳过合约编译与 RPC 方法探测（�
 
 首次部署成功时容器在卷内写入 `karmachain.stamp.json`（configVersion / chainId / networkId / 创世文件 sha256 / 实测创世区块哈希）。之后每次启动都会比对：**任一项与当前 `protocol.json` / 创世不一致即拒绝启动（退出 12）**并提示 reset —— 改了协议参数就必须换一条链，不会得到"半新半旧"的链（宪法第十五条）。
 
+> ⚠️ 这道守卫在 **Linux 宿主**上有一个已知盲区：它比对的是**容器内**那份 `protocol.json`，而单文件 bind mount 绑 inode —— 宿主换了新版、容器仍看旧版时，两边都旧、彼此一致，守卫通过。详见 §8 的警告框。`scripts/devnet-start` 会在宿主侧比对哈希并告警。
+
 ## 3.6 跨环境一致性核对（SC-002）
 
 目标：证明两台机器（或两位开发者）从同一提交启动得到**同一条链**。
@@ -702,6 +704,16 @@ scripts/devnet-node start l1-3     # 应当自动追平
 
 # 同时失去两个边界（应当：安全停摆，不分叉、零回滚）
 # 在两台机器上分别 scripts/devnet-stop，其余机器上 devnet-verify 应报超出容错
+
+# 两个 Primary Network 节点全停（场景 I / V-08）—— 应当：L1 继续出块
+# 跨机形态下**必须人工**：两个 Primary 分处 ubuntu-1 与 ubuntu-2，
+# 没有单台机器能同时停掉它们（docker 只能操作本机容器）。
+#   在 ubuntu-1：sudo scripts/devnet-node.sh kill primary-1
+#   在 ubuntu-2：sudo scripts/devnet-node.sh kill primary-2
+#   在任意机器：连发 3 笔交易，高度应继续增长
+#   恢复：各机 devnet-node start <primary>
+# tests/e2e/primary-network-loss.test.mjs 在单机形态下会自动跑这一条；
+# 跨机形态下它会带说明跳过，指回这里。
 
 # 单节点数据丢失（应当：从对等节点重新同步，其余节点不受影响）
 docker volume rm karmachain-l1-3-data   # 需先停掉该节点

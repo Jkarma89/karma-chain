@@ -1,5 +1,17 @@
 # Specification Quality Checklist: 崩溃可恢复、可跨机部署的验证者网络
 
+> **本文件是 2026-09-06 规格定稿时的历史快照，不再更新。** 其中记录的"未通过项"与
+> "移交 plan 阶段的待定项"**均已解决**，2026-09-09 的一致性核查逐条确认：
+>
+> | 当时记录的待定项 | 现状 |
+> |---|---|
+> | 规格保留 1 处 `[NEEDS CLARIFICATION]`（阶段二的故障边界规模） | 已裁定为 **5 个边界**（FR-020），spec.md 已无该标记 |
+> | 故障边界独立性的具体保障手段 | [ADR-0007](../../../docs/adr/0007-failure-domain-independence.md) |
+> | Windows 宿主的开机自启方案 | [ADR-0006](../../../docs/adr/0006-windows-failure-domain-autostart.md)：不做自启，接受人工恢复 |
+> | 2 个 Primary Network 节点的边界归属 | 落在 `ubuntu-1` / `ubuntu-2`，见 `protocol.json` 的 `topology.deployments.lan` |
+>
+> 当前的验收状态看 [`dod.md`](dod.md)，不要看本文件。
+
 **Purpose**: Validate specification completeness and quality before proceeding to planning
 **Created**: 2026-09-06
 **Feature**: [spec.md](../spec.md)

@@ -189,7 +189,11 @@ export function validateConstraints(p) {
     const missing = ids.filter((i) => !members.includes(i));
     if (missing.length) fail(`deployment "${name}": node(s) not assigned to any failure domain: ${missing.join(', ')}`);
 
-    // T-5 边界数 > 1 时，任一边界内的验证者不得超过容错上限 ⌊n/4⌋
+    // T-5 边界数 > 1 时，任一边界内的验证者不得超过容错上限 ⌊n/4⌋。
+    // 这是 **FR-020**（5 个验证者 MUST 分布在 5 个故障边界上，每边界恰好 1 个）与
+    // **FR-021**（MUST 拒绝违反容错约束的拓扑声明）的执行点 —— 违规是**错误**而非告警，
+    // 因为"声明了 5 个边界但实际只有 2 台机器"曾在全部测试皆绿的情况下存在过
+    // （2026-09-07，见 docs/adr/0007-failure-domain-independence.md）。
     // 单边界形态（阶段一）不做整机失效容错承诺，故不适用 —— 见 specs/002-…/data-model.md §4
     if (domains.length > 1) {
       const maxPerDomain = Math.floor(p.validators.count / 4);

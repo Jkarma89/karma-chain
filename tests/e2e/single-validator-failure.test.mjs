@@ -54,6 +54,9 @@ describe('场景 C —— 单个验证者挂掉，链照常出块',
     assert.deepEqual(spread, [], `其余验证者应当不受影响：\n  ${spread.join('\n  ')}`);
   });
 
+  // **FR-010**（重新启动的验证者 MUST 自动追平当前高度并重新参与共识，无需人工干预）
+  // 与 **SC-004**（≤ 2 分钟）的判据。第二个断言（重启次数不涨）同样属于 FR-010 的
+  // "无需人工干预"：追赶被误判为不健康会让容器反复重启它，恢复变成死循环。
   test(`${VICTIM} 重启后自动追平，且追赶期间不被反复重启`, async (t) => {
     const target = Number(await pub.getBlockNumber());
     const restartsBefore = restartCount();

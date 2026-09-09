@@ -1,6 +1,10 @@
 #!/usr/bin/env sh
 # scripts/devnet-node.sh —— 单节点生命周期控制，用于故障注入（功能 002 / T044）。
 #
+# 本脚本的存在即 **FR-018**（每个节点 MUST 是可单独启动、停止、重启的运行单元）的落地：
+# 001 的单容器形态里做不到这件事 —— 7 个节点是一个容器内的 7 个进程，
+# 只能整体起停。一节点一容器之后，故障注入才能精确到单个节点。
+#
 # 用法：scripts/devnet-node.sh <kill|stop|start|restart|status|wipe> <node-id>
 #
 #   kill     SIGKILL —— **不给优雅退出机会**，用于验证崩溃自愈（US1/US2）
