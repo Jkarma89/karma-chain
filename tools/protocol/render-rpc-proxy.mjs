@@ -56,12 +56,31 @@ export function renderRpcProxy(p = loadProtocol(), identity = readJson(IDENTITY_
   L.push('}');
   L.push('');
   L.push('upstream karmachain_rpc {');
+  // 共享内存区：让 max_fails / fail_timeout 的状态在**所有 worker 之间共享**。
+  //
+  // 不加这个的话失败计数是**每个 worker 各记一份**的。nginx:alpine 默认
+  // `worker_processes auto`，本机实测起了 **18 个 worker** —— 于是一台机器整域缺席时，
+  // 请求散到各个 worker 上，几乎每一次都命中一个"还不知道那台已死"的 worker，
+  // 重新付一遍连接超时。2026-09-09 实测：加 max_fails=1 之后 8 次请求仍然 8 次都是 2 秒，
+  // 就是这个原因（而不是 max_fails 没生效）。
+  //
+  // `zone` 是开源 nginx 的指令（ngx_http_upstream_module，1.9.0+），不需要 Plus。
+  L.push('    zone karmachain_rpc 64k;');
   // 客户端亲和：同一个客户端固定落到同一个验证者，避免"发完交易立刻读高度却读到旧视图"
   // （实测：轮询时 receipt 已返回 block 1，紧接着的 eth_blockNumber 从另一个节点读到 0）。
   // 该节点不可用时 ip_hash 仍会转到下一个 —— 亲和性与故障转移可以兼得。
   L.push('    ip_hash;');
+  // max_fails=1：**一次**失败就把该后端标记为下线，持续 fail_timeout。
+  //
+  // 原先是 max_fails=2 fail_timeout=10s，实测（2026-09-09，win-2 整域缺席）发现它在
+  // 低频请求下等于没有生效：请求间隔一旦超过 fail_timeout，10 秒窗口内就只累积到 1 次失败，
+  // 永远达不到 2 次，那台死节点因此**从不**被标记下线 —— 于是每个请求都要重新付一遍
+  // 连接超时。5 次测量 5 次都付了。
+  //
+  // 代价是一次偶发失败会让该后端被摘 fail_timeout 秒，客户端亲和性短暂中断。
+  // 可以接受：亲和性是为了避免"发完交易立刻读到旧视图"，而后端真失败时亲和性本就无从维持。
   for (const v of validators) {
-    L.push(`    server ${v.address}:${v.httpPort} max_fails=2 fail_timeout=10s;   # ${v.id}`);
+    L.push(`    server ${v.address}:${v.httpPort} max_fails=1 fail_timeout=15s;   # ${v.id}`);
   }
   L.push('}');
   L.push('');
@@ -74,6 +93,20 @@ export function renderRpcProxy(p = loadProtocol(), identity = readJson(IDENTITY_
   L.push('');
   L.push('    # 某个验证者不可用时自动换下一个 —— RPC 入口不随单个验证者一起挂掉');
   L.push('    proxy_next_upstream error timeout http_502 http_503 http_504;');
+  L.push('');
+  // 连接超时**必须**显式设短。nginx 默认 60s，而"机器整台没了"时 Windows 的 WFP 对关闭
+  // 端口**静默丢包**（不回 RST），于是 nginx 只能等满超时才判定失败去试下一个后端。
+  //
+  // 2026-09-09 实测（win-2 整域缺席期间，win-1 的代理）：故障转移**能**成功，但每个请求
+  // 要 21 秒 —— 5 次测量里 4 次 21s。`fail_timeout=10s` 一过就又去试那台死的，
+  // 所以这不是偶发而是常态。任何客户端的正常超时（viem 20s、MetaMask ~30s）都会失败，
+  // 也就是说上面那行注释承诺的"入口不随单个验证者一起挂掉"当时是**不成立**的。
+  //
+  // 局域网内健康连接 < 5ms，2 秒是 400 倍余量。配合 next_upstream_tries，
+  // 最坏情况变成"试几次 × 2 秒"，仍在客户端超时之内。
+  L.push('    proxy_connect_timeout 2s;');
+  L.push(`    proxy_next_upstream_tries ${validators.length};`);
+  L.push('    proxy_next_upstream_timeout 15s;');
   L.push('');
   L.push(`    location /ext/bc/${alias}/ {`);
   L.push(`        rewrite ^/ext/bc/${alias}/(.*)$ /ext/bc/${bid}/$1 break;`);
