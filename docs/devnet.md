@@ -693,6 +693,7 @@ scripts/devnet-start
 | `docker build` 里 `Temporary failure resolving 'deb.debian.org'` | 构建容器的 DNS，见 9.2 ⑨ |
 | `docker load` 进来的镜像启动即失败 | 架构不匹配（amd64 的镜像搬到了 arm64 机器，或反之），见 9.2 ⑧ |
 | `devnet-verify` / `devnet-contracts` 报"找不到运行中的 karmachain-rpc-\<domain\>" | 本机网络没起来。这两个命令要把工具容器接到**节点所在的容器网络**上，因此需要先 `devnet-start` |
+| 某台机器**间歇性**变慢：`devnet-status` 偶尔把它报成 `unreachable`，或到它的连接偶尔要 3／7／15 秒 | **链路丢包**（那几个秒数是 TCP SYN 重传退避）。先 `ping -n 80 <地址>` 量丢包，再 `ip -s link show` 看 NIC 计数器。**注意计数器全零不能排除网线问题** —— 帧完全没到达时不会被计数。诊断特征与排查次序见 [ADR-0007](adr/0007-failure-domain-independence.md) 的"单机链路故障的诊断特征"。别把它当成"探测抖动" |
 
 ---
 
