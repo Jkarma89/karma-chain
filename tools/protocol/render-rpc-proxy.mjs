@@ -79,8 +79,18 @@ export function renderRpcProxy(p = loadProtocol(), identity = readJson(IDENTITY_
   //
   // 代价是一次偶发失败会让该后端被摘 fail_timeout 秒，客户端亲和性短暂中断。
   // 可以接受：亲和性是为了避免"发完交易立刻读到旧视图"，而后端真失败时亲和性本就无从维持。
+  //
+  // fail_timeout 从 15s 放到 60s（2026-09-09）。**这不是一个已确认的修复** ——
+  // 起因是 SC-003 的一轮 30 分钟窗口里第 5、6 分钟各失败一笔（回执超时 + 一次 502），
+  // 而针对性复现失败了（168 次读取 + 20 次交易周期全过），nginx 侧的日志也已被后续测试
+  // 销毁，所以根因未确认。
+  //
+  // 但这个值本身站得住，与那次故障无关也该改：**反复去探一个持续死着的后端没有任何收益**。
+  // 15s 意味着每分钟 4 次重探，而 ip_hash 在后端被标记下线／恢复时会重新分配 ——
+  // 也就是每分钟 4 次机会打断"读到自己刚写的"那份亲和性，而那恰好能解释回执超时。
+  // 60s 把这种反复摘挂降到 1/4，代价只是恢复的节点最多晚 60 秒重新入池（开发网可接受）。
   for (const v of validators) {
-    L.push(`    server ${v.address}:${v.httpPort} max_fails=1 fail_timeout=15s;   # ${v.id}`);
+    L.push(`    server ${v.address}:${v.httpPort} max_fails=1 fail_timeout=60s;   # ${v.id}`);
   }
   L.push('}');
   L.push('');

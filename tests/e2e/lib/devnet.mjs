@@ -76,8 +76,11 @@ export const validatorsOfDomain = (domain) =>
 export const rpcOfDomain = (domain) =>
   `http://${DOMAIN_ADDRESSES[domain]}:${env.KARMACHAIN_RPC_PORT}${env.KARMACHAIN_RPC_PATH}`;
 
+// maxBuffer 给到 16MB：默认只有 1MB，而这个 helper 被大量 docker 调用复用
+// （volume ls、compose ps、脚本输出…）。宁可宽裕，也不要在某台机器上因为输出偏大
+// 就冒出一个与被测内容无关的 ENOBUFS。取日志仍必须显式 `--tail`，见 proxyTail。
 export const sh = (cmd, args) => execFileSync(cmd, args, {
-  cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 16 * 1024 * 1024,
 });
 
 // —— 本机实况：故障注入只能操作**本机**的容器 ——
@@ -154,6 +157,27 @@ export async function spreadProblems(excludeIds = [], label = '') {
   const rows = await validatorsServing(excludeIds);
   return rows.filter((r) => !r.serving)
     .map((r) => `${label}${r.id}（${r.domain}）${r.detail} —— 故障扩散了`);
+}
+
+/**
+ * 本机 RPC 代理最近的日志行 —— 交易失败时用来留证据。
+ *
+ * 为什么需要：2026-09-09 的 SC-003 窗口里第 5、6 分钟各失败一笔（回执超时 + 502），
+ * 而事后查 nginx 日志时**已经没了** —— 排在最后的 T090 会删掉并重建 rpc 容器
+ * （那是它测试退出码 11 的手段），日志随容器一起消失。于是那次故障只留下客户端侧的
+ * 一句 502，无从判断是代理耗尽了重试、还是某个上游瞬时不可达。
+ *
+ * 教训：**失败的那一刻就是唯一能取证的时刻**，指望事后去翻是不行的。
+ * `--tail` 与 `maxBuffer` 是必需的（见 tests/unit/npm-scripts.test.mjs 的守卫）。
+ */
+export function proxyTail(lines = 40) {
+  try {
+    const out = execFileSync('docker', ['logs', '--tail', String(lines), `karmachain-rpc-${DOMAIN}`],
+      { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+    return out.split('\n').filter(Boolean).join('\n');
+  } catch (e) {
+    return `（取不到代理日志：${(e.message ?? e).toString().slice(0, 80)}）`;
+  }
 }
 
 /** 靶子不足时的 skip 理由。TAP 的 skip 是**单行**字段，别用换行（会被转义成 \n 字面量）。 */

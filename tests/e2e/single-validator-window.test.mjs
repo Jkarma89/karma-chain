@@ -19,7 +19,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  RPC, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip,
+  RPC, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip, proxyTail,
   spreadProblems,
 } from './lib/devnet.mjs';
 
@@ -74,8 +74,15 @@ describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { s
       try {
         heights.push(await sendTx());
       } catch (e) {
-        failures.push(`第 ${minute} 分钟：交易未确认（${e.message.slice(0, 120)}）`);
-        heights.push(Number(await pub.getBlockNumber()));   // 占位，保持与分钟对齐
+        // 失败的那一刻就是唯一能取证的时刻：把本机代理最近的日志一并记下来。
+        // 2026-09-09 有一轮在第 5、6 分钟各失败一笔（回执超时 + 502），而事后查 nginx
+        // 日志时已经没了 —— 排在最后的 T090 会删掉并重建 rpc 容器。那次只留下客户端侧
+        // 一句 502，无从判断是代理耗尽了重试还是某个上游瞬时不可达。
+        failures.push(`第 ${minute} 分钟：交易未确认（${e.message.slice(0, 160)}）`);
+        t.diagnostic(`  第 ${minute} 分钟失败时，本机代理最近的日志：
+${proxyTail(30)}`);
+        try { heights.push(Number(await pub.getBlockNumber())); }
+        catch { heights.push(heights.at(-1) ?? Number(heightBefore)); }   // 占位，保持与分钟对齐
       }
 
       // 3) 靶子必须全程离线 —— 否则这 30 分钟测的不是"单验证者离线"
