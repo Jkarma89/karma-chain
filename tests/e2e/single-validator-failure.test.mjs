@@ -8,7 +8,7 @@ import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
-  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip,
+  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip, spreadProblems,
 } from './lib/devnet.mjs';
 
 // 不挑承载 RPC 代理上游首位的那个，避免把"入口失效"和"验证者失效"混为一谈
@@ -44,12 +44,14 @@ describe('场景 C —— 单个验证者挂掉，链照常出块',
     assert.ok(height > before, `链应当继续出块：${before} -> ${height}`);
   });
 
-  test('状态输出把该节点标记为不可用，而不是把整条链标记为故障（FR-031）', () => {
+  test('状态输出把该节点标记为不可用，而不是把整条链标记为故障（FR-031）', async () => {
     const out = node('status', VICTIM);
     assert.match(out, /exited/, `devnet-node status 应当如实报告 ${VICTIM} 已退出`);
-    for (const other of VALIDATOR_IDS.filter((v) => v !== VICTIM)) {
-      assert.match(node('status', other), /running/, `${other} 不应受影响`);
-    }
+    // "故障没扩散"的判据是**其余验证者是否仍在服务 L1**（网络层探测），
+    // 不是"它的容器是否 running" —— 跨机形态下别的验证者在别的机器上，
+    // 本机 docker inspect 返回 missing，那样写会把"看不见"当成"挂了"（2026-09-09 实测）。
+    const spread = await spreadProblems([VICTIM]);
+    assert.deepEqual(spread, [], `其余验证者应当不受影响：\n  ${spread.join('\n  ')}`);
   });
 
   test(`${VICTIM} 重启后自动追平，且追赶期间不被反复重启`, async (t) => {

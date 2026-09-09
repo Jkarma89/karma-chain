@@ -115,6 +115,47 @@ export function pickLocalVictims(count = 1, { requireDomainPeers = false } = {})
   return usable.length >= count ? usable.slice(0, count) : null;
 }
 
+/**
+ * 「故障没扩散」的判据：其余验证者**是否仍在服务 L1**（网络层探测）。
+ *
+ * 为什么不能用"它的容器是否 running"（各测试原先的写法）：跨机形态下别的验证者在**别的
+ * 机器上**，本机 `docker inspect` 返回 missing，于是测试把"看不见"当成了"挂了"。
+ * 2026-09-09 实测：SC-003 的 30 分钟窗口里 30 笔交易全部确认、零交易失败，
+ * 却报出 120 条"故障扩散了" —— 全是这个假阳性（30 轮 × 4 个远端验证者）。
+ *
+ * 换成"在不在服务 L1"同时也是**更强**的判据：容器活着但不服务，比容器不在更坏。
+ *
+ * @param excludeIds 不检查的节点（通常是本测试自己制造故障的靶子）
+ * @returns [{ id, domain, serving, detail }]
+ */
+export async function validatorsServing(excludeIds = []) {
+  const { probeNode } = await import('../../../tools/inspect/node-status.mjs');
+  let blockchainId = null;
+  try {
+    blockchainId = JSON.parse(readFileSync(
+      resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json'), 'utf8')).blockchainId;
+  } catch { /* 尚未建链 */ }
+
+  const targets = topology.topologyNodes
+    .filter((n) => n.role === 'l1-validator' && !excludeIds.includes(n.id));
+  const probes = await Promise.all(targets.map((n) => probeNode(n, blockchainId)));
+  return targets.map((n, i) => ({
+    id: n.id,
+    domain: n.domain,
+    serving: Boolean(probes[i].reachable) && probes[i].height != null,
+    detail: !probes[i].reachable
+      ? '不可达'
+      : probes[i].height == null ? '可达但尚未服务 L1' : `服务中（高度 ${probes[i].height}）`,
+  }));
+}
+
+/** 便捷形式：返回「未在服务」的那些验证者的说明，全在服务时为空数组。 */
+export async function spreadProblems(excludeIds = [], label = '') {
+  const rows = await validatorsServing(excludeIds);
+  return rows.filter((r) => !r.serving)
+    .map((r) => `${label}${r.id}（${r.domain}）${r.detail} —— 故障扩散了`);
+}
+
 /** 靶子不足时的 skip 理由。TAP 的 skip 是**单行**字段，别用换行（会被转义成 \n 字面量）。 */
 export const localVictimSkip = (count, { requireDomainPeers = false } = {}) =>
   `本机可用的验证者容器不足 ${count} 个（本机承载：${localValidatorIds().join('、') || '无'}；`

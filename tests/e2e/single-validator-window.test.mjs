@@ -20,6 +20,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RPC, VALIDATOR_IDS, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip,
+  spreadProblems,
 } from './lib/devnet.mjs';
 
 const MINUTES = Number(process.env.KARMACHAIN_SC003_MINUTES ?? 30);
@@ -83,10 +84,9 @@ describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { s
       if (st === 'running') failures.push(`第 ${minute} 分钟：${VICTIM} 又起来了（状态 ${st}），窗口不成立`);
 
       // 4) 故障不得扩散到其余验证者
-      for (const id of others) {
-        const s = containerState(id);
-        if (s !== 'running') failures.push(`第 ${minute} 分钟：${id} 变成 ${s} —— 故障扩散了`);
-      }
+      // 同上：按"是否仍在服务 L1"判断，不按容器状态 —— 30 分钟 × 4 个远端验证者
+      // 曾因此报出 120 条假阳性，而那一轮的 30 笔交易其实全部确认。
+      failures.push(...await spreadProblems([VICTIM], `第 ${minute} 分钟：`));
 
       if (minute % 5 === 0 || minute === 1) {
         t.diagnostic(`  第 ${minute}/${MINUTES} 分钟：高度 ${heights.at(-1)}，失败 ${failures.length} 次`);

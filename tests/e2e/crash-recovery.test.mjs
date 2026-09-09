@@ -62,7 +62,14 @@ describe('场景 A —— 强制终止后链自己回来', { concurrency: 1 }, (
   test('恢复过程本身被明确告知，而不是静默进行（FR-033）', async () => {
     const { execFileSync } = await import('node:child_process');
     // 同理：取**本机**的第一个节点，NODE_IDS[0] 可能在别的机器上。
-    const logs = execFileSync('docker', ['logs', `karmachain-${localNodeIds()[0]}`], { encoding: 'utf8' });
+    //
+    // `--tail` 与 `maxBuffer` 都是必需的：原先无界读取整个容器日志，串行跑整套 e2e 时
+    // 本文件紧接在"50 轮强制终止"之后运行，那 50 轮把 l1-1 的日志撑得很大，
+    // 于是 execFileSync 以 `spawnSync docker ENOBUFS` 失败（2026-09-09 实测）。
+    // 这是**串行化之后才暴露的顺序依赖** —— 并行跑时两者从未相邻过。
+    // 判据只需要最近一次恢复的那几行，取末尾 2000 行足够且有界。
+    const logs = execFileSync('docker', ['logs', '--tail', '2000', `karmachain-${localNodeIds()[0]}`],
+      { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     assert.match(logs, /existing chain data found — recovering from this node's own volume/,
       '入口应当明确告知这是崩溃恢复及数据来源');
     // 恢复路径里不得出现编排工具 —— 缺陷 A 的修复方式是让它不再是必经环节（研究 R-01）

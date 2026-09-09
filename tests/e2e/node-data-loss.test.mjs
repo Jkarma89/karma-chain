@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip,
+  pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip, spreadProblems,
 } from './lib/devnet.mjs';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -49,9 +49,11 @@ describe('场景 E —— 单节点数据损坏，故障不外溢',
     const volumes = execFileSync('docker', ['volume', 'ls', '--format', '{{.Name}}'], { encoding: 'utf8' });
     assert.ok(!volumes.split(/\r?\n/).includes(VOLUME), `${VOLUME} 应当已不存在`);
 
-    for (const other of VALIDATOR_IDS.filter((v) => v !== VICTIM)) {
-      assert.match(node('status', other), /running/, `${other} 不应受影响`);
-    }
+    // "故障没扩散"的判据是**其余验证者是否仍在服务 L1**（网络层探测），
+    // 不是"它的容器是否 running" —— 跨机形态下别的验证者在别的机器上，
+    // 本机 docker inspect 返回 missing，那样写会把"看不见"当成"挂了"（2026-09-09 实测）。
+    const spread = await spreadProblems([VICTIM]);
+    assert.deepEqual(spread, [], `其余验证者应当不受影响：\n  ${spread.join('\n  ')}`);
   });
 
   test('该节点缺席期间，链照常出块 —— 无需全链重置（SC-011）', async () => {
