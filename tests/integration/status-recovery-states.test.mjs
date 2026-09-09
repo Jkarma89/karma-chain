@@ -29,8 +29,6 @@ import { collect, summarize } from '../../tools/inspect/node-status.mjs';
 const p = loadProtocol();
 const d = deriveTopology(p);
 const validatorIds = d.topologyNodes.filter((n) => n.role === 'l1-validator').map((n) => n.id);
-// 挑最后一个验证者当靶子：它不承载 Primary，杀掉它的影响面最小
-const VICTIM = validatorIds[validatorIds.length - 1];
 
 const docker = (...args) => {
   try {
@@ -38,6 +36,28 @@ const docker = (...args) => {
     return true;
   } catch { return false; }
 };
+const containerExists = (id) => docker('inspect', '--format', '{{.State.Status}}', `karmachain-${id}`);
+
+// 靶子必须是**本机真的有容器**的那个验证者。
+//
+// 初稿取的是拓扑里的最后一个（`validatorIds.at(-1)`），理由是"它不承载 Primary，影响面最小"。
+// 那在单机形态下成立，跨机形态下**不成立** —— 2026-09-09 实测：在 win-1 上跑本文件，
+// 前置钩子直接报 `容器 karmachain-l1-5 应存在`，因为 l1-5 在 ubuntu-3 上。
+// 文件头那张表里写着"跨机形态下宿主同时具备 docker 与节点端点，两个套件都会真跑"，
+// 漏掉的正是"docker 只能操作**本机**的容器"这一条。
+//
+// 还有第二个条件，同样是跨机形态才暴露的：靶子所在的边界必须**至少还有一个别的节点**。
+//
+// 本套件的判据是"杀一个验证者 → **节点级**故障，而不是边界缺席"。若那个边界上只有它一个节点，
+// 杀掉它就**确实**是整域缺席，分类器报 `unreachable` 是对的 —— 断言失败反映的是测试前提
+// 不成立，不是实现有错。2026-09-09 实测：win-1 边界只承载 l1-1，选它当靶子必然失败。
+// 那种场景属于 tests/e2e/domain-failure.test.mjs（场景 F），不是这里。
+//
+// 从后往前挑，保持"尽量不选承载 Primary 的那台"的原意。
+const domainOf = new Map(d.topologyNodes.map((n) => [n.id, n.domain]));
+const domainSize = d.topologyNodes.reduce((m, n) => m.set(n.domain, (m.get(n.domain) ?? 0) + 1), new Map());
+const VICTIM = [...validatorIds].reverse()
+  .find((id) => domainSize.get(domainOf.get(id)) >= 2 && containerExists(id));
 
 const status = (sampleSeconds = 1) => collect({ asJson: true, deployment: undefined, sampleSeconds });
 
@@ -52,9 +72,17 @@ const SKIP_OBSERVE = endpointsReachable ? undefined : [
   '      karmachain/verify:local node --test tests/integration/status-recovery-states.test.mjs',
 ].join('\n');
 
-const SKIP_INJECT = SKIP_OBSERVE ?? (dockerAvailable ? undefined
-  : 'docker 不可用（在容器内运行）。故障分类的全部分支由 tests/unit/status-format.test.mjs 覆盖；'
-    + '本套件只在宿主同时具备 docker 与节点端点时才有意义 —— 即跨机形态。');
+const SKIP_INJECT = SKIP_OBSERVE
+  ?? (!dockerAvailable
+    ? 'docker 不可用（在容器内运行）。故障分类的全部分支由 tests/unit/status-format.test.mjs 覆盖；'
+      + '本套件只在宿主同时具备 docker 与节点端点时才有意义。'
+    // skip 理由是 TAP 的**单行**字段，换行会被转义成 \n 字面量，所以这里用 ` / ` 分隔
+    : !VICTIM
+      ? '本机没有"同边界还有别的节点"的验证者容器可当靶子 —— '
+        + `或本机不承载验证者（拓扑声明：${validatorIds.join('、')}，而故障注入只能操作本机容器），`
+        + ' 或本机那个边界只有一个节点（杀掉它是整域缺席，属 tests/e2e/domain-failure.test.mjs）。'
+        + ' 在承载「验证者 + Primary」的边界上跑本文件即可。'
+      : undefined);
 
 describe('US6 观测管道（T073）', { skip: SKIP_OBSERVE }, () => {
   test('每个声明的节点都有一行，且带所属故障边界', async () => {
