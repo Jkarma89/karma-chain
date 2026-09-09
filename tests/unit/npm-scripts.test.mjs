@@ -1,4 +1,6 @@
-// package.json 里那几条测试入口本身的正确性。
+// **测试套件自身的接线方式**是否正确 —— 不测被测系统，只测"测试是怎么跑起来的"。
+// 目前两块：package.json 的测试入口（并行度、标志名），以及测试代码读取容器日志的方式。
+// 这类缺陷的共同点是**它们不会让任何被测功能变红**，只会让套件变成噪声或在某种顺序下炸掉。
 //
 // ## 起因：e2e 套件必须串行
 //
@@ -28,7 +30,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -101,5 +103,58 @@ describe('package.json 的测试入口', () => {
       if (!key.startsWith('test')) continue;
       assert.match(cmd, /tests\//, `${key} 应当限定在 tests/ 下，实际："${cmd}"`);
     }
+  });
+});
+
+// 测试代码读取容器日志时必须**有界**。
+//
+// `docker logs <c>` 不加 `--tail` 会返回整个日志，而日志随容器运行时间增长。
+// execFileSync 的默认缓冲是 1MB，超了就是 `spawnSync docker ENOBUFS` —— 测试失败，
+// 而失败原因与被测系统毫无关系。
+//
+// 2026-09-09 实测：串行跑整套 e2e 时，`crash-recovery` 排在"50 轮强制终止"之后，
+// 那 50 轮把节点日志撑大，于是它以 ENOBUFS 失败。**并行跑时两者从未相邻过，所以这个
+// 顺序依赖是串行化之后才暴露的。** 事后扫全库又发现三处一模一样的写法，它们那一轮
+// 恰好没炸 —— 因为前面正好有测试重建过容器（新容器日志从零开始）。纯属顺序运气。
+//
+// 除了缓冲，`--tail` 还有个**正确性**理由：读全量意味着断言可能命中**上一次启动**
+// 留下的旧行而假通过。判据通常是"最近一次启动时说了什么"，收到最近一段反而更准。
+//
+// 这是一条**静态**守卫（只检查两个参数在不在）。行为性的版本要先造出一个 >1MB 的容器日志
+// 才能触发 ENOBUFS，代价远大于收益 —— 这里如实标明它的性质，不假装它验证了行为。
+describe('测试代码读取容器日志的方式', () => {
+  const testFiles = [];
+  for (const dir of ['tests/unit', 'tests/integration', 'tests/e2e', 'tests/e2e/lib']) {
+    let entries = [];
+    try { entries = readdirSync(resolve(REPO_ROOT, dir)); } catch { continue; }
+    for (const f of entries) {
+      if (f.endsWith('.mjs')) testFiles.push([`${dir}/${f}`, readFileSync(resolve(REPO_ROOT, dir, f), 'utf8')]);
+    }
+  }
+
+  test('存在测试文件可扫 —— 否则本套件在空转', () => {
+    assert.ok(testFiles.length >= 15, `期望至少 15 个测试文件，实际 ${testFiles.length}`);
+  });
+
+  test("每处 docker logs / compose logs 都同时带 --tail 与 maxBuffer", () => {
+    const offenders = [];
+    for (const [path, src] of testFiles) {
+      src.split('\n').forEach((line, i) => {
+        if (/^\s*(\/\/|\*)/.test(line)) return;                    // 注释行不算
+        if (!/'logs'|"logs"/.test(line)) return;                   // 只看真的在取日志的
+        if (!/execFileSync|spawnSync|sh\(/.test(line)) return;
+        // 参数可能换行，往后看 3 行
+        const stmt = src.split('\n').slice(i, i + 4).join(' ');
+        const missing = [];
+        if (!/--tail/.test(stmt)) missing.push('--tail');
+        if (!/maxBuffer/.test(stmt)) missing.push('maxBuffer');
+        if (missing.length) offenders.push(`${path}:${i + 1} 缺 ${missing.join(' 与 ')}：${line.trim().slice(0, 80)}`);
+      });
+    }
+    assert.deepEqual(offenders, [],
+      `以下位置无界读取容器日志：\n  ${offenders.join('\n  ')}\n`
+      + '  日志随运行时间增长，execFileSync 默认缓冲 1MB —— 超了就是 spawnSync docker ENOBUFS，\n'
+      + '  失败原因与被测系统无关。2026-09-09 实测：crash-recovery 排在"50 轮强制终止"之后即炸。\n'
+      + '  另外 --tail 还能把断言收到"最近一次启动"，避免命中旧行而假通过。');
   });
 });

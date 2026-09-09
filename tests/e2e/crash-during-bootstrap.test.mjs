@@ -96,7 +96,14 @@ describe('V-03 —— 引导中途被强制终止',
     const expected = JSON.parse(
       readFileSync(resolve(REPO_ROOT, `blockchain/nodes/${VICTIM}.identity.json`), 'utf8'),
     ).nodeId;
-    const logs = execFileSync('docker', ['logs', CONTAINER], { encoding: 'utf8' });
+    // `--tail` 与 `maxBuffer` 都是必需的。无界读取整个容器日志有两个问题：
+    //   1. 日志随运行时间增长，迟早以 `spawnSync docker ENOBUFS` 失败。串行跑整套 e2e 时
+    //      本文件可能排在"50 轮强制终止"之后，那 50 轮会把日志撑得很大（crash-recovery
+    //      就是这么炸的）。这三处在 33/33 那次没炸纯属顺序运气 —— 前面正好有测试重建过容器。
+    //   2. **正确性**：断言可能命中**上一次启动**留下的旧行而假通过。判据要的是"最近一次
+    //      启动时说了什么"，`--tail` 把范围收到最近一段，比读全量更准。
+    const logs = execFileSync('docker', ['logs', '--tail', '5000', CONTAINER],
+      { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
     assert.ok(logs.includes(expected),
       `数据卷被删光后重建，NodeID 仍应是 ${expected} —— 身份不存在于数据卷中`);
   });
