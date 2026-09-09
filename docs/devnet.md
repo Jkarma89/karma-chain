@@ -44,7 +44,13 @@ scripts/devnet-verify.sh     # 14 项自动化检查，应输出 "KarmaChain is 
 
 RPC：`http://127.0.0.1:8545/ext/bc/karmachain/rpc` · Chain ID **20189** · 符号 **KARMA** · 18 位
 
-> **Host 头限制**：节点只接受 `Host` 为 `localhost` / IP 字面量的请求（avalanchego `--http-allowed-hosts` 默认值），用其他主机名访问会得到 403。宿主上用 `127.0.0.1` 或 `localhost` 即可。
+> **Host 头限制**：**avalanchego 节点**只接受 `Host` 为 `localhost` / IP 字面量的请求
+> （`--http-allowed-hosts` 默认值），用其他主机名直连节点端口会得到 403。
+>
+> 但**经上面那个 RPC 地址（8545）访问时这条限制不适用** —— 那是本机的 nginx 代理，
+> 它把 Host 统一改写成 `localhost` 再转发（`render-rpc-proxy.mjs` 的设计目的之一）。
+> 实测：带 `Host: some-made-up-name.invalid` 请求 8545 照常返回 chainId，而不是 403。
+> 也就是说客户端用什么主机名都行；只有绕过代理直连 `2166x` 端口时才需要用 IP 或 localhost。
 
 ### 3.1 JS/TS 客户端（viem）—— 已自动化验证 ✅
 
