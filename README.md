@@ -69,6 +69,6 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 | 功能 | 状态 |
 |---|---|
 | 001 本地可复现的 Avalanche L1 开发网络 | ✅ 已完成（[规格](specs/001-local-avalanche-devnet/spec.md) · [计划](specs/001-local-avalanche-devnet/plan.md) · [任务](specs/001-local-avalanche-devnet/tasks.md)） |
-| 002 崩溃可恢复、可跨机部署的验证者网络 | ✅ 单机形态已完成（崩溃自愈、运行时脱离编排工具、拓扑单一事实来源、恢复可观测）；跨机形态的部署待硬件到位，见 [ADR-0007](docs/adr/0007-failure-domain-independence.md)（[规格](specs/002-resilient-validator-network/spec.md) · [计划](specs/002-resilient-validator-network/plan.md) · [任务](specs/002-resilient-validator-network/tasks.md)） |
+| 002 崩溃可恢复、可跨机部署的验证者网络 | ✅ **已完成**（2026-09-09）。崩溃自愈（50 轮强制终止零丢失零重置）、运行时脱离编排工具、拓扑单一事实来源、恢复可观测；**跨机形态已部署在 5 台独立物理机上**并跑满两个 30 分钟观测窗口（单验证者离线、整域失效），验收判据 12/12 全部达成。见 [ADR-0007](docs/adr/0007-failure-domain-independence.md)、[DoD](specs/002-resilient-validator-network/checklists/dod.md)（[规格](specs/002-resilient-validator-network/spec.md) · [计划](specs/002-resilient-validator-network/plan.md) · [任务](specs/002-resilient-validator-network/tasks.md)） |
 
 后续规划（智能合约、索引器、后端、前端、监控）将各自建立独立规格，全部复用本功能提供的 RPC 端点、预置账户与协议参数出处。

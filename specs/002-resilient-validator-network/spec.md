@@ -4,7 +4,7 @@
 
 **Created**: 2026-09-06
 
-**Status**: Draft
+**Status**: 已交付（2026-09-09）—— 101 个任务全部完成，验收判据 12/12 达成，见 [checklists/dod.md](./checklists/dod.md)。本文件在实现期有三处修订（FR-030／SC-007 的步数、FR-020 的边界规模、SC-007 判据边界的澄清），修订理由随条目就地记录。
 
 **Input**: User description: "崩溃可恢复、可跨机部署的 KarmaChain 验证者网络 —— 强制重启 Docker Desktop 后开发网无法启动，节点数据库完好但 Avalanche CLI 的编排账本丢失，唯一出路是丢弃全链状态重置。需要消除对编排工具的运行时依赖（缺陷 A）与零物理冗余（缺陷 B）。"
 
