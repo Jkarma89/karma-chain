@@ -706,6 +706,39 @@ Windows **显式拒绝**从该账户启动 WSL（`Wsl/WSL_E_LOCAL_SYSTEM_NOT_SUP
 
 停摆是安全的（不分叉、区块零回滚），数据也不会丢。
 
+**恢复顺序有硬约束：先把两个 Primary 都拉起来，再拉验证者。**
+
+这不是习惯问题，是结构约束。**任何 L1 验证者启动时都要先引导 P 链，
+而 P 链引导的门槛是"连上的 P 链权益 ≥ 80%"** —— 两个 Primary 各握 50%：
+
+| 在线的 Primary 数 | 连上的 P 链权益 | 验证者能否加入 |
+|---|---|---|
+| 2 | 100% | ✅ |
+| **1** | **50%** | ❌ **不行** |
+| 0 | 0% | ❌ |
+
+也就是说**缺任何一个 Primary，都没有任何验证者能重新加入** ——
+其余 L1 验证者虽然自己也同步 P 链、也确实能被连上，但它们**不是 P 链验证者**，
+权益为 0，顶替不了（2026-09-10 实测，见
+[003 的 research.md V-08](../specs/003-chain-health-dashboard/research.md)）。
+
+顺序做错的代价是**白等**：先拉验证者，它会停在 `bootstrapping` 上不动，
+而且日志里只说"连上的权益不够"，不会告诉你少的是哪一环。
+两个 Primary 齐了之后，卡住的验证者**约半分钟内自愈**，
+不需要再重启它、也不需要点任何按钮。
+
+**这条约束正好解释了上面那张表为什么成立。** 停电后 3 台 Linux 自动回来，
+**带回的两个 Primary 恰好都在 Linux 上**（ubuntu-1、ubuntu-2）——
+所以登录任意一台 Windows 就能把它的验证者拉回来。
+**如果哪天 Primary 挪到了 Windows 边界上，这个结论立刻不成立**：
+那时必须先去登录那台 Windows，登录另一台没有用。
+
+> **另一个后果：链可能"看着健康却无法自愈"。** 两个 Primary 全停而 5 个验证者
+> 都好的时候，链照样出块，面板报 `normal / 100%` —— 按定义是对的（问的是"能不能出块"）。
+> 但那一刻**这张网已经失去自我恢复能力**，任何一个验证者一旦重启就回不来。
+> 面板会把两个 Primary 显示为 `stopped`，**但不会替你想到"现在别重启任何东西"**。
+> 看到 Primary 不在线时，先把它们拉回来，再动别的。
+
 > 与虚拟机形态相比这是一处实质改善：此前 `win-1` 同时是虚拟化宿主，门控着 5 个节点，
 > 停电后**必须**有人登录那一台特定机器；现在两台 Windows 各只门控 1 个验证者，
 > 登录哪一台都行。
@@ -736,7 +769,11 @@ scripts/devnet-node start l1-3     # 应当自动追平
 #   在 ubuntu-1：sudo scripts/devnet-node.sh kill primary-1
 #   在 ubuntu-2：sudo scripts/devnet-node.sh kill primary-2
 #   在任意机器：连发 3 笔交易，高度应继续增长
-#   恢复：各机 devnet-node start <primary>
+#   恢复：**两台都要起，起一个不够** —— 见 9.5「恢复顺序」
+#         在 ubuntu-1：sudo scripts/devnet-node.sh start primary-1
+#         在 ubuntu-2：sudo scripts/devnet-node.sh start primary-2
+#   注意：这段窗口里**不要重启任何 L1 验证者** —— 它会卡在 bootstrapping，
+#         直到两个 Primary 都回来才自愈（约半分钟）
 # tests/e2e/primary-network-loss.test.mjs 在单机形态下会自动跑这一条；
 # 跨机形态下它会带说明跳过，指回这里。
 
