@@ -114,6 +114,22 @@ function Get-NodeNetwork([string]$domain) {
 
 # 工具容器内可用的 RPC 地址：走本边界的 nginx 代理，而不是某个验证者 ——
 # 代理是对外的唯一入口，验证与查询都应当从与第三方相同的位置发起。
+# 工具镜像必须在**本机**存在 —— 它是本地构建的，从不推到任何 registry。
+# 理由与那句误导性报错见 _devnet-common.sh 的同段注释（2026-09-10 在 win-2 上撞到）。
+#
+# 用法：if (-not (Assert-VerifyImage)) { exit 10 }
+function Assert-VerifyImage {
+    if (Invoke-Quiet { docker image inspect karmachain/verify:local }) { return $true }
+    Write-Host '本机没有工具镜像 karmachain/verify:local —— 它是**本地构建**的，不在任何 registry 上。' -ForegroundColor Red
+    Write-Host '  先建一次（每台机器各建一次，之后改代码无需重建 —— 源码是运行时挂载的）：'
+    Write-Host ''
+    Write-Host '    docker compose --profile verify build verify' -ForegroundColor Yellow
+    Write-Host ''
+    Write-Host "  若 docker 报 'pull access denied … may require docker login'，那句话是误导的："
+    Write-Host '  不是权限问题，就是本机还没建过这个镜像。'
+    return $false
+}
+
 function Get-ContainerRpcUrl($ctx) {
     "http://karmachain-rpc-$($ctx.Domain):$($ctx.KARMACHAIN_RPC_PORT)$($ctx.KARMACHAIN_RPC_PATH)"
 }

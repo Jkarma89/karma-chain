@@ -52,6 +52,10 @@ DOMAIN="${KARMACHAIN_DOMAIN:-$KARMACHAIN_DEFAULT_DOMAIN}"
 
 # 网络名由公共件推导，**不能写死** —— 002 在这里踩过两次（devnet-verify 与 devnet-status
 # 各中一次）：`--network karmachain` 只是单机形态渲染出的网络，跨机形态必然失败。
+# 工具镜像是本地构建的：不存在时 docker 会去 pull 并报一句指向错误方向的
+# "pull access denied … may require docker login"。理由见 _devnet-common.sh。
+devnet_require_verify_image || { echo "devnet-dashboard: 前置条件未满足（见上）" >&2; exit 10; }
+
 NETWORK="$(devnet_node_network "$DOMAIN")" || { echo "devnet-dashboard: 前置条件未满足（见上）" >&2; exit 10; }
 
 echo "devnet-dashboard: http://localhost:${PORT}  （轮询 ${INTERVAL}s，边界 ${DOMAIN}）"

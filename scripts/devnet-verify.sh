@@ -21,6 +21,10 @@ mkdir -p ./.devnet
 
 # 网络名与容器内 RPC 地址都由公共件推导 —— 不能硬编码，理由见 _devnet-common.sh。
 # 此前这里写死 `--network karmachain`（单机形态才有的网络），跨机形态下必然失败。
+# 工具镜像是本地构建的：不存在时 docker 会去 pull 并报一句指向错误方向的
+# "pull access denied … may require docker login"。理由见 _devnet-common.sh。
+devnet_require_verify_image || { echo "devnet-verify: 前置条件未满足（见上）" >&2; exit 10; }
+
 NETWORK="$(devnet_node_network "$DOMAIN")" || { echo "devnet-verify: 前置条件未满足（见上）" >&2; exit 10; }
 
 # 不传 -w：镜像自带 WORKDIR=/workspace。

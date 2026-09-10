@@ -570,7 +570,26 @@ scripts/devnet-bootstrap        # 唯一会用到 Avalanche CLI 的地方
 ValidationID 是可复现的，但 **Primary Network 创世嵌入了建链时刻**（`startTime` 与两个
 `locktime`），不可复现。用了不同副本的节点会以 `db contains invalid genesis hash` 拒绝启动。
 
-镜像**每台各自构建**（`docker compose -f docker/compose/lan-<domain>.yml build`）。
+镜像**每台各自构建**，而且是**两个**：
+
+```bash
+# ① 节点镜像 —— 起链必需
+docker compose -f docker/compose/lan-<domain>.yml build
+
+# ② 工具镜像 —— devnet-verify / devnet-status / devnet-contracts / devnet-dashboard 都用它
+docker compose --profile verify build verify
+```
+
+> **② 长期被漏掉，2026-09-10 才发现。** 那四个命令都直接 `docker run
+> karmachain/verify:local`，而这个镜像是**本地构建**的、不在任何 registry 上 ——
+> 于是在"没人跑过这几个命令"的机器上，四个命令会一起报
+> `pull access denied for karmachain/verify … may require 'docker login'`。
+> **那句话指向完全错误的方向**（看起来像权限或登录问题，实际只是本机没建过）。
+> 现在四对脚本都有前置检查，会直接告诉你上面这条命令；但部署时就建好更省事。
+>
+> 工具镜像只承载运行时与依赖，源码是运行时只读挂载的 —— 所以**改代码无需重建**，
+> 只有 `package-lock.json` 变了才需要。
+
 建议单独构建一次而不是让 `devnet-start` 顺带构建 —— 后者把 `docker compose up` 的输出
 吞进变量、只在失败时打印，几分钟的构建看起来像卡死。
 若某台机器的构建容器解析不了域名（见 9.2 ⑨），从**同架构**的另一台机器搬：

@@ -32,6 +32,9 @@ $ctx = Get-DevnetContext; Assert-Docker
 
 # 网络名由公共件推导，**不能写死** —— 002 在这里踩过两次（devnet-verify 与 devnet-status
 # 各中一次）：`--network karmachain` 只是单机形态渲染出的网络，跨机形态必然失败。
+# 工具镜像是本地构建的：不存在时 docker 报的那句 pull access denied 指向错误方向。
+if (-not (Assert-VerifyImage)) { Write-Host 'devnet-dashboard: 前置条件未满足（见上）'; exit 10 }
+
 $network = Get-NodeNetwork $ctx.Domain
 if (-not $network) { Write-Host 'devnet-dashboard: 前置条件未满足（见上）'; exit 10 }
 

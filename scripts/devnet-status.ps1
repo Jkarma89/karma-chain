@@ -44,6 +44,9 @@ $payload = @{
 # 与 devnet-verify 同一模式：接到节点所在的容器网络上。网络名由公共件推导，
 # **不能写死** —— 此前这里是 `--network karmachain`，那是单机形态才渲染出的网络，
 # 跨机形态下必然失败（与 devnet-verify 同一缺陷，2026-09-09 才发现漏改了本文件）。
+# 工具镜像是本地构建的：不存在时 docker 报的那句 pull access denied 指向错误方向。
+if (-not (Assert-VerifyImage)) { Write-Host 'devnet-status: 前置条件未满足（见上）'; exit 10 }
+
 $network = Get-NodeNetwork $ctx.Domain
 if (-not $network) { Write-Host 'devnet-status: 前置条件未满足（见上）'; exit 10 }
 

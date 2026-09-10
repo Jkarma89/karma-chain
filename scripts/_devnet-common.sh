@@ -44,6 +44,33 @@ devnet_node_network() {
   printf '%s\n' "$_dnn_net"
 }
 
+# 工具镜像必须在**本机**存在 —— 它是本地构建的，从不推到任何 registry。
+#
+# 为什么需要这个检查：`karmachain/verify:local` 不存在时 docker 会去尝试 pull，
+# 然后报 `pull access denied for karmachain/verify, repository does not exist or
+# may require 'docker login'` —— **那句话指向完全错误的方向**（看起来像权限/登录
+# 问题，实际只是本机没建过）。2026-09-10 在 win-2 上撞到。
+#
+# 这是 002 遗留的缺口，不只影响面板：devnet-verify / devnet-status / devnet-contracts
+# 也都直接 `docker run` 它，而**没有任何脚本或部署步骤构建它**——
+# 跨机部署文档只写了构建**节点**镜像（docker/compose/<deployment>-<domain>.yml）。
+# 于是在任何"没人跑过这几个命令"的机器上，四个命令会一起给出同一句误导性报错。
+#
+# 用法：devnet_require_verify_image || exit 10
+devnet_require_verify_image() {
+    if docker image inspect karmachain/verify:local >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "本机没有工具镜像 karmachain/verify:local —— 它是**本地构建**的，不在任何 registry 上。" >&2
+    echo "  先建一次（每台机器各建一次，之后改代码无需重建 —— 源码是运行时挂载的）：" >&2
+    echo "" >&2
+    echo "    docker compose --profile verify build verify" >&2
+    echo "" >&2
+    echo "  若 docker 报 'pull access denied … may require docker login'，那句话是误导的：" >&2
+    echo "  不是权限问题，就是本机还没建过这个镜像。" >&2
+    return 1
+}
+
 # 工具容器内可用的 RPC 地址：走本边界的 nginx 代理，而不是某个验证者 ——
 # 代理是对外的唯一入口，验证与查询都应当从与第三方相同的位置发起。
 # 需要 active.env 已 source（用到 KARMACHAIN_RPC_PORT / KARMACHAIN_RPC_PATH）。

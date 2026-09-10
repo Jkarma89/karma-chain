@@ -14,6 +14,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $ctx.Root '.devnet') | Out-
 
 # 网络名与容器内 RPC 地址都由公共件推导 —— 不能硬编码，也不能走 docker compose run，
 # 理由见 _devnet-common.ps1 的 Get-NodeNetwork。
+# 工具镜像是本地构建的：不存在时 docker 报的那句 pull access denied 指向错误方向。
+if (-not (Assert-VerifyImage)) { Write-Host 'devnet-verify: 前置条件未满足（见上）'; exit 10 }
+
 $network = Get-NodeNetwork $ctx.Domain
 if (-not $network) { Write-Host 'devnet-verify: 前置条件未满足（见上）'; exit 10 }
 
