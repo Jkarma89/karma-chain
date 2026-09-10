@@ -267,3 +267,41 @@ L1–L4、L6、L8 **必须是纯函数**：它们的分支太多，且其中两�
 - **V-07（SC-007 现场，2026-09-10）** ✅ **两个 Primary 全停，五个视角一致报 `normal / 100%`**：ubuntu-1 停 primary-1、ubuntu-2 停 primary-2 → 两个 Primary 在面板上单列为 `stopped`、分类 `node-infra`，**不牵连链的档位**（余量仍 1 与 1，参与 5 / 门槛 4，`observer.blind=false`，可达 5/7）。同时刻**五个 L1 自报的综合健康位 `/ext/health` 全部 503** —— FR-013 那个陷阱如实复现；而直连 l1-1 的真实交易**确认于区块 835、4108 ms**。若当初把那个综合位当 L1 活性判据，此刻面板会把一条正在出块的链报成"全部节点不健康"。
 
   **同时找出一个 002 的真实可用性缺陷**：RPC 入口间歇性 502，而五个 L1 各自 200。成因是代理容器的 Docker healthcheck **经由自己**去打 `/ext/health`（综合位，此刻 503），nginx 的 `proxy_next_upstream … http_503` 把它计为上游失败，`max_fails=1 fail_timeout=60s` 一次就关 60 秒，而 `proxy_next_upstream_tries 5` 让一次 healthcheck **毒遍五个上游**，10 秒的 healthcheck 间隔又短于 60 秒惩罚期 —— 于是永不出狱，真实流量一起吃 502。**这是 FR-013 同一个陷阱下沉了一层**：002 的节点 healthcheck 刻意避开了综合位并写明了理由，代理的 healthcheck 却正好用了它。详见 `checklists/dod.md` 第六节；**本期未修**（002 运行时零改动）。
+- **V-08（两个 Primary 的真实作用，2026-09-10 实测）** ⚠️ **发现一个恢复能力上的单点**：
+  两个 Primary 全停、链仍报 `normal / 100%` 的状态下，`restart` 一个 L1 验证者（win-1 的 l1-1）——
+  **它再也回不来了**。5 分钟内 P 链 `isBootstrapped` 恒为 `false`，L1 那条链在该节点上
+  **根本没被创建**（`there is no chain with alias/ID 2W9boARg…`）。avalanchego 自报的原因是决定性的：
+
+  ```
+  P: disconnectedValidators: [NodeID-7Xhw2mDx…, NodeID-MFrZFVCX…]   ← 正是两个 Primary
+     percentConnected: 0
+     error: "not connected to enough stake: connected to 0.000000%; required at least 80.000000%"
+  bootstrapped: error: "subnets not bootstrapped"
+  network: connectedPeers: 4          ← 另外四个 L1 都连上了
+  ```
+
+  **关键点：引导的门槛是"连上的 P 链权益"，不是"数据拿不拿得到"。** 另外四个 L1 虽然带
+  `partial-sync-primary-network=true`（它们自己也同步 P 链）、也确实被连上了（`connectedPeers: 4`），
+  但它们**不是 P 链验证者**，权益为 0 —— 所以顶替不了。两个 Primary 之间握着 P 链的全部权益。
+
+  由此，两个 Primary 的真实作用有三条，前两条此前没有在任何制品里写明：
+
+  | # | 作用 | 证据 |
+  |---|---|---|
+  | 1 | **它们就是主网络本身** —— P 链是"这个 Subnet 存在、这条链存在、它的验证者是这 5 个"的注册表 | `primary-*.flags.json` 带 `genesis-file=/config/primary-network.genesis.json` 且 `bootstrap-ips=""`（自己是创世种子）；L1 侧 `sybil-protection-enabled=true` + `track-subnets=<subnetId>`，验证者集合读自 P 链 |
+  | 2 | **它们是唯一的引导种子，且是唯一的 P 链权益持有者** | 五个 L1 的 `bootstrap-ips` 全指向 `192.168.1.21:21651,192.168.1.22:21653`；本次实测证明其余 L1 顶替不了 |
+  | 3 | **验证者集合的变更只能在 P 链上做** —— 增删验证者、改权重、轮换密钥 | 架构事实（未实测） |
+
+  **而出块不受影响的原因也清楚了**：P 链不在出块路径上。L1 验证者一旦引导完成，验证者集合已在
+  内存里，之后共识只在 5 个 L1 之间跑。**注册表停了，但按注册表已经组好的班子照样开会**——
+  这正是 SC-007 测到的（区块 835、4108 ms）。
+
+  **面板在这次实验里表现完全正确**：l1-1 重启后 **9 / 11 / 15 秒**内三个视角先后转为
+  `zero-margin / 80% / 参与 4 门槛 4`，l1-1 标为 `bootstrapping`。**`bootstrapping` 没有被计入
+  参与共识** —— 这正是 `data-model.md` §0 那条 `participatesInConsensus` 与 002 的 `NOT_OFFLINE`
+  分道扬镳的理由；若当初图省事复用 `NOT_OFFLINE`，此刻会得到一个 **100% 的假绿灯**。
+
+  **但有一件事面板没说。** 两个 Primary 停着、五个 L1 都好的那一刻，面板报 `normal / 100%`
+  是对的（问的是"链能不能出块"），可它没告诉人：**此时这张网已经失去自我恢复能力，
+  任何一个验证者一旦重启就回不来**。事实（`primary-1/2 = stopped`，分类 `node-infra`）是可见的，
+  后果不是。这是一条**已识别、本期未实现**的呈现缺口 —— 需要新 FR，不在 003 的 37 条里。
