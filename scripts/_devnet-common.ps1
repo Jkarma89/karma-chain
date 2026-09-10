@@ -96,6 +96,17 @@ function Get-NodeNetwork([string]$domain) {
     if (-not $net) {
         Write-Host "找不到运行中的 $container —— 先运行 scripts\devnet-start.ps1" -ForegroundColor Red
         Write-Host '  工具容器要接到节点所在的容器网络上（与第三方相同的位置），因此需要网络已启动。'
+        # 在**非默认**机器上最常见的成因其实不是"没启动"，而是没设 KARMACHAIN_DOMAIN ——
+        # 于是 $domain 回落到默认边界，脚本去找一个本机根本不存在的容器。
+        # 原先的提示会把人引向"再跑一次 devnet-start"，而那解决不了问题。
+        # 2026-09-10 在 win-2 上撞到（默认边界是 win-1）。
+        if ($domain -eq $env:KARMACHAIN_DOMAIN) {
+            Write-Host "  当前边界取自 KARMACHAIN_DOMAIN=$domain。若这台机器承载的不是它，请改成本机的边界 id。"
+        } else {
+            Write-Host "  当前边界 '$domain' 来自默认值（KARMACHAIN_DOMAIN 未设）。" -ForegroundColor Yellow
+            Write-Host "  **若本机不是 '$domain'**，需要先指定本机的故障边界，例如：" -ForegroundColor Yellow
+            Write-Host "    `$env:KARMACHAIN_DOMAIN='<本机边界 id>'" -ForegroundColor Yellow
+        }
         return $null
     }
     return $net

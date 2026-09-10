@@ -28,6 +28,17 @@ devnet_node_network() {
   if [ -z "$_dnn_net" ]; then
     echo "找不到运行中的 $_dnn_container —— 先运行 scripts/devnet-start" >&2
     echo "  工具容器要接到节点所在的容器网络上（与第三方相同的位置），因此需要网络已启动。" >&2
+    # 在**非默认**机器上最常见的成因其实不是"没启动"，而是没设 KARMACHAIN_DOMAIN ——
+    # 于是边界回落到默认值，脚本去找一个本机根本不存在的容器。
+    # 原先的提示会把人引向"再跑一次 devnet-start"，而那解决不了问题。
+    # 2026-09-10 在 win-2 上撞到（默认边界是 win-1）。
+    if [ -n "${KARMACHAIN_DOMAIN:-}" ]; then
+      echo "  当前边界取自 KARMACHAIN_DOMAIN=$1。若这台机器承载的不是它，请改成本机的边界 id。" >&2
+    else
+      echo "  当前边界 '$1' 来自默认值（KARMACHAIN_DOMAIN 未设）。" >&2
+      echo "  **若本机不是 '$1'**，需要先指定本机的故障边界，例如：" >&2
+      echo "    KARMACHAIN_DOMAIN=<本机边界 id> scripts/devnet-dashboard.sh" >&2
+    fi
     return 1
   fi
   printf '%s\n' "$_dnn_net"

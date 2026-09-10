@@ -16,6 +16,7 @@
     "test:e2e": "node --test --test-concurrency=1 \"tests/e2e/**/*.test.mjs\"",
     "test:secrets": "node --test tests/e2e/secret-scan.test.mjs",
     "contracts": "node tools/inspect/list-contracts.mjs",
+    "dashboard": "node tools/dashboard/server.mjs",
     "topology:validate": "node tools/protocol/validate-topology.mjs",
     "node:render": "node tools/protocol/render-node-flags.mjs && node tools/protocol/render-aliases.mjs && node tools/protocol/render-chain-config.mjs && node tools/protocol/render-rpc-proxy.mjs && node tools/protocol/render-compose.mjs",
     "render": "node tools/protocol/render-all.mjs",

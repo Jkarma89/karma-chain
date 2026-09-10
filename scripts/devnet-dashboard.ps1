@@ -11,9 +11,10 @@
 . (Join-Path $PSScriptRoot '_devnet-common.ps1')
 
 # 21680 的依据见 devnet-dashboard.sh：在 Windows 动态端口范围（实测 1024-15000）与
-# 排除区间之外，且与节点占用的 21650-21669 不重叠。
+# 排除区间之外，且与 protocol.json 里的节点端口区段不重叠。
 $port     = if ($env:KARMACHAIN_DASHBOARD_PORT)     { $env:KARMACHAIN_DASHBOARD_PORT }     else { '21680' }
-$interval = if ($env:KARMACHAIN_DASHBOARD_INTERVAL) { $env:KARMACHAIN_DASHBOARD_INTERVAL } else { '2' }
+# 默认 5 秒（2026-09-10 从 2 改为 5）。上限仍是 6 —— 理由见 .sh 的同段注释。
+$interval = if ($env:KARMACHAIN_DASHBOARD_INTERVAL) { $env:KARMACHAIN_DASHBOARD_INTERVAL } else { '5' }
 $deploy   = ''
 
 for ($i = 0; $i -lt $args.Count; $i++) {
@@ -41,10 +42,30 @@ Write-Host 'devnet-dashboard: Ctrl-C 停止'
 $serverArgs = @('--port', $port, '--interval', $interval)
 if ($deploy) { $serverArgs += @('--deployment', $deploy) }
 
+# 参数**整体构造成一个数组再一次性 splat**，不在命令行里内联条件 splat。
+#
+# 原先写的是 `docker run --rm @tty ... `（$tty 为空数组时展开成"什么都没有"），
+# 实测在原生命令调用里它反而塞进了一个**空参数**，docker 把那个空串当成镜像名，
+# 于是报 `docker: invalid reference format`。2026-09-10 冒烟测试抓到 ——
+# 这个错在 .sh 那边不存在（sh 的 $TTY 为空时不产生参数），所以两版必须分别验。
+#
+# `-t` 只在 stdin 确实是终端时才加：非交互调用下 docker 会报
+# `cannot attach stdin to a TTY-enabled container because stdin is not a terminal`。
+# 不加 -t 时 docker CLI 的 sig-proxy 仍会把 Ctrl-C 转成 SIGTERM 送进容器。
+$dockerArgs = @('run', '--rm')
+if (-not [Console]::IsInputRedirected) { $dockerArgs += '-t' }
 # -p 让宿主浏览器能连上；--network 让容器能探到节点（单机形态是容器网段，跨机是局域网 IP）
-docker run --rm -it `
-  --network $network `
-  -p "${port}:${port}" `
-  -v "$($ctx.Root):/workspace" `
-  karmachain/verify:local node tools/dashboard/server.mjs @serverArgs
+# 人工探活要走**对外的 RPC 入口**（本边界的 nginx 代理），而容器内的 127.0.0.1
+# 是容器自己 —— 那儿没有代理。必须把容器内可用的地址传进去，
+# 与既有 devnet-verify.ps1 / devnet-contracts.ps1 同一姿势。理由见 .sh 的同段注释。
+$dockerArgs += @(
+    '--network', $network,
+    '-p', "${port}:${port}",
+    '-e', "KARMACHAIN_RPC_URL=$(Get-ContainerRpcUrl $ctx)",
+    '-v', "$($ctx.Root):/workspace",
+    'karmachain/verify:local',
+    'node', 'tools/dashboard/server.mjs'
+) + $serverArgs
+
+docker @dockerArgs
 exit $LASTEXITCODE

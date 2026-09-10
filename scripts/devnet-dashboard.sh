@@ -20,9 +20,11 @@ cd "$(dirname "$0")/.."
 
 # 21680 的依据（002 研究 R-08 的教训：Hyper-V 会从动态端口范围切走整段端口，
 # 节点端口因此从 96xx 迁到 216xx）：win-1 动态范围实测 1024-15000，21680 在其外；
-# 15000-29999 区间内的排除项只有 28385/28390；且与节点占用的 21650-21669 不重叠。
+# 15000-29999 区间内的排除项只有两个孤立端口；且与 protocol.json 里的节点端口区段不重叠。
 PORT="${KARMACHAIN_DASHBOARD_PORT:-21680}"
-INTERVAL="${KARMACHAIN_DASHBOARD_INTERVAL:-2}"
+# 默认 5 秒（2026-09-10 按使用反馈从 2 改为 5）。上限仍是 6 秒 ——
+# 发现时延 ≈ 间隔 + 一轮探测最坏耗时(4s) 必须 ≤ 10 秒（FR-018）。
+INTERVAL="${KARMACHAIN_DASHBOARD_INTERVAL:-5}"
 DEPLOY=''
 
 while [ $# -gt 0 ]; do
@@ -59,10 +61,29 @@ echo "devnet-dashboard: Ctrl-C 停止"
 set -- --port "$PORT" --interval "$INTERVAL"
 [ -z "$DEPLOY" ] || set -- "$@" --deployment "$DEPLOY"
 
+# `-t` 只在 stdin 确实是终端时才加。**不能无条件写 `-it`**：非交互调用（后台启动、
+# CI、`sh script > log 2>&1 &`）下 docker 会直接失败并报
+# `cannot attach stdin to a TTY-enabled container because stdin is not a terminal`
+# —— 人手工敲命令时看不出这个问题，2026-09-10 的冒烟测试才抓到。
+# 不加 `-t` 时 docker CLI 的 sig-proxy 仍会把 Ctrl-C 转成 SIGTERM 送进容器，
+# 服务的 shutdown 钩子照常生效。
+TTY=''
+[ -t 0 ] && TTY='-t'
+
 # -p 让宿主浏览器能连上；--network 让容器能探到节点（单机形态是容器网段，跨机是局域网 IP）。
 # MSYS_NO_PATHCONV=1 见 _devnet-common.sh 的说明。
-exec env MSYS_NO_PATHCONV=1 docker run --rm -it \
+# shellcheck disable=SC2086  # $TTY 为空时必须不产生空参数
+# 人工探活要走**对外的 RPC 入口**（本边界的 nginx 代理），而容器内的 127.0.0.1
+# 是容器自己 —— 那儿没有代理。因此必须把容器内可用的地址传进去，
+# 与既有 devnet-verify / devnet-contracts 同一姿势（那两个脚本早就在传了）。
+#
+# 2026-09-10 实测漏了这一步的后果：面板起得来、快照正常（探测走的是各节点的
+# 局域网地址，不经代理），**唯独点"立即探活"报 `HTTP request failed`** ——
+# 而集成测试在宿主上跑，那里回环地址加对外 RPC 端口恰好就是代理容器发布出来的入口，
+# 于是测试全绿、真实部署失败。（端口号不写在注释里 —— 它的唯一出处是 protocol.json。）
+exec env MSYS_NO_PATHCONV=1 docker run --rm $TTY \
   --network "$NETWORK" \
   -p "${PORT}:${PORT}" \
+  -e KARMACHAIN_RPC_URL="$(devnet_container_rpc_url "$DOMAIN")" \
   -v "$(pwd):/workspace" \
   karmachain/verify:local node tools/dashboard/server.mjs "$@"
