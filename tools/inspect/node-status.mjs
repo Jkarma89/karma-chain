@@ -218,7 +218,14 @@ export async function probeNode(node, blockchainId) {
   const base = `http://${node.address}:${node.httpPort}`;
   try {
     const nodeId = (await post(`${base}/ext/info`, 'info.getNodeID')).nodeID;
-    const probe = { reachable: true, nodeId, bootstrapped: null, height: null, peers: null, peerNodeIds: [] };
+    const probe = {
+      reachable: true, nodeId, bootstrapped: null, height: null, peers: null, peerNodeIds: [],
+      // 功能 003 / 研究 R-07 追加：该节点**自报的**创世区块哈希，供跨机分叉检测使用。
+      // 与其余事实取自**同一次**探测 —— 分两轮取会让"节点状态"与"它的创世哈希"
+      // 来自两个时刻的两次连接，链路抖动时可能一成一败，产生自相矛盾的展示。
+      // classify() 不读这个字段，因此 devnet-status 的判定不受影响（tests/unit/node-status-genesis）。
+      genesisHash: null,
+    };
     try {
       const peers = await post(`${base}/ext/info`, 'info.peers');
       probe.peers = Number(peers.numPeers);
@@ -233,6 +240,10 @@ export async function probeNode(node, blockchainId) {
           const hex = await post(`${base}/ext/bc/${blockchainId}/rpc`, 'eth_blockNumber', []);
           probe.height = Number(hex);
         } catch { /* 已引导但还没开始服务 */ }
+        try {
+          const genesis = await post(`${base}/ext/bc/${blockchainId}/rpc`, 'eth_getBlockByNumber', ['0x0', false]);
+          probe.genesisHash = genesis?.hash ?? null;
+        } catch { /* 取不到就留 null —— null（未知）与"不匹配"是两件事，不得混淆 */ }
       }
     }
     return probe;
@@ -255,9 +266,19 @@ const CONTAINER_FACTS_TTL_MS = 120_000;
  *
  * **过期的事实比没有事实更坏**：它看起来像证据，而且恰好把判定推向错误的分支。
  */
-function readContainers() {
+// 功能 003 / 研究 R-07 改动二：由模块私有改为 `export`，并加一个只为测试留的可选入参
+// （`rawText`，默认仍读 CONTAINERS_PATH）。**下面的 TTL 与旧格式判定一行未改。**
+//
+// 为什么要导出：面板必须能读容器事实，否则在跨机形态下停掉本机唯一的验证者时，
+// classify() 会落进 `domainAllUnreachable` 分支报「整域缺席，去看那台机器」——
+// 而人正站在那台机器上、刚亲手停的。走到正确分支的前提就是有容器事实。
+//
+// 为什么要接缝：这段判定恰好是 2026-09-09 咬过我们的逻辑，而它原先无法离线测试
+// （要么去写真实的 .devnet/containers.json 从而踩踏运行中的开发网，要么不测）。
+// 仓库对此已有先例 —— _devnet-common.ps1 的 KARMACHAIN_ENV_FILE 注明"只为测试留的接缝"。
+export function readContainers(rawText) {
   try {
-    const raw = JSON.parse(readFileSync(CONTAINERS_PATH, 'utf8'));
+    const raw = JSON.parse(rawText ?? readFileSync(CONTAINERS_PATH, 'utf8'));
     const at = Number(raw?.collectedAt);
     if (!Number.isFinite(at)) return {};                                  // 旧格式：不可信
     if (Date.now() - at * 1000 > CONTAINER_FACTS_TTL_MS) return {};       // 过期：不可信
