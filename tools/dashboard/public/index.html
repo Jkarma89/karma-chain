@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KarmaChain 链状态</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+
+<header class="top">
+  <h1>KarmaChain 链状态</h1>
+  <div class="freshness" id="freshness" aria-live="polite">采集中…</div>
+</header>
+
+<!--
+  各视图的挂载点。app.mjs 按固定清单动态 import view-*.mjs 并填进这里；
+  缺哪个模块就跳过哪个 —— 于是后续用户故事只需新增自己那个文件，不必回来改 app.mjs。
+-->
+<main id="views"></main>
+
+<!--
+  常驻说明（T032 / FR-015）。**不是可折叠的提示** —— 每个第一次看面板的人都会问
+  "高度为什么不动"，而"高度停滞"恰恰是最容易被误当成故障的信号。
+  文案取自 copy.mjs 的 ON_DEMAND_BLOCKS_NOTE，由 app.mjs 填入。
+-->
+<footer class="notes">
+  <p class="note" id="on-demand-note"></p>
+  <p class="note small">
+    面板是链的<strong>只读旁观者</strong>：自动刷新路径永不向链写入。
+    唯一的写入是你手动触发的「立即探活」，它会消耗开发账户余额并产生一个区块。
+  </p>
+</footer>
+
+<script type="module" src="./app.mjs"></script>
+</body>
+</html>
