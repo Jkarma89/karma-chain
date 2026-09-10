@@ -53,23 +53,63 @@ function rpcUrlOf(protocol) {
 }
 
 /**
+ * 沿 error.cause 链取 HTTP 状态码。
+ *
+ * viem 的高层动作（sendTransaction 等）把传输层错误包一层再抛，包装后的错误
+ * `shortMessage` 一模一样但 `status` 丢了。有没有状态码是本文件区分
+ * "路径不通"与"上游全挂"的唯一依据，所以必须往里找。
+ */
+function httpStatusOf(err) {
+  for (let e = err, i = 0; e != null && i < 8; e = e.cause, i += 1) {
+    if (Number.isInteger(e.status)) return e.status;
+  }
+  return null;
+}
+
+/**
  * 给连接类失败补上"试的是哪个地址"与最可能的成因。
  *
  * **为什么值得专门写这一段**：viem 的 `HTTP request failed` 对排障零信息量。
  * 2026-09-10 的实际情形是：面板在容器里跑，`KARMACHAIN_RPC_URL` 没传进来，
  * 于是回落到 `127.0.0.1` —— 而容器内的 127.0.0.1 是容器自己，那儿没有代理。
  * 报错看起来像"链坏了"，实际是地址不对。一句"试的是 X"就能省掉整轮猜测。
+ *
+ * ## 有没有 HTTP 应答，是两类完全不同的故障
+ *
+ * viem 对这两者都抛 `HTTP request failed`，但它们指向相反的处置方向：
+ *
+ * - **没有应答**（连接被拒 / DNS 不通 / 超时）→ 是**我到代理这条路**的问题。
+ *   链本身可能好得很，此时说「这不表示链停了」是对的。
+ * - **有应答但是错误码**（502 / 503 / 504）→ 代理**活着**，是它背后没有健康上游。
+ *   此时说「这不表示链停了」就是**指错方向**。
+ *
+ * 2026-09-10 停两个验证者做 SC-003 时撞到了后者：nginx 在 1.6 ms 内返回 502
+ * （`max_fails=1 fail_timeout=60s` 把全部上游关进了惩罚期），而这段文案却说
+ * 「不表示链停了」「检查代理容器是否在运行」—— 链确实停了，代理也确实在运行。
+ * **一句朝错误方向的提示比没有提示更坏**，所以现在按有无状态码分开说。
  */
-function explain(raw, url) {
+function explain(raw, url, httpStatus = null) {
+  // 有状态码 ⇒ 代理给了应答，路径是通的。先判这一支，别落进「连不上」的说法里。
+  if (httpStatus != null) {
+    const upstreamish = httpStatus === 502 || httpStatus === 503 || httpStatus === 504;
+    return `${raw}（HTTP ${httpStatus}，RPC 入口 ${url}）`
+      + (upstreamish
+        ? ' —— RPC 代理**在运行**并给了应答，是它背后**没有健康的上游节点**。'
+          + '若上面的档位是「链已停止出块」，这一条正是同一个事实的另一面，不是另一个故障；'
+          + '若档位为正常，则更可能是代理的上游惩罚期（max_fails / fail_timeout）尚未过去，稍后重试。'
+        : ' —— 代理有应答，是这一次请求本身被拒。看 devnet-logs 里代理与节点两侧的日志。');
+  }
+
   const connectish = /HTTP request failed|fetch failed|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|timed out|socket hang up/i.test(raw);
   if (!connectish) return `${raw}（RPC 入口 ${url}）`;
   const looksLoopback = /^https?:\/\/(127\.0\.0\.1|localhost)\b/.test(url);
-  return `${raw} —— 连不上 RPC 入口 ${url}。`
+  return `${raw} —— 连不上 RPC 入口 ${url}（**完全没有 HTTP 应答**）。`
     + (looksLoopback
       ? '面板若跑在容器里，容器内的 127.0.0.1 是容器自己（那儿没有 RPC 代理）；'
         + '入口脚本应当传入 KARMACHAIN_RPC_URL 指向本边界的代理容器。'
       : '检查该边界的 RPC 代理容器是否在运行（scripts/devnet-start），以及本容器是否接在节点网络上。')
-    + ' 注意这**不表示链停了** —— 链的可用性看上面的档位。';
+    + ' 这一支是**我到代理这条路**的问题，本身**不表示链停了** —— 链的可用性看上面的档位。'
+    + '（代理若活着而上游全挂，会回 502，那是另一条提示。）';
 }
 
 /** 出资方与收款方都取自声明，不写死地址（宪法第十六条）。 */
@@ -160,6 +200,11 @@ export async function probeChain({ protocol } = {}) {
     } catch (err) {
       // 错误文本要有信息量，但**不得**带出任何密钥材料 —— viem 的错误里可能含请求体。
       const raw = String(err?.shortMessage ?? err?.message ?? err);
+      // 状态码要沿 cause 链找：`sendTransaction` 抛的是 TransactionExecutionError，
+      // 它的 shortMessage 也是"HTTP request failed."但 `status` 是 undefined —— 真正带
+      // 502 的是它 cause 里的 HttpRequestError。只看顶层会永远拿不到状态码，
+      // 于是 502 会被误判成"完全没有 HTTP 应答"，正是要避免的那个指错方向。
+      const httpStatus = httpStatusOf(err);
       return {
         confirmed: false,
         blockNumber: null,
@@ -168,7 +213,7 @@ export async function probeChain({ protocol } = {}) {
         // 把**试的是哪个地址**一并带出来。原先只回 viem 的 `HTTP request failed`，
         // 而那句话对"为什么连不上"零信息量 —— 2026-09-10 就是它让人无从下手：
         // 容器内回落到 127.0.0.1 时，报错看起来像链坏了，实际是地址不对。
-        error: redact(explain(raw, rpcUrlOf(protocol))),
+        error: redact(explain(raw, rpcUrlOf(protocol), httpStatus)),
       };
     }
   })();

@@ -168,6 +168,41 @@ describe('explain 的行为（不是只看源码里有没有那串字）', () =>
       else process.env.KARMACHAIN_RPC_URL = saved;
     }
   });
+
+  // ## 502 与「连不上」是两回事
+  //
+  // 2026-09-10 做 SC-003（两台机器各停一个验证者，链真的停止出块）时，
+  // 点「立即探活」拿到的是 viem 的 `HTTP request failed`，而当时的文案说
+  // 「注意这**不表示链停了**」并让人「检查该边界的 RPC 代理容器是否在运行」。
+  // 两句都指错了方向：链确实停了，代理也确实在运行 —— nginx 在 1.6 ms 内
+  // 返回 502，因为 `max_fails=1 fail_timeout=60s` 把全部上游关进了惩罚期。
+  //
+  // 判据只能是「有没有拿到 HTTP 状态码」，不能靠错误文本 —— viem 对两种情形
+  // 抛的是同一句话。所以这条用例起一个只回 502 的服务器，验行为而非验措辞。
+  test('代理回 502（上游全挂）时，不再说「不表示链停了」', async () => {
+    const { createServer } = await import('node:http');
+    const server = createServer((_req, res) => { res.writeHead(502); res.end('bad gateway'); });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+
+    const mod = await import('../../tools/dashboard/probe-tx.mjs');
+    const saved = process.env.KARMACHAIN_RPC_URL;
+    process.env.KARMACHAIN_RPC_URL = `http://127.0.0.1:${port}/ext/bc/karmachain/rpc`;
+    try {
+      const r = await mod.probeChain();
+      assert.equal(r.confirmed, false);
+      assert.match(r.error, /HTTP 502/, '状态码要出现在报错里 —— 它是区分两类故障的唯一依据');
+      assert.match(r.error, /没有健康的上游节点/, '要把方向指向上游节点，而不是代理进程');
+      assert.doesNotMatch(r.error, /不表示链停了/,
+        '有 502 时说「不表示链停了」是指错方向：链可能确实停了');
+      assert.doesNotMatch(r.error, /代理容器是否在运行/,
+        '代理给了应答，就不该再让人去查代理是否在运行');
+    } finally {
+      if (saved === undefined) delete process.env.KARMACHAIN_RPC_URL;
+      else process.env.KARMACHAIN_RPC_URL = saved;
+      await new Promise((r) => server.close(r));
+    }
+  });
 });
 
 describe('挂载集合：按子目录，且四对脚本一致', () => {

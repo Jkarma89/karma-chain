@@ -247,7 +247,7 @@ description: "任务清单 —— 链状态与验证者网络实时监控面板"
 - [X] T070 [P] `docs/devnet.md` 新增一节：面板起法、三档判据表、10 个故障场景的读法，并交叉引用既有第 3.5 节的观测盲区
 - [~] T071 逐条执行 `quickstart.md` 场景 A–J，把结果回填；其中场景 G（空闲 10 分钟）与 H（只读 30 分钟）是手工判据，自动化测试只覆盖较短窗口
 - [X] T072 **V-01** 五台机器逐台执行 `scripts/devnet-dashboard.sh` / `.ps1` 并确认 `-p 21680` 可从宿主浏览器访问 —— Windows 的 Docker Desktop 与 Linux 的 docker 端口发布路径不同，须逐台实测而非推断
-- [~] T073 **V-02 / V-03 / V-04 / V-06** 实测并回填 `research.md`：观察者失明确实触发 P1（未被中间分支吃掉）、`docker kill` 到显示改变的实测时延、60% 档时交易确实无法确认、公开投影的行为探针确实会在故意泄漏时变红
+- [X] T073 **V-02 / V-03 / V-04 / V-06**（V-04 于 2026-09-10 由两台机器故障注入完成） 实测并回填 `research.md`：观察者失明确实触发 P1（未被中间分支吃掉）、`docker kill` 到显示改变的实测时延、60% 档时交易确实无法确认、公开投影的行为探针确实会在故意泄漏时变红
 - [X] T074 **V-05** 确认 `devnet-status` 无回归：对照基线（本会话实测 4.18 s、7 行、`--json` 结构），核对 T014/T015 改动后的输出与耗时
 - [X] T075 002 回归全套（SC-015）：`npm test`、`npm run test:integration`、`npm run test:e2e`、`npm run test:secrets`、`npm run render:check`（应无变化 —— 003 不新增生成物）、`sh scripts/devnet-verify.sh`（14 项）
 - [ ] T076 **SC-014** `tools/dashboard/public/` 的可用性核对：找一名此前未见过本面板的人，在打开后 1 分钟内正确回答"链现在能不能用"与"还能再掉几个验证者"，无需运行命令或查文档。答不上就改呈现，不改判据
