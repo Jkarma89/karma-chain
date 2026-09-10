@@ -229,7 +229,18 @@ L1–L4、L6、L8 **必须是纯函数**：它们的分支太多，且其中两�
 
 以下几条**只能在实现期实测**，不能靠推理定案；到时逐条回填结果：
 
-- **V-01** ⚠️ **win-1 已验（2026-09-10），其余四台待验**：`scripts/devnet-dashboard.sh` 起容器后，从宿主浏览器取 `/`、`/style.css`、`/copy.mjs`、`/app.mjs`、`/view-health.mjs`、`/api/snapshot` 全部 200；快照显示 7/7 可达、100% normal、余量 1/1、五个验证者创世哈希全部匹配基准。**顺带修掉一个真缺陷**：脚本原先无条件用 `docker run -it`，在 stdin 非终端时（后台启动、CI）直接失败并报 `cannot attach stdin to a TTY-enabled container` —— 人手工敲命令看不出来，冒烟测试当场抓到。已改为按 `[ -t 0 ]` 条件加 `-t`（.sh 与 .ps1 都改）。**Linux 与 Windows 的端口发布路径不同，因此其余四台仍须逐台实测，不能由 win-1 推断。**
+- **V-01** ✅ **五台全部通过（2026-09-10）**：五台各自 `devnet-dashboard` 起容器后，从 win-1 逐台探 `http://<边界地址>:21680/` 与 `/api/snapshot` **全部 200**，且五份快照给出**同一个结论**：`normal / 100% / 余量 1 与 1 / 高度 817 / 可达 7-7 / 无分叉`。五个独立观察者互不依赖 —— 这正是 FR-031「不设专属观察机」的实证。
+
+  **在 win-2 上连撞四次才跑通，四项里有三项是 002 遗留的、被 win-1 掩盖的前提**：
+
+  | # | 症状 | 成因 | 修法 |
+  |---|---|---|---|
+  | 1 | `CommandNotFoundException` | PowerShell 不从当前目录找脚本 | 用 `.\scripts\...`（非缺陷） |
+  | 2 | 同上，但带完整路径 | **003 的改动一直没提交**，win-2 上没有那个文件 | 提交并推送 |
+  | 3 | `pull access denied … may require docker login` | `karmachain/verify:local` 是**本地构建**的，win-2 没建过；而 docker 那句提示指向权限问题，**完全错误的方向** | 四对脚本加前置检查，直接给出构建命令；`docs/devnet.md` §9.3 补上"两个镜像" |
+  | 4 | `Cannot find package 'ajv'` | `-v "$(pwd):/workspace"` 整仓挂载**把镜像里的 node_modules 盖掉了** | 改按子目录挂载（compose 的 verify 服务本来就这么做） |
+
+  **③ 与 ④ 同时影响 devnet-verify / devnet-status / devnet-contracts** —— 也就是说 002 的三个命令在任何"没人跑过它们、且宿主没跑过 npm ci"的机器上都会失败。win-1 上一直没暴露，只因为我所有验证都在那台机器上做。**这是本轮最值得记下的一条："在一台机器上验过"不等于"验过"。**
 - **V-02** ✅ **通过（2026-09-10）**：`tests/integration/dashboard-server.test.mjs` 的「探测抛错时服务仍然应答」把全部节点地址指向黑洞，实测 `observer.blind === true`、`tier === "observer-blind"`，并显式断言 `tier !== "stopped"`。另有 `tests/unit/dashboard-blindness.test.mjs` 覆盖 P1/P2 的优先级（含「0 可达且恰有节点 bootstrapping」那一条）。**取证方式是把地址指向黑洞，不是物理断网** —— 在观测层等价（两者都是"一个都探不到"），但物理断网那一份仍留在 quickstart 场景 E 由人做。
 - **V-03** ✅ **通过（2026-09-10）**：`tests/e2e/dashboard-detection.test.mjs` 两次运行分别测得 **2942 ms** 与 **2960 ms**（预算 10 000 ms，余量约 7 秒）。档位序列显示前 2.7 秒稳定在 `normal/100%`，第 2942 ms 跳到 `zero-margin/80%` —— 与"轮询间隔 2s + 探测耗时"的预算推导相符。同一时刻实测交易确认（748→749），证明 80% 档「链仍在出块」不是空话。
 - **V-04** ❌ **未验，需要两台机器**：停 2 个验证者才能进 `stopped` 档，而 T-5 保证每边界至多 1 个验证者 —— 单机造不出来。自动化任务 `tests/e2e/dashboard-stopped-tier.test.mjs` 已就位（在承载 ≥2 个验证者的机器上自动执行，跨机形态下带说明跳过）。**人工做法见 quickstart 场景 C**（在两台机器上各 `devnet-node kill`）。档位判定本身已由 `contracts/health-tier.md` 第 4 节真值表第 6/8/10 行的单元用例覆盖；缺的是"交易确实无法确认"这一半**事实**。
