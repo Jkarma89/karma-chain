@@ -20,9 +20,16 @@ if (-not (Assert-VerifyImage)) { Write-Host 'devnet-verify: 前置条件未满�
 $network = Get-NodeNetwork $ctx.Domain
 if (-not $network) { Write-Host 'devnet-verify: 前置条件未满足（见上）'; exit 10 }
 
+New-Item -ItemType Directory -Force (Join-Path $ctx.Root '.devnet') | Out-Null
+
+# 挂载**按子目录**，不整仓覆盖 /workspace —— 整仓挂载会盖掉镜像里的 node_modules，
+# 在宿主没跑过 npm ci 的机器上报 Cannot find package 'ajv'。
+# 理由与那三个路径的取舍见 _devnet-common.sh / devnet-verify.sh 的同段注释。
 docker run --rm `
   --network $network `
-  -v "$($ctx.Root):/workspace" `
+  -v "$($ctx.Root)/blockchain:/workspace/blockchain:ro" `
+  -v "$($ctx.Root)/tools:/workspace/tools:ro" `
+  -v "$($ctx.Root)/.devnet:/workspace/.devnet" `
   -e "KARMACHAIN_RPC_URL=$(Get-ContainerRpcUrl $ctx)" `
   karmachain/verify:local npm run verify -- @args
 exit $LASTEXITCODE

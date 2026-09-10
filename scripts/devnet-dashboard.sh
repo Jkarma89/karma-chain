@@ -85,9 +85,25 @@ TTY=''
 # 局域网地址，不经代理），**唯独点"立即探活"报 `HTTP request failed`** ——
 # 而集成测试在宿主上跑，那里回环地址加对外 RPC 端口恰好就是代理容器发布出来的入口，
 # 于是测试全绿、真实部署失败。（端口号不写在注释里 —— 它的唯一出处是 protocol.json。）
+mkdir -p ./.devnet
+
+# 挂载**按子目录**，不整仓覆盖 /workspace ——
+# 整仓挂载会把镜像里的 /workspace/node_modules 一起盖掉，于是在**宿主没跑过 npm ci**
+# 的机器上报 `Cannot find package 'ajv' imported from /workspace/tools/protocol/load.mjs`。
+# win-1 上一直没暴露，只因为那台机器的宿主仓库里有 node_modules（2026-09-10 在 win-2 撞到）。
+#
+# 这三个就是容器内的工具真正需要的全部：blockchain（协议参数、创世、建链制品、开发账户）、
+# tools（工具自身，含面板前端）、.devnet（读容器事实 / 写验证报告）。
+# docker/ 与 docs/ 只有 render 生成器读（走 scripts/devnet-render），tests/ 与 specs/
+# 没有任何 tools 读。node_modules 与 package.json 一律取自镜像 ——
+# 因此**改 package-lock.json 必须重建镜像**（Dockerfile 顶部已注明）。
+#
+# 挂载集合由 tests/unit/dashboard-container-env.test.mjs 守住四对脚本一致，防止漂移。
 exec env MSYS_NO_PATHCONV=1 docker run --rm $TTY \
   --network "$NETWORK" \
   -p "${PORT}:${PORT}" \
   -e KARMACHAIN_RPC_URL="$(devnet_container_rpc_url "$DOMAIN")" \
-  -v "$(pwd):/workspace" \
+  -v "$(pwd)/blockchain:/workspace/blockchain:ro" \
+  -v "$(pwd)/tools:/workspace/tools:ro" \
+  -v "$(pwd)/.devnet:/workspace/.devnet" \
   karmachain/verify:local node tools/dashboard/server.mjs "$@"

@@ -65,7 +65,12 @@ $dockerArgs += @(
     '--network', $network,
     '-p', "${port}:${port}",
     '-e', "KARMACHAIN_RPC_URL=$(Get-ContainerRpcUrl $ctx)",
-    '-v', "$($ctx.Root):/workspace",
+    # 挂载**按子目录**，不整仓覆盖 /workspace —— 整仓挂载会盖掉镜像里的 node_modules，
+    # 在宿主没跑过 npm ci 的机器上报 Cannot find package 'ajv'。
+    # 理由与这三个路径的取舍见 devnet-verify.sh 的同段注释。
+    '-v', "$($ctx.Root)/blockchain:/workspace/blockchain:ro",
+    '-v', "$($ctx.Root)/tools:/workspace/tools:ro",
+    '-v', "$($ctx.Root)/.devnet:/workspace/.devnet",
     'karmachain/verify:local',
     'node', 'tools/dashboard/server.mjs'
 ) + $serverArgs

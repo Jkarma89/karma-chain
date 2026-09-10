@@ -22,13 +22,20 @@
 // 但它能保证**这个变量不会再被漏传**。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
 const read = (rel) => readFileSync(resolve(REPO_ROOT, rel), 'utf8');
 
-/** 起工具容器、且容器内要访问链的入口脚本 —— 它们都必须传 KARMACHAIN_RPC_URL。 */
+/**
+ * **两份清单，回答两个不同的问题** —— 2026-09-10 的教训：
+ * 我给挂载守卫复用了这份"要传 RPC_URL"的清单，而 devnet-status 不在其中
+ * （它不经代理访问链），于是把 devnet-status 改回整仓挂载时守卫**照样全绿**。
+ * 一个不会变红的守卫比没有守卫更坏 —— 它让人以为已经守住了。
+ */
+
+/** ① 容器内要访问链的脚本 —— 必须传 KARMACHAIN_RPC_URL。devnet-status 不在此列。 */
 const SCRIPTS = [
   { file: 'scripts/devnet-dashboard.sh', helper: 'devnet_container_rpc_url' },
   { file: 'scripts/devnet-dashboard.ps1', helper: 'Get-ContainerRpcUrl' },
@@ -38,6 +45,33 @@ const SCRIPTS = [
   { file: 'scripts/devnet-contracts.sh', helper: 'devnet_container_rpc_url' },
   { file: 'scripts/devnet-contracts.ps1', helper: 'Get-ContainerRpcUrl' },
 ];
+
+/** ② **起工具容器**的全部脚本 —— 挂载相关的守卫必须覆盖这八个，一个都不能漏。 */
+const CONTAINER_SCRIPTS = [
+  'scripts/devnet-dashboard.sh', 'scripts/devnet-dashboard.ps1',
+  'scripts/devnet-verify.sh', 'scripts/devnet-verify.ps1',
+  'scripts/devnet-status.sh', 'scripts/devnet-status.ps1',
+  'scripts/devnet-contracts.sh', 'scripts/devnet-contracts.ps1',
+];
+
+describe('两份清单本身的自洽性', () => {
+  test('①（要传 RPC_URL）是 ②（起容器）的子集', () => {
+    for (const { file } of SCRIPTS) {
+      assert.ok(CONTAINER_SCRIPTS.includes(file),
+        file + ' 在 RPC_URL 清单里，却不在"起容器"清单里 —— 两份清单已经漂移');
+    }
+  });
+
+  test('② 恰好是 scripts/ 下会 docker run 工具镜像的那些', () => {
+    // 用实际内容反查，而不是靠人维护清单不出错。
+    const found = readdirSync('scripts')
+      .filter((f) => /\.(sh|ps1)$/.test(f) && !f.startsWith('_'))
+      .map((f) => 'scripts/' + f)
+      .filter((f) => /karmachain\/verify:local/.test(read(f)));
+    assert.deepEqual(found.sort(), [...CONTAINER_SCRIPTS].sort(),
+      '清单与实际不符 —— 有脚本起了工具容器却没被守卫覆盖，或反之');
+  });
+});
 
 describe('容器内的 RPC 地址必须由入口脚本传入', () => {
   for (const { file, helper } of SCRIPTS) {
@@ -133,5 +167,77 @@ describe('explain 的行为（不是只看源码里有没有那串字）', () =>
       if (saved === undefined) delete process.env.KARMACHAIN_RPC_URL;
       else process.env.KARMACHAIN_RPC_URL = saved;
     }
+  });
+});
+
+describe('挂载集合：按子目录，且四对脚本一致', () => {
+  // ## 为什么不整仓覆盖 /workspace
+  //
+  // `-v "$(pwd):/workspace"` 会把镜像里的 /workspace/node_modules 一起盖掉，于是在
+  // **宿主没跑过 npm ci** 的机器上报
+  // `Cannot find package 'ajv' imported from /workspace/tools/protocol/load.mjs`。
+  // win-1 上一直没暴露，只因为那台机器的宿主仓库里有 node_modules（2026-09-10 在 win-2 撞到）。
+  //
+  // 又一次同一形状：判据在一种形态下成立，就以为在另一种形态下也成立。
+  //
+  // ## 为什么不用匿名卷 / 命名卷绕过
+  //
+  // 匿名卷实测 **+2.2 秒/次**（每次拷 90.8 MB）；命名卷快，但**镜像重建后卷里还是旧依赖**
+  // —— 那正是本项目一路在防的"陈旧事实"陷阱（002 的 inode、containers.json 的 TTL）。
+  // 按子目录挂载零运行时代价，且镜像一重建立即生效。
+  //
+  // ## 这三个路径就是全部
+  //
+  // blockchain（协议参数/创世/建链制品/开发账户）、tools（工具自身含面板前端）、
+  // .devnet（读容器事实 / 写验证报告）。docker/ 与 docs/ 只有 render 生成器读，
+  // tests/ 与 specs/ 没有任何 tools 读 —— 已逐个核对过 REPO_ROOT 的引用点。
+  //
+  // 四个命令都在一份**不含 node_modules** 的仓库副本上实测通过（2026-09-10）。
+  const REQUIRED = ['blockchain', 'tools', '.devnet'];
+
+  for (const file of CONTAINER_SCRIPTS) {
+    test(file + ' 不整仓覆盖 /workspace', () => {
+      const src = read(file);
+      assert.doesNotMatch(src, /-v\s+"\$\(pwd\):\/workspace"/,
+        file + ' 仍在整仓挂载 —— 会盖掉镜像里的 node_modules');
+      assert.doesNotMatch(src, /"\$\(\$ctx\.Root\):\/workspace"/,
+        file + ' 仍在整仓挂载（.ps1 形式）');
+    });
+
+    test(file + ' 挂了 ' + REQUIRED.join(' / ') + ' 三项', () => {
+      const src = read(file);
+      for (const dir of REQUIRED) {
+        assert.ok(src.includes('/workspace/' + dir),
+          file + ' 缺 /workspace/' + dir + ' 挂载');
+      }
+    });
+  }
+
+  test('四对脚本的挂载集合完全一致 —— 防止漂移', () => {
+    // **先剥注释再扫。** 解释"为什么不整仓挂载"的注释里必然出现
+    // /workspace/node_modules —— 不剥注释会把它当成一个真挂载，
+    // 于是守卫报 .sh 与 .ps1 不一致，而两者其实一样。
+    // （这个坑今天已经重复三次：002 的 no-hardcode 抓我的注释、我自己的
+    //  dashboard-no-hardcode 也踩过。扫源码就得先剥注释。）
+    const setOf = (file) => {
+      const code = read(file)
+        .split('\n')
+        .filter((l) => !/^\s*#/.test(l))
+        .join('\n');
+      return [...new Set(
+        [...code.matchAll(/\/workspace\/([\w.-]+)/g)]
+          .map((m) => m[1])
+          .filter((x) => !x.endsWith('.mjs')),
+      )].sort();
+    };
+    const sets = CONTAINER_SCRIPTS.map((file) => [file, setOf(file)]);
+    const [firstFile, first] = sets[0];
+    for (const [file, got] of sets) {
+      assert.deepEqual(got, first,
+        file + ' 的挂载集合与 ' + firstFile + ' 不同：'
+        + got.join(',') + ' vs ' + first.join(','));
+    }
+    assert.deepEqual(first, ['.devnet', 'blockchain', 'tools'],
+      '挂载集合变了 —— 若是刻意新增，请同时更新本断言与上面那段"这三个路径就是全部"的说明');
   });
 });
