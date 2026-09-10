@@ -39,6 +39,7 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 | 拓扑与容错校验 | `scripts/devnet-topology`（退出码 13 = 违反容错约束） |
 | 重新生成全部派生物 | `scripts/devnet-render`（`--check` 只查漂移） |
 | 节点状态 / 日志 | `scripts/devnet-status` · `scripts/devnet-logs <node>` |
+| 实时监控面板 | `scripts/devnet-dashboard`（浏览器打开 `http://localhost:21680`） |
 | 链上合约清单 | `scripts/devnet-contracts`（`--json` 可机器读） |
 | 故障注入（演练） | `scripts/devnet-node <stop\|start\|kill\|pause\|resume> <node>` |
 
