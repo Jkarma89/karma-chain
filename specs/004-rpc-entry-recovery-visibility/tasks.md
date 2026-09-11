@@ -151,11 +151,11 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 守卫先行（TDD）
 
-- [ ] T019 [P] [US2] `tests/unit/recovery-capability.test.mjs`：
+- [X] T019 [P] [US2] `tests/unit/recovery-capability.test.mjs`：
       ① `servesPChain` 真值表**10 行逐行**（[data-model §1](./data-model.md)）；
       ② 门槛 `< 2`，含「只有一个在服务」这一格；
       ③ 传入 L1 验证者的行时**显式拒绝**（抛错或 `null`），**不得静默返回 `false`**
-- [ ] T020 [P] [US2] `tests/unit/recovery-tier-isolation.test.mjs`：恢复能力为 `blocked` 时，
+- [X] T020 [P] [US2] `tests/unit/recovery-tier-isolation.test.mjs`：恢复能力为 `blocked` 时，
       `tier` / `healthPercent` / `validatorMargin` / `domainMargin` / `participating` /
       `threshold` **逐字段**与 `ok` 时相同（FR-013 / V-07）
 - [ ] T021 [P] [US2] `tests/unit/recovery-copy.test.mjs`：文案必含「两个」与
@@ -171,10 +171,10 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 实现
 
-- [ ] T024 [US2] 改 `tools/dashboard/snapshot.mjs`：新增 `servesPChain(row)`，
+- [X] T024 [US2] 改 `tools/dashboard/snapshot.mjs`：新增 `servesPChain(row)`，
       从既有 `state` + `countsAsOffline` 派生。注释里**并排**写清三个谓词的分工
       （[data-model §0](./data-model.md)）—— 这是同一个坑的第三种踩法，注释要挡住第四次
-- [ ] T025 [US2] 改 `tools/dashboard/snapshot.mjs`：新增 `recoveryCapability` 字段
+- [X] T025 [US2] 改 `tools/dashboard/snapshot.mjs`：新增 `recoveryCapability` 字段
       （`ok` / `blocked` / `unknown`）、第六类异常 `recovery-blocked`、
       以及 `ACTIONS` 表里对应的一行处置方向。
       门槛写**常量 `2`** 并注明它来自**权益门槛**而非"Primary 总数"（R-06 / data-model §2）
@@ -188,7 +188,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       **003 的 456 个单元测试没有一个执行过 `render()`**，代价是用户在浏览器里
       看到「此视图渲染失败」—— 那个 DOM 桩已经在，接着用
 
-- [ ] T046 [P] [US2] `tests/unit/recovery-blind.test.mjs`：**观察者失明时不作任何断言**
+- [X] T046 [P] [US2] `tests/unit/recovery-blind.test.mjs`：**观察者失明时不作任何断言**
       （FR-019）—— 断言 `observer.blind === true` 时 `recoveryCapability === 'unknown'`，
       且**不产生** `recovery-blocked` 异常；无论那一刻有几个 Primary 看起来在服务。
 
@@ -207,15 +207,15 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 变红检查（每一条都要真做）
 
-- [ ] T030 [US2] 变红 ①：门槛改成 `= 0` → T019 的「只有一个在服务」那格必须失败。
+- [X] T030 [US2] 变红 ①：门槛改成 `= 0` → T019 的「只有一个在服务」那格必须失败。
       **这是本期最重要的一条变红检查** —— `= 0` 是从"两个都停了"这个现场最自然的错误归纳
-- [ ] T031 [US2] 变红 ②：让 `blocked` 时把 `tier` 降一档 → T020 必须失败
-- [ ] T032 [US2] 变红 ③：去掉 `unreachable` 的 `countsAsOffline === false` 分支 →
+- [X] T031 [US2] 变红 ②：让 `blocked` 时把 `tier` 降一档 → T020 必须失败
+- [X] T032 [US2] 变红 ③：去掉 `unreachable` 的 `countsAsOffline === false` 分支 →
       真值表第 9 / 10 行必须失败（否则"一根网线松了就叫人别重启"）
 - [ ] T033 [US2] 变红 ④：文案去掉「两个」，或加入「需要重置」→ T021 必须失败
 - [ ] T034 [US2] 变红 ⑤：往公开投影加一个字段 → T023 必须失败
 - [ ] T035 [US2] 变红 ⑥：改动 `docs/devnet.md` §9.5 里的门槛数字 → T022 必须失败
-- [ ] T047 [US2] 变红 ⑦：让失明时**照常按 Primary 数判**（即删掉 `unknown` 那一支）→
+- [X] T047 [US2] 变红 ⑦：让失明时**照常按 Primary 数判**（即删掉 `unknown` 那一支）→
       T046 必须失败。**这一条尤其要做** —— 判据从"五态之一"退化成"数个数"是最容易
       发生的简化，而它恰好在面板最不该说话的时候让面板说话
 
