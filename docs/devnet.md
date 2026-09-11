@@ -673,19 +673,47 @@ Primary Network 也是 2 个验证者的集合，缺一个就只有 50% 权益�
 改动只涉及 `rpc-proxy.conf` 与 compose 里代理那几行时，用这套步骤 ——
 **不动节点、不动数据卷、不重置链**。
 
-逐台执行（五台都要做，一台不做那台的入口行为就还是旧的）：
+**第 1 步：渲染 —— 只在一台机器上做一次，改动进 git。**
+与 §9.3 第 1 步同一个模型（生成物是**提交进仓库**的，靠 git 走，不靠每台各跑一遍）：
+
+```bash
+npm run render                      # 重新生成 rpc-proxy.conf 与 compose
+npm run render:check                # 10 项生成物必须与 protocol.json 一致
+git commit -am "..." && git push
+```
+
+> **三台 Ubuntu 上没有 `npm`**（它们只跑容器，宿主不装 Node）——
+> 在那里执行 `npm run render` 会得到 `Command 'npm' not found`。
+> 这不是缺了前置条件，而是**本来就不该在那里渲染**：
+> `blockchain/nodes/lan/rpc-proxy.conf` 与 `docker/compose/*.yml` 都在 git 里，
+> `git pull` 拿到的就是渲染好的那一份。
+> 真要在没有宿主 Node 的机器上核对，用工具镜像：
+> `docker compose run --rm verify npm run render:check`（§3.4 的既有做法）。
+
+**第 2 步：其余每一台 —— 只 pull + 重建代理。**
+（五台都要做，一台不做那台的入口行为就还是旧的。）
 
 ```bash
 git pull
-npm run render                      # 重新生成 rpc-proxy.conf 与 compose
-npm run render:check                # 10 项生成物必须与 protocol.json 一致
 
 # 只重建代理容器。<COMPOSE> = docker/compose/lan-<本机边界>.yml
 docker compose -f <COMPOSE> up -d --no-deps --force-recreate rpc
 ```
 
-Windows 上把最后一行的路径换成对应的 `lan-win-1.yml` / `lan-win-2.yml` 即可，
-命令本身一样。
+Windows 上把路径换成对应的 `lan-win-1.yml` / `lan-win-2.yml`，命令本身一样。
+
+**不需要 npm、不需要宿主 Node。** 核对新配置到位与否也不需要：
+
+```bash
+# 宿主上这份是新的吗（应当能找到那个自检位置）
+grep -c '_alive' blockchain/nodes/lan/rpc-proxy.conf
+
+# 重建之后，容器里那份也是新的吗（两个数应当相等）
+docker exec karmachain-rpc-<边界> grep -c '_alive' /etc/nginx/conf.d/karmachain.conf
+
+# 健康位用的是自检位置而不是链的健康位
+docker inspect karmachain-rpc-<边界> --format '{{json .Config.Healthcheck.Test}}'
+```
 
 **为什么必须`重建`而不是 `restart` 或 `nginx -s reload`**：
 代理配置是**单文件 bind mount**，Docker 绑的是 inode，而 `git pull` / 重新渲染是
