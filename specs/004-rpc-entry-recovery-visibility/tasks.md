@@ -202,7 +202,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 行为判据
 
-- [ ] T029 [P] [US2] `tests/e2e/recovery-capability.test.mjs`：单机形态下
+- [!] T029 [P] [US2] `tests/e2e/recovery-capability.test.mjs`：单机形态下
       停 Primary → 提示出现；恢复 → 一个探测周期内消失
 
 ### 变红检查（每一条都要真做）
@@ -265,7 +265,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [X] T042 [P] 改 `docs/devnet.md` 的部署步骤：说明本次变更**不需要重置链**（FR-033），
       只重建代理容器（`docker compose … up -d rpc`），节点数据卷不动。
       **写明这一点是为了防止有人出于谨慎去做一次不必要的重置**
-- [ ] T043 quickstart 场景 K（R-08 / V-09）：`local` 与 `lan` **两种形态各验一次**。
+- [!] T043 quickstart 场景 K（R-08 / V-09）：`local` 与 `lan` **两种形态各验一次**。
       「在一台机器上验过」不等于「验过」—— 本期要修的缺陷当初能活下来正是因为这个
 - [~] T044 全套复跑：`npm test`（单元，应 ≥600 且**无既有断言被放宽**）、
       `npm run test:integration`、`npm run test:e2e`、`npm run render:check`、
@@ -274,7 +274,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       必须为空（**FR-030** 零新增依赖）。
       *（`/speckit-analyze` 的 C2：这一条此前在**任何**制品里都没有判据，只靠人记得 ——
       而它本来就该是机械的。）*
-- [ ] T045 回填 `checklists/dod.md`：12 条 SC 逐条、变红核对表 8 行的**实际结果**、
+- [X] T045 回填 `checklists/dod.md`：12 条 SC 逐条、变红核对表 8 行的**实际结果**、
       V-01…V-10 的实测数据、以及实施期缺陷一节。
       **凡未实测的一律不写"已达成"** —— 003 的 spec 里那句「不写"已交付"」照搬
 
