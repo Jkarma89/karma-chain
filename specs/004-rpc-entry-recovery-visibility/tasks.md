@@ -249,7 +249,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 - [X] T039 [US4] 改 `docs/devnet.md` §10（面板）：加一节讲恢复能力，与 §9.5「恢复顺序」互指。
       两处的门槛数字与顺序由 T022 守着
-- [ ] T040 [US4] quickstart 场景 M（SC-009）：请一名**未参与本期**的人，
+- [X] T040 [US4] quickstart 场景 M（SC-009）：请一名**未参与本期**的人，
       在两个 Primary 停着时打开面板、**不许查文档**，说出他要做的第一件事。
       期望「把两个 Primary 都启动」。**答错就改呈现，不改判据**
 
@@ -267,7 +267,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       **写明这一点是为了防止有人出于谨慎去做一次不必要的重置**
 - [ ] T043 quickstart 场景 K（R-08 / V-09）：`local` 与 `lan` **两种形态各验一次**。
       「在一台机器上验过」不等于「验过」—— 本期要修的缺陷当初能活下来正是因为这个
-- [ ] T044 全套复跑：`npm test`（单元，应 ≥600 且**无既有断言被放宽**）、
+- [~] T044 全套复跑：`npm test`（单元，应 ≥600 且**无既有断言被放宽**）、
       `npm run test:integration`、`npm run test:e2e`、`npm run render:check`、
       `npm run test:secrets`、`scripts/devnet-verify`；
       **另加一条机械判据**：`git diff --exit-code package.json package-lock.json`
