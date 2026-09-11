@@ -158,7 +158,66 @@ export const INCIDENT_COPY = Object.freeze({
     label: '链身份不一致',
     action: '那台机器跑在另一条链上 —— 核对它的创世文件与协议参数。',
   },
+  'recovery-blocked': {
+    label: '恢复能力已丧失',
+    action: '先把两个 Primary 都启动 —— 只起一个不够。在那之前不要重启任何验证者。',
+  },
 });
+
+/**
+ * 恢复能力的文案 —— **与三档健康度正交**的一个维度。
+ *
+ * ## 它要说的不是事实，是后果
+ *
+ * 面板早就把 `primary-1 = 已停止` 显示出来了 —— **事实是可见的**。
+ * 缺的是那两条合起来意味着什么：
+ *
+ * > 此刻任何一个 L1 验证者一旦重启，就**再也回不来**。
+ *
+ * 2026-09-10 实测：两个 Primary 全停、五个验证者都健康、面板报 `normal / 100%`
+ * 的状态下重启 l1-1，它 5 分钟内 P 链引导毫无进展，L1 那条链在该节点上
+ * **根本没被创建**。而"重启一下试试"恰好是最本能的运维动作 ——
+ * **事实可见、后果不可见，是最容易出事的组合。**
+ *
+ * ## 三个不能少的成分（每个对应一次实测）
+ *
+ * 1. **「两个」** —— 起一个不够。只起回 primary-1 之后 l1-1 仍然卡着，
+ *    它自报 `percentConnected: 0.5`，而门槛是 80%。
+ * 2. **「不要重启任何验证者」** —— 那是这条提示存在的全部理由。
+ * 3. **顺序** —— 先 Primary 再验证者，与 `docs/devnet.md` §9.5 一致（有守卫）。
+ *
+ * ## 刻意**不写**否定句
+ *
+ * 不写"不会丢数据"、"不需要重置"这类话，尽管它们都是真的。
+ * 否定式对子串守卫天然敌对：003 期间 `starting` 的文案写了
+ * 「也不是"须处置"」，那个词触发了一条子串断言 ——
+ * **当时的处理是改文案，不是改守卫**。这里正面说"恢复后自动追上"。
+ *
+ * ## 它不是报警
+ *
+ * 链在出块。做成红色报警会稀释「链已停止出块」那一档的含义 ——
+ * 003 期间为此删掉过一条会误报的守卫，理由记在那边：
+ * **"噪音会让人开始忽略红灯。"**
+ *
+ * @param {{recoveryCapability?: string, primariesRequiredForRejoin?: number}} snapshot
+ * @returns {{severity:string,symbol:string,label:string,body:string,action:string}|null}
+ *   `null` = 不呈现（`ok` 或 `unknown`）
+ */
+export function recoveryCopy(snapshot) {
+  if (snapshot?.recoveryCapability !== 'blocked') return null;
+  const need = snapshot.primariesRequiredForRejoin ?? 2;
+  return {
+    // 与停摆报警的 critical 区分开：显目，但不是活性紧急事件
+    severity: 'attention',
+    symbol: '◆',
+    label: '恢复能力已丧失',
+    body: `链仍按上面的档位出块，但此刻**任何 L1 验证者一旦重启都无法重新加入** ——`
+        + `它要先引导 P 链，而 P 链引导要求连上足够的权益，`
+        + `${need} 个 Primary 各握一部分，少一个就到不了门槛。`
+        + '已经在跑的验证者不受影响；卡住的那个在两个 Primary 都回来后自行追上。',
+    action: `先把 ${need} 个 Primary 都启动 —— 只起一个不够。在那之前不要重启任何验证者。`,
+  };
+}
 
 /** 节点状态的中文标签。取值集合与既有 ALL_STATES 一致，不增删。 */
 export const STATE_COPY = Object.freeze({

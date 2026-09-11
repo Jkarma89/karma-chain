@@ -76,10 +76,15 @@ describe('incidentClass —— 逐状态映射', () => {
     }
   });
 
-  test('INCIDENT_CLASSES 恰好是契约里的五类', () => {
+  // 功能 004 把它从五类变成六类。**这不是放宽断言** ——
+  // 它仍然是一条精确列表，只是契约变了；而且正是它（连同
+  // dashboard-incidents-complete 的双向断言）在 004 实施时立刻抓到
+  // "加了 recovery-blocked 的文案却忘了登记进枚举"。
+  test('INCIDENT_CLASSES 恰好是契约里的六类', () => {
     assert.deepEqual(
       [...INCIDENT_CLASSES].sort(),
-      ['chain-identity', 'consensus-margin', 'node-infra', 'observation', 'sync-lag'],
+      ['chain-identity', 'consensus-margin', 'node-infra', 'observation',
+        'recovery-blocked', 'sync-lag'],
     );
   });
 });

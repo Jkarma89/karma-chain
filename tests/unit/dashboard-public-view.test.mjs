@@ -128,6 +128,30 @@ describe('第 1 层：结构断言 —— 键集合等于白名单（T062）', (
     assert.ok(!JSON.stringify(out).includes(SENSITIVE.nodeId));
   });
 
+  // ## 功能 004 的真实新字段（SC-011 / FR-022）
+  //
+  // 上面那条用合成字段 `someNewInternalField` 模拟"日后有人给快照加字段"。
+  // 004 真的加了两个（`recoveryCapability` 与 `primariesRequiredForRejoin`）——
+  // 于是这里用**真名**再断言一次：**把替身换成本尊**。
+  //
+  // 为什么这两个字段不该对外：恢复能力描述的是这张网**在拓扑层面的脆弱窗口**。
+  // 对外暴露只提供攻击时机，而对外部使用者没有任何可操作价值 ——
+  // 他们既看不到 Primary 也管不了它（宪法第四条，research.md R-07）。
+  test('004 新增的 recoveryCapability 不进对外视图（用真实字段名断言）', () => {
+    const out = toPublicView({
+      ...fakeSnapshot(),
+      recoveryCapability: 'blocked',
+      primariesRequiredForRejoin: 2,
+    });
+    assert.deepEqual(Object.keys(out).sort(), [...PUBLIC_FIELDS].sort(),
+      '对外视图的字段集合变了。本期的判据是**与 004 开始前逐字段相同**\n'
+      + '  （见 specs/004-rpc-entry-recovery-visibility/baseline.md 第 4 节的九个字段）。');
+    assert.ok(!('recoveryCapability' in out), '恢复能力泄漏到了对外视图');
+    assert.ok(!('primariesRequiredForRejoin' in out), '门槛常量泄漏到了对外视图');
+    assert.ok(!JSON.stringify(out).includes('blocked'),
+      '取值本身也不该出现在对外投影里 —— 哪怕换了个键名');
+  });
+
   test('首轮未完成的快照也能安全投影（不抛、不泄漏）', () => {
     const out = toPublicView({ collectedAt: null, tier: null, deployment: 'lan' });
     assert.deepEqual(Object.keys(out).sort(), [...PUBLIC_FIELDS].sort());

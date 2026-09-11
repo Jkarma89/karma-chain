@@ -68,7 +68,7 @@ describe('穷举：没有任何组合能产出未分类的异常（SC-020）', (
   });
 });
 
-describe('五类分类与文案表一一对应', () => {
+describe('六类分类与文案表一一对应（004 追加 recovery-blocked）', () => {
   test('每个分类枚举值都有文案（否则界面上会显示原始 slug）', () => {
     for (const cls of INCIDENT_CLASSES) {
       assert.ok(INCIDENT_COPY[cls], `分类 ${cls} 缺文案`);
@@ -84,7 +84,7 @@ describe('五类分类与文案表一一对应', () => {
     }
   });
 
-  test('五类的处置方向互不相同 —— 分类若不改变处置，就不该存在', () => {
+  test('六类的处置方向互不相同 —— 分类若不改变处置，就不该存在', () => {
     const actions = [...INCIDENT_CLASSES].map((c) => INCIDENT_COPY[c].action);
     assert.equal(new Set(actions).size, actions.length,
       '有两类给出了相同的处置方向 —— 那说明它们该合并，或者其中一个的处置写错了');

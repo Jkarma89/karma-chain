@@ -20,9 +20,15 @@ export const TIERS = Object.freeze({
   NORMAL: 'normal',
 });
 
-/** 异常分类。宪法第九条要求区分，因为**处置方式完全不同**。 */
+/**
+ * 异常分类。宪法第九条要求区分，因为**处置方式完全不同**。
+ *
+ * 功能 004 追加第六类 `recovery-blocked`：它与 `node-infra` 并存而不重复 ——
+ * 后者说"哪个东西坏了（去那台机器上查）"，前者说"因此现在不能做什么（别重启验证者）"。
+ */
 export const INCIDENT_CLASSES = new Set([
   'observation', 'node-infra', 'sync-lag', 'consensus-margin', 'chain-identity',
+  'recovery-blocked',
 ]);
 
 /** 已引导且在服务 L1 —— 只有这两个状态本身就代表"在提供连接权益"。 */

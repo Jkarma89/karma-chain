@@ -158,14 +158,14 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [X] T020 [P] [US2] `tests/unit/recovery-tier-isolation.test.mjs`：恢复能力为 `blocked` 时，
       `tier` / `healthPercent` / `validatorMargin` / `domainMargin` / `participating` /
       `threshold` **逐字段**与 `ok` 时相同（FR-013 / V-07）
-- [ ] T021 [P] [US2] `tests/unit/recovery-copy.test.mjs`：文案必含「两个」与
+- [X] T021 [P] [US2] `tests/unit/recovery-copy.test.mjs`：文案必含「两个」与
       「不要重启」的意思、必含恢复顺序；**禁含**「数据可能丢失」「需要重置」「需要重建」
       「需要重新部署」。**文案本身不要写否定句** ——
       003 期间 `starting` 的文案写了「也不是"须处置"」，那个词触发了子串守卫；
       **当时的处理是改文案，不是改守卫**
-- [ ] T022 [P] [US2] `tests/unit/recovery-docs-parity.test.mjs`：面板文案与
+- [X] T022 [P] [US2] `tests/unit/recovery-docs-parity.test.mjs`：面板文案与
       `docs/devnet.md` §9.5「恢复顺序」的**结论、门槛数字、顺序**一致（FR-023 / SC-010）
-- [ ] T023 [P] [US2] 改 `tests/unit/dashboard-public-view.test.mjs`：把断言改成
+- [X] T023 [P] [US2] 改 `tests/unit/dashboard-public-view.test.mjs`：把断言改成
       **「字段集合与 T002 的基线逐字段相同」**（SC-011 / R-07）。
       不用「不含 recovery 字段」那种否定式 —— 它漏掉下一个新增字段
 
@@ -178,7 +178,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       （`ok` / `blocked` / `unknown`）、第六类异常 `recovery-blocked`、
       以及 `ACTIONS` 表里对应的一行处置方向。
       门槛写**常量 `2`** 并注明它来自**权益门槛**而非"Primary 总数"（R-06 / data-model §2）
-- [ ] T026 [US2] 改 `tools/dashboard/public/copy.mjs`：恢复能力的文案（**零 import 纯函数**，
+- [X] T026 [US2] 改 `tools/dashboard/public/copy.mjs`：恢复能力的文案（**零 import 纯函数**，
       沿用 003 的约定）。三个必含成分见 [recovery-capability 契约 §5](./contracts/recovery-capability.md)
 - [ ] T027 [US2] 改 `tools/dashboard/public/view-*.mjs`：呈现恢复能力。
       版式与「链已停止出块」的报警**可区分**（FR-021），遵守 003 的 FR-009 三通道
@@ -212,9 +212,9 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [X] T031 [US2] 变红 ②：让 `blocked` 时把 `tier` 降一档 → T020 必须失败
 - [X] T032 [US2] 变红 ③：去掉 `unreachable` 的 `countsAsOffline === false` 分支 →
       真值表第 9 / 10 行必须失败（否则"一根网线松了就叫人别重启"）
-- [ ] T033 [US2] 变红 ④：文案去掉「两个」，或加入「需要重置」→ T021 必须失败
-- [ ] T034 [US2] 变红 ⑤：往公开投影加一个字段 → T023 必须失败
-- [ ] T035 [US2] 变红 ⑥：改动 `docs/devnet.md` §9.5 里的门槛数字 → T022 必须失败
+- [X] T033 [US2] 变红 ④：文案去掉「两个」，或加入「需要重置」→ T021 必须失败
+- [X] T034 [US2] 变红 ⑤：往公开投影加一个字段 → T023 必须失败
+- [X] T035 [US2] 变红 ⑥：改动 `docs/devnet.md` §9.5 里的门槛数字 → T022 必须失败
 - [X] T047 [US2] 变红 ⑦：让失明时**照常按 Primary 数判**（即删掉 `unknown` 那一支）→
       T046 必须失败。**这一条尤其要做** —— 判据从"五态之一"退化成"数个数"是最容易
       发生的简化，而它恰好在面板最不该说话的时候让面板说话
