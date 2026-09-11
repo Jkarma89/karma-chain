@@ -1,0 +1,354 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.dev/schemas/deployment.schema.json",
+  "title": "KarmaChain 部署描述",
+  "description": "哪几台机器、什么地址与端口、故障边界怎么划、每台跑什么角色。**它不参与出生证明（stamp）** —— 改它不需要重置链。判据：改了这个字段，已经存在的链上状态还有没有意义？有 → 属这里。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "deploymentVersion",
+    "topology",
+    "endpoints",
+    "primaryNetwork",
+    "validators"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Editor hint only; ignored by tooling."
+    },
+    "deploymentVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "部署描述的版本号。**与 configVersion 无关，不进 stamp。**"
+    },
+    "validators": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "count",
+        "nodes"
+      ],
+      "properties": {
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "nodes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "index",
+              "httpPort",
+              "stakingPort",
+              "keyDir"
+            ],
+            "properties": {
+              "index": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "httpPort": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              },
+              "stakingPort": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              },
+              "keyDir": {
+                "type": "string",
+                "pattern": "^blockchain/validators/dev/node-[0-9]+/$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "topology": {
+      "description": "blockchain/protocol.json 的 topology 段。声明有哪些节点、节点属于哪个故障边界、部署在哪里。本文件是待并入 protocol.schema.json 的片段（功能 002）。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "activeDeployment",
+        "nodes",
+        "deployments"
+      ],
+      "properties": {
+        "activeDeployment": {
+          "description": "当前生效的部署形态；必须是 deployments 的一个键（约束 T-3）。",
+          "type": "string",
+          "minLength": 1
+        },
+        "nodes": {
+          "description": "全部节点。l1-validator 数量须等于 validators.count，primary 数量须等于 primaryNetwork.count（约束 T-1 / T-2）。",
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "$ref": "#/$defs/node"
+          }
+        },
+        "deployments": {
+          "description": "部署形态。local = 单机（阶段一），lan = 5 台机器 5 个故障边界（阶段二）。",
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "$ref": "#/$defs/deployment"
+          }
+        }
+      }
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hostRpcPort",
+        "rpcPath",
+        "publishedHosts"
+      ],
+      "properties": {
+        "hostRpcPort": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "rpcPath": {
+          "type": "string",
+          "pattern": "^/ext/bc/[a-z][a-z0-9-]*/rpc$"
+        },
+        "publishedHosts": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "Hosts under which this chain publishes its RPC, in preference order. Each yields one entry in the public chain-info rpc.http/rpc.ws arrays. Dev uses loopback names valid on any machine running the chain; a real deployment lists its actual hostnames. Note: avalanchego only accepts a Host header of \"localhost\" or an IP literal, so any other hostname needs a proxy that rewrites Host.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9._:-]+$|^\\[[0-9a-fA-F:]+\\]$"
+          }
+        }
+      }
+    },
+    "primaryNetwork": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nodeCount"
+      ],
+      "properties": {
+        "nodeCount": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  "$defs": {
+    "node": {
+      "description": "节点定义。**不重复已有出处的值**（宪法第十六条）：验证者的端口与 staking 材料目录已由 validators.nodes[] 声明，此处只给出引用索引；Primary 节点的端口在仓库中无其他出处，故在此声明。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "role"
+      ],
+      "properties": {
+        "id": {
+          "description": "稳定标识，用作容器名与卷名的基底；全局唯一（约束 T-6）。",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,30}$"
+        },
+        "role": {
+          "description": "l1-validator 承载 karmachain 并计入容错；primary 承载 P/C/X 链。V-08 实测（2026-09-06）：Primary 全停时 L1 照常出块，故 primary 不计入容错计算，也无需冗余（研究 R-09）。",
+          "enum": [
+            "l1-validator",
+            "primary"
+          ]
+        },
+        "validatorIndex": {
+          "description": "指向 validators.nodes[] 中 index 相同的条目，端口与 keyDir 由该处提供。role 为 l1-validator 时必填，且在全部节点中唯一、覆盖 1..validators.count。",
+          "type": "integer",
+          "minimum": 1
+        },
+        "httpPort": {
+          "description": "仅 primary 节点声明（validators 的端口来自 validators.nodes[]）。",
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "stakingPort": {
+          "description": "仅 primary 节点声明。",
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "keyDir": {
+          "description": "仅 primary 节点声明（validators 的来自 validators.nodes[].keyDir）。primary-network.genesis.json 的 initialStakers 把 Primary 节点的 NodeID 钉死在创世里，因此其 staking 材料必须可复现。",
+          "type": "string",
+          "pattern": "^blockchain/validators/[a-z0-9/-]+/$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "l1-validator"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "required": [
+              "validatorIndex"
+            ],
+            "properties": {
+              "validatorIndex": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "httpPort": false,
+              "stakingPort": false,
+              "keyDir": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "role": {
+                "const": "primary"
+              }
+            },
+            "required": [
+              "role"
+            ]
+          },
+          "then": {
+            "required": [
+              "httpPort",
+              "stakingPort",
+              "keyDir"
+            ],
+            "properties": {
+              "httpPort": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              },
+              "stakingPort": {
+                "type": "integer",
+                "minimum": 1024,
+                "maximum": 65535
+              },
+              "keyDir": {
+                "type": "string",
+                "pattern": "^blockchain/validators/[a-z0-9/-]+/$"
+              },
+              "validatorIndex": false
+            }
+          }
+        }
+      ]
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "description",
+        "failureDomains"
+      ],
+      "properties": {
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "containerNetwork": {
+          "description": "仅**单机**部署形态需要：全部节点作为独立容器跑在同一台机器上时，它们必须用各自的容器 IP 互相寻址 —— 每个容器的 127.0.0.1 是它自己，共用一个边界地址会让节点连向自身。声明后，节点地址由该网段按拓扑顺序派生，且节点端口一律不向宿主发布（只发布 endpoints.hostRpcPort）。多机形态不声明本项，节点地址取所属故障边界的 address。",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "subnet",
+            "firstHost"
+          ],
+          "properties": {
+            "subnet": {
+              "description": "容器网络的 CIDR（形如 10.99.0.0/24）。仅单机形态需要；跨机形态下节点用各机器的地址，不声明本项。示例刻意不用实际部署值 —— 否则 no-hardcode 扫描无法区分\"示例\"与\"第二处事实来源\"。",
+              "type": "string",
+              "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
+            },
+            "firstHost": {
+              "description": "第一个节点的主机号；其余按 topology.nodes 顺序递增。",
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 250
+            }
+          }
+        },
+        "failureDomains": {
+          "description": "成员并集须等于 nodes 全集且互不重叠（约束 T-4）。边界数 > 1 时，任一边界内 l1-validator 数量 ≤ floor(n/4)（约束 T-5 / FR-021）。",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/$defs/failureDomain"
+          }
+        }
+      }
+    },
+    "failureDomain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "platform",
+        "address",
+        "nodes",
+        "sharedFailureFactors"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,30}$"
+        },
+        "platform": {
+          "description": "决定开机自启策略与健康检查差异。windows 上的容器运行时随用户会话启动，可用性弱于 linux（研究 R-11）。",
+          "enum": [
+            "windows",
+            "linux"
+          ]
+        },
+        "address": {
+          "description": "该边界对其他边界可达的地址；avalanchego 的 --public-ip 与其他节点 --bootstrap-ips 的取值来源。必须是 IP 字面量。安装特有数据，可由环境变量覆盖；不得出现在面向第三方的公开制品中（FR-028）。",
+          "type": "string",
+          "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}$"
+        },
+        "nodes": {
+          "description": "成员节点 id。",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{1,30}$"
+          }
+        },
+        "sharedFailureFactors": {
+          "description": "共享失效因素的显式声明，如 power:strip-A、switch:sw-1、update-window:patch-tuesday-0300。必填（可为空数组，但须是有意识的空）。两个边界共享同一因素且各含 1 个验证者时，该因素触发即损失 2 个验证者，超出容错上限 —— 校验器应就此告警（研究 R-12）。",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]*:[A-Za-z0-9._-]+$"
+          }
+        }
+      }
+    }
+  }
+}

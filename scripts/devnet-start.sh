@@ -18,6 +18,28 @@ ENV_FILE="${KARMACHAIN_ENV_FILE:-./docker/compose/active.env}"
 # shellcheck source=../docker/compose/active.env
 . "$ENV_FILE"
 
+# --- 配置格式检查（功能 005 / T020 / FR-008）---------------------------------
+# 五台机器靠 git pull 同步，而 pull 会失败、会被跳过、会停在一个旧提交上。
+# 分家之后「这台机器还在读旧格式」有两种样子，两种都必须**指名道姓**报出来 ——
+# 否则报出来的会是一句 jq 的 "null (null) has no keys"，或者更糟：
+# 某个取值静默变成 undefined，链照常跑而入口连不上（004 刚为这类事花掉一整个特性）。
+if [ ! -f ./blockchain/deployment.json ]; then
+  echo "devnet-start: blockchain/deployment.json 不存在 —— **这台机器还在读旧格式**。" >&2
+  echo "" >&2
+  echo "  功能 005 把部署描述（机器、地址、端口、故障边界）从 protocol.json 切了出来。" >&2
+  echo "  这台机器的仓库停在分家之前的提交上。" >&2
+  echo "  修法：git pull（生成物已提交进仓库，本机不需要 node/npm）" >&2
+  exit 10
+fi
+if grep -q '"topology"' ./blockchain/protocol.json 2>/dev/null; then
+  echo "devnet-start: blockchain/protocol.json 里仍有 topology —— **半新半旧**。" >&2
+  echo "" >&2
+  echo "  两个文件都在，但协议参数文件是分家前的版本。这比只缺一个文件更危险：" >&2
+  echo "  取值会从**哪一份**来取决于读取路径，而两份可以不一致。" >&2
+  echo "  修法：git status 看是否有本地改动挡住了 pull；必要时 git checkout blockchain/protocol.json" >&2
+  exit 10
+fi
+
 DOMAIN="${KARMACHAIN_DOMAIN:-$KARMACHAIN_DEFAULT_DOMAIN}"
 COMPOSE="./docker/compose/${KARMACHAIN_DEPLOYMENT}-${DOMAIN}.yml"
 TIMEOUT="${KARMACHAIN_STARTUP_TIMEOUT:-300}"

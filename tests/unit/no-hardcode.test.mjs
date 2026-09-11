@@ -27,7 +27,11 @@ const TOKENS = [
 
 /** 允许出现字面量的路径（前缀匹配，POSIX 风格），value = 归类理由。 */
 const ALLOWED = {
-  'blockchain/protocol.json': '唯一事实来源',
+  'blockchain/protocol.json': '唯一事实来源（协议参数）',
+  // 功能 005：部署描述（机器、地址、端口、故障边界）从 protocol.json 切出来了。
+  // 端口与地址**本来就该住在这里** —— 它同样是事实来源，只是管的是另一半。
+  'blockchain/deployment.json': '唯一事实来源（部署描述：机器 / 地址 / 端口 / 故障边界）',
+  'blockchain/deployment.schema.json': '部署描述的 schema（约束里带取值范围）',
   'blockchain/protocol-rationale.json': '理由文档（伴随事实来源）',
   'blockchain/compose.env': '生成物（render-compose-env，漂移测试锁定）',
   'blockchain/genesis/': '生成物 + 基准记录（render-genesis，漂移测试锁定）',

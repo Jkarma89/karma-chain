@@ -3,6 +3,9 @@
 # 任何容器内脚本需要链参数时必须调用这里的函数，禁止写死数值（FR-017）。
 
 : "${PROTOCOL_FILE:=/workspace/blockchain/protocol.json}"
+# 部署描述（功能 005）：机器、地址、端口、故障边界。**它不进出生证明（stamp）** ——
+# 改它不需要重置链。JS 侧的对应物是 tools/protocol/load.mjs 的 DEFAULT_DEPLOYMENT_PATH。
+: "${DEPLOYMENT_FILE:=/workspace/blockchain/deployment.json}"
 
 proto_file() { printf '%s' "${PROTOCOL_FILE}"; }
 
@@ -13,6 +16,13 @@ proto_require() {
 
 # 通用取值：proto_get '.chain.chainId'
 proto_get() { proto_require && jq -er "$1" "${PROTOCOL_FILE}"; }
+
+# 从**部署描述**取值。与 proto_get 分开，是为了让"这个值住在哪一侧"在调用处就看得见 ——
+# 混用会让人以为改端口也要递增 configVersion（那正是 005 要纠正的那个分类错误）。
+deploy_require() {
+  [ -r "${DEPLOYMENT_FILE}" ] || { echo "deployment file not readable at ${DEPLOYMENT_FILE}" >&2; return 1; }
+}
+deploy_get() { deploy_require && jq -er "$1" "${DEPLOYMENT_FILE}"; }
 
 # --- 常用字段 ---
 proto_name()              { proto_get '.name'; }
@@ -28,18 +38,18 @@ proto_token_name()        { proto_get '.nativeToken.name'; }
 proto_token_symbol()      { proto_get '.nativeToken.symbol'; }
 proto_token_decimals()    { proto_get '.nativeToken.decimals'; }
 proto_block_mode()        { proto_get '.blockProduction.mode'; }
-proto_primary_nodes()     { proto_get '.primaryNetwork.nodeCount'; }
-proto_validator_count()   { proto_get '.validators.count'; }
+proto_primary_nodes()     { deploy_get '.primaryNetwork.nodeCount'; }
+proto_validator_count()   { deploy_get '.validators.count'; }
 proto_validator_mgmt()    { proto_get '.validators.management'; }
-proto_host_rpc_port()     { proto_get '.endpoints.hostRpcPort'; }
-proto_rpc_path()          { proto_get '.endpoints.rpcPath'; }
+proto_host_rpc_port()     { deploy_get '.endpoints.hostRpcPort'; }
+proto_rpc_path()          { deploy_get '.endpoints.rpcPath'; }
 
 # 验证者端口列表（逗号分隔，供 CLI --http-port / --staking-port）
-proto_validator_http_ports()    { proto_get '[.validators.nodes[].httpPort] | map(tostring) | join(",")'; }
-proto_validator_staking_ports() { proto_get '[.validators.nodes[].stakingPort] | map(tostring) | join(",")'; }
-proto_validator_http_port()     { proto_get ".validators.nodes[] | select(.index == $1) | .httpPort"; }   # $1 = index
-proto_validator_key_dir()       { proto_get ".validators.nodes[] | select(.index == $1) | .keyDir"; }
-proto_first_validator_http_port() { proto_get '.validators.nodes[0].httpPort'; }
+proto_validator_http_ports()    { deploy_get '[.validators.nodes[].httpPort] | map(tostring) | join(",")'; }
+proto_validator_staking_ports() { deploy_get '[.validators.nodes[].stakingPort] | map(tostring) | join(",")'; }
+proto_validator_http_port()     { deploy_get ".validators.nodes[] | select(.index == $1) | .httpPort"; }   # $1 = index
+proto_validator_key_dir()       { deploy_get ".validators.nodes[] | select(.index == $1) | .keyDir"; }
+proto_first_validator_http_port() { deploy_get '.validators.nodes[0].httpPort'; }
 
 # 开发账户
 proto_owner_label()       { proto_get '.validators.ownerAccount'; }

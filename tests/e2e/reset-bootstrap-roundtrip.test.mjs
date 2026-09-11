@@ -18,7 +18,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO_ROOT } from '../../tools/protocol/load.mjs';
+import { REPO_ROOT, loadProtocol } from '../../tools/protocol/load.mjs';
 
 const IDENTITY_PATH = resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json');
 const GENESIS_HASH_PATH = resolve(REPO_ROOT, 'blockchain/genesis/karmachain.genesis.hash');
@@ -58,7 +58,9 @@ const sh = (script, { args = [], env: extraEnv = {}, timeout = 900_000 } = {}) =
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 
 // 端点从唯一事实来源派生，不写死 —— 端口与路径都是协议参数（SC-007）
-const protocol = readJson(resolve(REPO_ROOT, 'blockchain/protocol.json'));
+// 功能 005：部署描述已分家，这里要的是**合并视图**（`endpoints` 现住在 deployment.json）。
+// 读协议文件原文会静默得到 undefined —— 拼出的 URL 连不上，而错因看起来像「链挂了」。
+const protocol = loadProtocol();
 const RPC_URL = `http://${protocol.endpoints.publishedHosts[0]}:${protocol.endpoints.hostRpcPort}${protocol.endpoints.rpcPath}`;
 
 const rpc = async (method, params = []) => {

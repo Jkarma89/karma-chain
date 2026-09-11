@@ -27,7 +27,7 @@ import {
   createPublicClient, createWalletClient, defineChain, http, parseEther,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { REPO_ROOT } from '../protocol/load.mjs';
+import { REPO_ROOT, loadProtocol } from '../protocol/load.mjs';
 
 const readJson = (rel) => JSON.parse(readFileSync(resolve(REPO_ROOT, rel), 'utf8'));
 
@@ -49,7 +49,9 @@ function resolveRpcUrl(protocol) {
 
 /** 供错误信息使用 —— 读不到 protocol 也不能让报错本身炸掉。 */
 function rpcUrlOf(protocol) {
-  try { return resolveRpcUrl(protocol ?? readJson('blockchain/protocol.json')); } catch { return '(未知)'; }
+  // 功能 005：`endpoints` 已搬到 blockchain/deployment.json，必须走 `loadProtocol()` 拿合并视图。
+  // 直接读协议文件原文会得到 `undefined` —— 而它不会报错，只会静默拼出一个错 URL。
+  try { return resolveRpcUrl(protocol ?? loadProtocol()); } catch { return '(未知)'; }
 }
 
 /**
@@ -172,7 +174,7 @@ export async function probeChain({ protocol } = {}) {
     const started = Date.now();
     let txHash = null;
     try {
-      const p = protocol ?? readJson('blockchain/protocol.json');
+      const p = protocol ?? loadProtocol();   // 合并视图（功能 005）
       const { pub, wallet, recipient, rpcUrl } = makeClients(p);
       txHash = await wallet.sendTransaction({
         to: recipient.address,

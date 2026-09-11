@@ -11,11 +11,17 @@ import { dirname, resolve } from 'node:path';
 import Ajv2020 from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { getAddress, isAddress } from 'viem';
+import { DEPLOYMENT_FIELDS } from './field-ownership.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..', '..');
 export const DEFAULT_PROTOCOL_PATH = resolve(REPO_ROOT, 'blockchain', 'protocol.json');
 export const DEFAULT_SCHEMA_PATH = resolve(REPO_ROOT, 'blockchain', 'protocol.schema.json');
+
+// 部署描述（功能 005）：哪几台机器、什么地址与端口、故障边界怎么划。
+// **它不参与出生证明（stamp）** —— 改它不需要重置链。
+export const DEFAULT_DEPLOYMENT_PATH = resolve(REPO_ROOT, 'blockchain', 'deployment.json');
+export const DEFAULT_DEPLOYMENT_SCHEMA_PATH = resolve(REPO_ROOT, 'blockchain', 'deployment.schema.json');
 
 // Avalanche 主网 / Fuji 的 Network ID —— 本地网络绝不允许与之相同（spec 边缘用例"误连真实网络"）。
 const REAL_NETWORK_IDS = new Set([1, 5]);
@@ -215,6 +221,60 @@ export function validateConstraints(p) {
   return errors;
 }
 
+/**
+ * 两份 schema 的并集 —— 用来校验 `loadProtocol()` 返回的**合并视图**。
+ *
+ * 分家之后，"文件"和"视图"是两个层次：
+ *
+ *   - **文件**各按自己的 schema 校验（`loadProtocol` 里逐份做），
+ *     这保证了分家是干净的：协议文件里不许有部署字段，反之亦然。
+ *   - **视图**是合并后的完整形状，跨文件的业务约束（如 T-5：每边界至多 ⌊n/4⌋ 个验证者，
+ *     它同时需要协议侧的验证者数与部署侧的边界划分）只能在这一层校验。
+ *
+ * 所以两个 schema 都需要，而不是"合并了就不用分了"。
+ */
+export function mergedSchema(
+  protocolSchema = readJson(DEFAULT_SCHEMA_PATH),
+  deploymentSchema = readJson(DEFAULT_DEPLOYMENT_SCHEMA_PATH),
+) {
+  const skip = new Set(['$schema', 'deploymentVersion']);
+  // **必须有一个与协议 schema 不同的 `$id`**：ajv 按 `$id` 缓存已编译的 schema
+  // （见 validateSchema 里的 `ajv.getSchema(schema.$id) || ajv.compile(schema)`），
+  // 两份不同的 schema 共用一个 $id 时，第二份会被**静默地**当成第一份 ——
+  // 而报出来的错是有多余属性，实际一个多余的都没有。2026-09-11 在这上面绕了一圈。
+  // schema-sync 比对契约时会把 $id 归一化：契约描述的是**形状**，不是身份。
+  // 原注释（保留以说明为何不沿用协议侧的 $id）：合并视图描述的是
+  // "一份完整配置长什么样"，而那正是 001 契约描述的东西。换 `$id` 会让
+  // schema-sync 的契约比对漂移，而那条比对的意义恰恰是"拆分不该改变契约"。
+  return {
+    ...protocolSchema,
+    $id: 'https://karmachain.dev/schemas/merged-view.schema.json',
+    required: [
+      ...protocolSchema.required,
+      ...deploymentSchema.required.filter((k) => !skip.has(k) && !protocolSchema.required.includes(k)),
+    ],
+    properties: {
+      ...protocolSchema.properties,
+      ...Object.fromEntries(
+        Object.entries(deploymentSchema.properties).filter(([k]) => !skip.has(k) && k !== 'validators'),
+      ),
+      // validators 是唯一按子键拆开的字段 —— 两侧的子键都要收进来
+      validators: {
+        ...protocolSchema.properties.validators,
+        required: [
+          ...(protocolSchema.properties.validators.required ?? []),
+          ...(deploymentSchema.properties.validators.required ?? []),
+        ],
+        properties: {
+          ...protocolSchema.properties.validators.properties,
+          ...deploymentSchema.properties.validators.properties,
+        },
+      },
+    },
+    $defs: { ...(protocolSchema.$defs ?? {}), ...(deploymentSchema.$defs ?? {}) },
+  };
+}
+
 /** 完整校验（schema + 约束）。 */
 export function validateProtocol(protocol, schema) {
   const schemaErrors = validateSchema(protocol, schema);
@@ -223,12 +283,119 @@ export function validateProtocol(protocol, schema) {
   return { ok: constraintErrors.length === 0, errors: constraintErrors.map((e) => `constraint: ${e}`) };
 }
 
-/** 读取 + 校验；失败抛出含全部错误的 Error。 */
-export function loadProtocol(path = DEFAULT_PROTOCOL_PATH, schemaPath = DEFAULT_SCHEMA_PATH) {
+/**
+ * 把协议参数与部署描述合并成**一个完整视图**。
+ *
+ * ## 合并不等于没分家
+ *
+ * 功能 005 把部署描述（机器、地址、端口、故障边界）切到了单独的文件里，
+ * 因为它**不是协议参数** —— 改一台机器的端口不该让链重置。
+ * 但内存里的形状保持不变，于是 `render-*` / `poll.mjs` / `node-status.mjs` /
+ * `avalanche-api.mjs` 等 30 多个消费者**一行都不用改**。
+ *
+ * **文件是分开的、各有自己的 schema、出生证明（stamp）只算协议那份。**
+ * 守卫见 `tests/unit/deployment-split.test.mjs`：协议文件里不许残留部署字段，
+ * 反之亦然。
+ *
+ * `validators` 是唯一按子键拆开的顶层字段：`management` / `ownerAccount`
+ * 属协议（PoA 的治理主体，是链上权限），`count` / `nodes[]` 属部署。
+ */
+function mergeConfig(protocol, deployment) {
+  return {
+    ...protocol,
+    // `$schema` 与 `deploymentVersion` 是**文件自身的元信息**，不进合并视图 ——
+    // 合并视图必须与分家**之前**的形状逐字段相同，那是"30 多个消费者一行不改"的前提，
+    // 也是 tests/unit/schema-sync.test.mjs 能继续拿 001/002 的契约来比对的前提。
+    // 要读部署版本号请直接读那个文件（它不参与任何判据）。
+    ...Object.fromEntries(
+      Object.entries(deployment).filter(([k]) => k !== '$schema' && k !== 'deploymentVersion'),
+    ),
+    validators: { ...(protocol.validators ?? {}), ...(deployment.validators ?? {}) },
+  };
+}
+
+/**
+ * 读取 + 校验；失败抛出含全部错误的 Error。
+ *
+ * 两个文件**各自**按自己的 schema 校验（错误消息要说清是哪一份），
+ * 合并之后再跑跨文件的业务约束（如 T-5：每边界至多 ⌊n/4⌋ 个验证者 ——
+ * 它同时需要协议侧的验证者数与部署侧的边界划分）。
+ */
+/**
+ * 这次调用走的是**审计接缝**吗？（功能 005）
+ *
+ * 接缝指 `validate-topology.mjs --protocol <path>`：允许把**一份完整配置**
+ * （协议参数 + 部署描述合在一起）写成单个文件递进来，用途是"提交前先审一份拟改的拓扑，
+ * 不必先把改动落进唯一事实来源"。
+ *
+ * **两个条件必须同时成立，缺一不可：**
+ *
+ *   1. 路径是显式给出的（不是默认的 blockchain/protocol.json）
+ *   2. 文件里确实带着部署字段
+ *
+ * 条件 1 是这里最重要的一行。少了它，有人把 `topology` 写回
+ * blockchain/protocol.json 时，装载器会把它当成"一份完整配置"而**静默跳过**
+ * deployment.json —— 两个文件的分家就此成为摆设，**而没有任何东西会红**。
+ *
+ * **这个判定被提成具名函数正是为了能被测**：它原先内嵌在 `if` 里，
+ * 于是"宽松不得泄漏到默认路径"这条性质做不了变红检查 —— 去掉条件 1 之后
+ * 全套断言照旧全绿（2026-09-11 实测）。判定藏在表达式里，就等于没有判定。
+ * 守卫见 tests/unit/deployment-split.test.mjs。
+ */
+export function isAuditSeam(path, doc) {
+  const isExplicitPath = resolve(path) !== resolve(DEFAULT_PROTOCOL_PATH);
+  const carriesDeployment = DEPLOYMENT_FIELDS.some((k) => k in doc);
+  return isExplicitPath && carriesDeployment;
+}
+
+export function loadProtocol(
+  path = DEFAULT_PROTOCOL_PATH,
+  schemaPath = DEFAULT_SCHEMA_PATH,
+  deploymentPath = DEFAULT_DEPLOYMENT_PATH,
+  deploymentSchemaPath = DEFAULT_DEPLOYMENT_SCHEMA_PATH,
+) {
   const protocol = readJson(path);
-  const { ok, errors } = validateProtocol(protocol, readJson(schemaPath));
-  if (!ok) throw new Error(`protocol.json invalid (${path}):\n  - ${errors.join('\n  - ')}`);
-  return Object.freeze(protocol);
+
+  // --- 审计接缝：显式给出的单个文件可以是**一份完整配置**（功能 005）------------
+  //
+  // `validate-topology.mjs --protocol <path>` 的用途是「提交前先审一份拟改的拓扑，
+  // 不必先把改动落进唯一事实来源」。分家之后拓扑住在部署描述里，而这个接缝的
+  // 调用方（含 tests/integration/topology-cli.test.mjs）传的是**合并视图**写成的一个文件。
+  //
+  // 宽松**只对显式路径生效**。默认路径（blockchain/protocol.json）照旧严格按
+  // 协议 schema 校验 —— 否则把 `topology` 写回协议参数文件时，装载器会当它是
+  // "一份完整配置"而**静默跳过** deployment.json，两个文件的分家就成了摆设。
+  // 这不是把守卫放宽，而是不让审计接缝替真正的事实来源背书。
+  if (isAuditSeam(path, protocol)) {
+    const schema = mergedSchema(readJson(schemaPath), readJson(deploymentSchemaPath));
+    const errs = validateSchema(protocol, schema);
+    if (errs.length) throw new Error(`${path} invalid (按合并视图校验):\n  - ${errs.join('\n  - ')}`);
+    const cErrs = validateConstraints(protocol);
+    if (cErrs.length) {
+      throw new Error(`configuration invalid:\n  - ${cErrs.map((e) => `constraint: ${e}`).join('\n  - ')}`);
+    }
+    return Object.freeze(protocol);
+  }
+
+  const deployment = readJson(deploymentPath);
+
+  // 逐份做 schema 校验 —— 消息里带上是哪一份，否则"某个字段缺了"无从下手
+  for (const [name, doc, sPath] of [
+    ['protocol.json', protocol, schemaPath],
+    ['deployment.json', deployment, deploymentSchemaPath],
+  ]) {
+    const errs = validateSchema(doc, readJson(sPath));
+    if (errs.length) throw new Error(`${name} invalid:\n  - ${errs.join('\n  - ')}`);
+  }
+
+  const merged = mergeConfig(protocol, deployment);
+
+  // 业务约束跨两个文件，只能在合并之后跑
+  const constraintErrors = validateConstraints(merged);
+  if (constraintErrors.length) {
+    throw new Error(`configuration invalid:\n  - ${constraintErrors.map((e) => `constraint: ${e}`).join('\n  - ')}`);
+  }
+  return Object.freeze(merged);
 }
 
 // --- 派生值（不存储于 protocol.json，避免第二份事实）---

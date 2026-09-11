@@ -63,13 +63,13 @@ nodes_inventory_json() {
       _node_entry "${d}" | awk -v role=primary '{print role" "$1" "$2}'
     done | sort -k3 -n | awk '{printf "%s %s %s %d\n", $1, $2, $3, NR}'
 
-    # l1-N 的序号取自 protocol.json（端口 → validators.nodes[].index），保证与密钥目录一致
+    # l1-N 的序号取自部署描述（端口 → validators.nodes[].index），保证与密钥目录一致
     for d in "${l1_dir}"/NodeID-*; do
       [ -d "${d}" ] || continue
       local e nodeid port idx
       e="$(_node_entry "${d}")" || continue
       nodeid="${e%% *}"; port="${e##* }"
-      idx="$(proto_get "[.validators.nodes[] | select(.httpPort == ${port}) | .index][0] // empty" 2>/dev/null || true)"
+      idx="$(deploy_get "[.validators.nodes[] | select(.httpPort == ${port}) | .index][0] // empty" 2>/dev/null || true)"
       printf 'l1-validator %s %s %s\n' "${nodeid}" "${port}" "${idx:-0}"
     done | sort -k4 -n
   } | jq -R -s --arg ip "${ip}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson proxy "$(proto_host_rpc_port)" '

@@ -47,7 +47,7 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
 - [ ] T001 建 `specs/005-elastic-membership/checklists/dod.md`：宪法第十七条八项、
       16 条 SC 逐条、38 条 FR 的判据映射（004 的 analyze 教训：编号断链会让回填漏项）、
       两份契约的「会变红吗」核对表、V-01…V-18、实施期缺陷一节
-- [ ] T002 建 `specs/005-elastic-membership/baseline.md`，记下**分家之前**的：
+- [X] T002 建 `specs/005-elastic-membership/baseline.md`，记下**分家之前**的：
       10 项生成物**逐个 sha256**、stamp 六项的当前值、`protocol.json` 的 sha256、
       以及**每台机器**本边界节点容器的 `Created` / `StartedAt`（逐台各记一份）
 
@@ -59,7 +59,7 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
 
 ## Phase 2: Foundational（阻塞后续全部）
 
-- [ ] T003 归属表定稿：把 [data-model 第 0 节](./data-model.md) 的逐字段归属写成
+- [X] T003 归属表定稿：把 [data-model 第 0 节](./data-model.md) 的逐字段归属写成
       **可执行的清单**（生成器与守卫共用同一份），并对三个边界情形做出决定并记录理由：
       ① `avalanche.*Version`（倾向留在协议侧）② `endpoints.rpcPath`（倾向移出 + 一致性守卫）
       ③ `validators.count`（降级为期望成员数）；
@@ -67,9 +67,9 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
       保持逐字节相同（`/speckit-analyze` 的 A1）
 - [ ] T004 ABI 取得途径定稿（research R-03 三选一），并写明版本锁定方式 ——
       ABI 必须与 `avalancheCliVersion`（当前 v1.9.6）对得上，且有守卫防止两者漂移
-- [ ] T005 `f(n)` 通用化：把容错推导从"按当前 n 写死"改为对任意 n 正确，
+- [X] T005 `f(n)` 通用化：把容错推导从"按当前 n 写死"改为对任意 n 正确，
       落在 `tools/protocol/load.mjs` 的 `faultTolerance`
-- [ ] T006 [P] `tests/unit/fault-tolerance-range.test.mjs`：`f(n)` 对 **n = 4…12 逐格**断言
+- [X] T006 [P] `tests/unit/fault-tolerance-range.test.mjs`：`f(n)` 对 **n = 4…12 逐格**断言
       （[data-model 第 3 节](./data-model.md) 那张表的机械转录）
 
 > T005/T006 放在 Foundational 而不是 US5，因为 US2/US3/US5 都要用它。
@@ -87,50 +87,78 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ### 守卫先行
 
-- [ ] T007 [P] [US1] `tests/unit/deployment-split.test.mjs`：按 T003 的归属表断言 ——
+- [X] T007 [P] [US1] `tests/unit/deployment-split.test.mjs`：按 T003 的归属表断言 ——
       协议参数文件**不含**任何部署字段，部署文件**不含**任何协议字段
-- [ ] T008 [P] [US1] `tests/unit/derive-topology-shape.test.mjs`：对同一份输入，
+- [X] T008 [P] [US1] `tests/unit/derive-topology-shape.test.mjs`：对同一份输入，
       `deriveTopology()` 的输出与分家前 `deepEqual`（形状锁）
 
 ### 实现
 
-- [ ] T009 [US1] 新建 `blockchain/deployment.json`（名称由 T003 定）与
+- [X] T009 [US1] 新建 `blockchain/deployment.json`（名称由 T003 定）与
       `blockchain/deployment.schema.json`；从 `blockchain/protocol.json` 与
       `blockchain/protocol.schema.json` **移出**部署字段（一次切干净，不留兼容）
-- [ ] T010 [US1] 改 `tools/protocol/load.mjs`：读两个文件；
+- [X] T010 [US1] 改 `tools/protocol/load.mjs`：读两个文件；
       **`deriveTopology()` 的输出形状一个字段都不许变**
-- [ ] T011 [US1] 改 `docker/bootstrap/entrypoint.sh`：`jq` 从新文件读 topology
+
+  **实施期缺陷 ①（漏掉审计接缝，由集成套件抓到）**：
+  `validate-topology.mjs --protocol <path>` 的调用方递进来的是一份**合并视图**写成的
+  单个文件，而我改完装载器后它仍按协议 schema 校验 → `/ must NOT have additional properties`。
+  三条断言红在 `tests/integration/topology-cli.test.mjs`。
+  **单元套件当时 816/816 全绿** —— 静态残留扫描（T012）看不见这类"整份文件经 CLI 传递"的接缝。
+  修法：`loadProtocol()` 增一条审计接缝分支。
+
+  **实施期缺陷 ②（修法自己差点埋一个不会变红的守卫）**：
+  接缝的判定原先内嵌在 `if (isExplicitPath && carriesDeployment)` 里。
+  变红检查时发现：**去掉 `isExplicitPath` 这一半，全套断言照旧全绿。**
+  而那一半正是关键 —— 少了它，有人把 `topology` 写回 `blockchain/protocol.json` 时，
+  装载器会把它当成"一份完整配置"而**静默跳过** `deployment.json`，
+  两个文件的分家成为摆设。为此把判定提成 `isAuditSeam(path, doc)` 并补四条断言
+  （四种组合逐一断言），两半各自都能变红。
+  **教训：判定藏在表达式里，就等于没有判定。**
+- [X] T011 [US1] 改 `docker/bootstrap/entrypoint.sh`：`jq` 从新文件读 topology
       （shell 侧唯一直接读原始字段的地方）
-- [ ] T012 [US1] **用脚本枚举**所有直接读旧路径（`protocol.topology` / `p.topology`）的文件
+- [X] T012 [US1] **用脚本枚举**所有直接读旧路径（`protocol.topology` / `p.topology`）的文件
       并逐个改读新来源，最后断言**零残留**。
       *（`/speckit-analyze` 的 D1：research R-02 的清单结尾是"等"，**那不是穷举** ——
       按名单改一定会漏。把"数数"换成"扫描"。）*
-- [ ] T013 [US1] `npm run render` 重新生成，`npm run render:check` 必须 10/10
+- [X] T013 [US1] `npm run render` 重新生成，`npm run render:check` 必须 10/10
 
 ### 判据
 
-- [ ] T014 [US1] **quickstart 场景 A**：分家前后 10 项生成物**逐字节相同**
+- [X] T014 [US1] **quickstart 场景 A**：分家前后 10 项生成物**逐字节相同**
       （对着 T002 的 sha256 清单 `sha256sum -c`）—— **这是本期最强的不回归判据**
-- [ ] T015 [US1] quickstart 场景 B：`deriveTopology()` 输出 `deepEqual`
+- [X] T015 [US1] quickstart 场景 B：`deriveTopology()` 输出 `deepEqual`
 
 ### 变红检查
 
-- [ ] T016 [US1] 变红 ①：把 `topology` 写回协议参数文件 → T007 必须失败
-- [ ] T017 [US1] 变红 ②（**不能只做 ①**）：改一个真正的协议参数（如 `chain.chainId`）
+- [X] T016 [US1] 变红 ①：把 `topology` 写回协议参数文件 → T007 必须失败
+- [X] T017 [US1] 变红 ②（**不能只做 ①**）：改一个真正的协议参数（如 `chain.chainId`）
       → 节点**必须**退出 12（契约 D-5 / quickstart 场景 D）。**做完记得改回去**
-- [ ] T018 [US1] 变红 ③：在分家时顺手"优化"一行渲染输出 → T014 的 sha256 比对必须失败
-- [ ] T019 [US1] 变红 ④：改一个 `deriveTopology()` 的输出字段名 → T008 必须失败
+- [X] T018 [US1] 变红 ③：在分家时顺手"优化"一行渲染输出 → T014 的 sha256 比对必须失败
+- [X] T019 [US1] 变红 ④：改一个 `deriveTopology()` 的输出字段名 → T008 必须失败
 
 > **T017 与 T016 同等重要。** T016 证明保护范围缩小了，
 > T017 证明它**没有缩过头** —— 只做前者会得到一个什么都不拦的守卫。
 
-- [ ] T063 [US1] 改 `tools/protocol/render-docs.mjs`：读**两个**文件，
+- [X] T063 [US1] 改 `tools/protocol/render-docs.mjs`：读**两个**文件，
       使 `docs/protocol-parameters.md` 分家前后**逐字节相同**（[R-10](./research.md)）。
       它还维护着一份"每个字段都必须被文档化"的完整性清单 —— 那份清单要覆盖两个文件
 
   *（编号在后：本条与 T064 是 `/speckit-analyze` 补的，既有编号引用一律不动。）*
 
-- [ ] T064 [US1] `tests/unit/stamp-scope.test.mjs`：**守卫 stamp 的作用域** ——
+  **实施记录（2026-09-11）**：`render-docs.mjs` 第 38 行本来就走 `loadProtocol()`，
+  而 `loadProtocol()` 现在读两个文件 —— 所以**代码一行没改**，
+  `docs/protocol-parameters.md` 自动逐字节相同。这是"在装载层合并"这个选择的直接红利。
+
+  **但发现一处真缺陷，刻意留到 Polish**：生成出的文档头部仍写着
+  `GENERATED FROM blockchain/protocol.json` 与「唯一权威定义：`blockchain/protocol.json`」，
+  而现在有一半字段（`topology` / `endpoints` / `primaryNetwork` / `validators.{count,nodes}`）
+  **不在那个文件里**。照着文档去改 `topology` 的人会找不到字段。
+  改它会让 `docs/protocol-parameters.md` 变字节，而 SC-003（生成物逐字节相同）
+  是本期**最强的不回归判据** —— 在 US1 里为它开口子，等于把这期最有力的信号变钝。
+  所以记为 **T065**，在 Polish 阶段单独改、单独审。
+
+- [X] T064 [US1] `tests/unit/stamp-scope.test.mjs`：**守卫 stamp 的作用域** ——
       ① 从当前两个文件计算 stamp 六项，断言结果**只依赖协议参数侧**：
       改部署文件（含**它自己的版本号**）后六项的计算结果**逐字节不变**；
       ② 断言 `stamp_fields()` 的输入里**不含**部署文件的任何内容。
@@ -145,7 +173,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ### 跨机与现场
 
-- [ ] T020 [US1] 扩 `scripts/devnet-start` 的 `warn_stale_mounts`：能报出
+- [X] T020 [US1] 扩 `scripts/devnet-start` 的 `warn_stale_mounts`：能报出
       "这台机器还在读旧格式"（FR-008 / quickstart 场景 F）
 - [ ] T021 [US1] **quickstart 场景 E（需五台）**：往部署描述加一台机器并同步到五台，
       核 stamp 六项逐字节不变、**零个节点退出 12**、创世哈希不变、
@@ -284,6 +312,17 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       `git diff --exit-code package.json package-lock.json`（**FR-035** 零新增依赖）；
       并确认 `tests/integration/no-cli-in-runtime.test.mjs` **保持通过**
       （**FR-034** 不请回 Avalanche CLI —— 既有守卫已覆盖，本期只需不打破它）
+- [ ] T065 改 `tools/protocol/render-docs.mjs` 生成出的**出处声明与权威定义那两句**：
+      现在只提 `protocol.json`，而一半字段已在 `deployment.json`（来自 T063 的实施记录）。
+      **这是本期唯一一处刻意让生成物变字节的改动** —— 必须在 SC-003 的比对
+      **通过之后**再做，并在提交信息里写明"此次生成物差异是有意的，且只差这两句"
+- [ ] T066 `docker/lib/` 的三个死文件：`runtime.sh` / `nodes.sh` / `health.sh`
+      **没有进任何镜像、也没有被任何脚本 source**（001 单容器时代的遗留，
+      T012 枚举时查实）。`nodes.sh:72` 当时还在用 `proto_get` 取部署字段，
+      已随手改成 `deploy_get` —— 但**一个没人执行的文件里的正确调用毫无价值**。
+      本条只**记录并核实**这个判断，删除与否留给单独一次清理（不在 005 范围内：
+      宪法要求删除既有制品走明示流程，而本期的承诺里没有这一项）
+
 - [ ] T061 **quickstart 场景 R（SC-016）**：找一名**未参与本期**的人，
       只给他文档，让他把一台机器加成验证者。**卡住就改文档，不改判据**
 - [ ] T062 回填 `checklists/dod.md`：16 条 SC、38 条 FR、两份契约的变红核对表、

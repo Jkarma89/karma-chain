@@ -1,0 +1,311 @@
+{
+  "local": {
+    "activeDeployment": "local",
+    "containerNetwork": {
+      "subnet": "172.28.0.0/24",
+      "firstHost": 11
+    },
+    "topologyNodes": [
+      {
+        "id": "l1-1",
+        "role": "l1-validator",
+        "httpPort": 21660,
+        "stakingPort": 21661,
+        "keyDir": "blockchain/validators/dev/node-1/",
+        "domain": "local",
+        "address": "172.28.0.11",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-2",
+        "role": "l1-validator",
+        "httpPort": 21662,
+        "stakingPort": 21663,
+        "keyDir": "blockchain/validators/dev/node-2/",
+        "domain": "local",
+        "address": "172.28.0.12",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-3",
+        "role": "l1-validator",
+        "httpPort": 21664,
+        "stakingPort": 21665,
+        "keyDir": "blockchain/validators/dev/node-3/",
+        "domain": "local",
+        "address": "172.28.0.13",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-4",
+        "role": "l1-validator",
+        "httpPort": 21666,
+        "stakingPort": 21667,
+        "keyDir": "blockchain/validators/dev/node-4/",
+        "domain": "local",
+        "address": "172.28.0.14",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-5",
+        "role": "l1-validator",
+        "httpPort": 21668,
+        "stakingPort": 21669,
+        "keyDir": "blockchain/validators/dev/node-5/",
+        "domain": "local",
+        "address": "172.28.0.15",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "primary-1",
+        "role": "primary",
+        "httpPort": 21650,
+        "stakingPort": 21651,
+        "keyDir": "blockchain/validators/dev/primary-1/",
+        "domain": "local",
+        "address": "172.28.0.16",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      },
+      {
+        "id": "primary-2",
+        "role": "primary",
+        "httpPort": 21652,
+        "stakingPort": 21653,
+        "keyDir": "blockchain/validators/dev/primary-2/",
+        "domain": "local",
+        "address": "172.28.0.17",
+        "hostAddress": "127.0.0.1",
+        "platform": "linux"
+      }
+    ],
+    "failureDomains": [
+      {
+        "id": "local",
+        "platform": "linux",
+        "address": "127.0.0.1",
+        "nodes": [
+          "l1-1",
+          "l1-2",
+          "l1-3",
+          "l1-4",
+          "l1-5",
+          "primary-1",
+          "primary-2"
+        ],
+        "sharedFailureFactors": [
+          "host:single-machine"
+        ],
+        "validatorCount": 5
+      }
+    ],
+    "faultTolerance": {
+      "validatorCount": 5,
+      "maxOfflineValidators": 1,
+      "domainCount": 1,
+      "maxValidatorsPerDomain": 5,
+      "declaredWithinLimit": false,
+      "effectiveDomainCount": 1,
+      "effectiveDomains": [
+        {
+          "ids": [
+            "local"
+          ],
+          "factors": [
+            "host:single-machine"
+          ],
+          "validators": 5
+        }
+      ],
+      "tolerateWholeDomainLoss": false
+    }
+  },
+  "lan": {
+    "activeDeployment": "lan",
+    "containerNetwork": null,
+    "topologyNodes": [
+      {
+        "id": "l1-1",
+        "role": "l1-validator",
+        "httpPort": 21660,
+        "stakingPort": 21661,
+        "keyDir": "blockchain/validators/dev/node-1/",
+        "domain": "win-1",
+        "address": "192.168.1.3",
+        "hostAddress": "192.168.1.3",
+        "platform": "windows"
+      },
+      {
+        "id": "l1-2",
+        "role": "l1-validator",
+        "httpPort": 21662,
+        "stakingPort": 21663,
+        "keyDir": "blockchain/validators/dev/node-2/",
+        "domain": "win-2",
+        "address": "192.168.1.13",
+        "hostAddress": "192.168.1.13",
+        "platform": "windows"
+      },
+      {
+        "id": "l1-3",
+        "role": "l1-validator",
+        "httpPort": 21664,
+        "stakingPort": 21665,
+        "keyDir": "blockchain/validators/dev/node-3/",
+        "domain": "ubuntu-1",
+        "address": "192.168.1.21",
+        "hostAddress": "192.168.1.21",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-4",
+        "role": "l1-validator",
+        "httpPort": 21666,
+        "stakingPort": 21667,
+        "keyDir": "blockchain/validators/dev/node-4/",
+        "domain": "ubuntu-2",
+        "address": "192.168.1.22",
+        "hostAddress": "192.168.1.22",
+        "platform": "linux"
+      },
+      {
+        "id": "l1-5",
+        "role": "l1-validator",
+        "httpPort": 21668,
+        "stakingPort": 21669,
+        "keyDir": "blockchain/validators/dev/node-5/",
+        "domain": "ubuntu-3",
+        "address": "192.168.1.23",
+        "hostAddress": "192.168.1.23",
+        "platform": "linux"
+      },
+      {
+        "id": "primary-1",
+        "role": "primary",
+        "httpPort": 21650,
+        "stakingPort": 21651,
+        "keyDir": "blockchain/validators/dev/primary-1/",
+        "domain": "ubuntu-1",
+        "address": "192.168.1.21",
+        "hostAddress": "192.168.1.21",
+        "platform": "linux"
+      },
+      {
+        "id": "primary-2",
+        "role": "primary",
+        "httpPort": 21652,
+        "stakingPort": 21653,
+        "keyDir": "blockchain/validators/dev/primary-2/",
+        "domain": "ubuntu-2",
+        "address": "192.168.1.22",
+        "hostAddress": "192.168.1.22",
+        "platform": "linux"
+      }
+    ],
+    "failureDomains": [
+      {
+        "id": "win-1",
+        "platform": "windows",
+        "address": "192.168.1.3",
+        "nodes": [
+          "l1-1"
+        ],
+        "sharedFailureFactors": [],
+        "validatorCount": 1
+      },
+      {
+        "id": "win-2",
+        "platform": "windows",
+        "address": "192.168.1.13",
+        "nodes": [
+          "l1-2"
+        ],
+        "sharedFailureFactors": [],
+        "validatorCount": 1
+      },
+      {
+        "id": "ubuntu-1",
+        "platform": "linux",
+        "address": "192.168.1.21",
+        "nodes": [
+          "l1-3",
+          "primary-1"
+        ],
+        "sharedFailureFactors": [],
+        "validatorCount": 1
+      },
+      {
+        "id": "ubuntu-2",
+        "platform": "linux",
+        "address": "192.168.1.22",
+        "nodes": [
+          "l1-4",
+          "primary-2"
+        ],
+        "sharedFailureFactors": [],
+        "validatorCount": 1
+      },
+      {
+        "id": "ubuntu-3",
+        "platform": "linux",
+        "address": "192.168.1.23",
+        "nodes": [
+          "l1-5"
+        ],
+        "sharedFailureFactors": [],
+        "validatorCount": 1
+      }
+    ],
+    "faultTolerance": {
+      "validatorCount": 5,
+      "maxOfflineValidators": 1,
+      "domainCount": 5,
+      "maxValidatorsPerDomain": 1,
+      "declaredWithinLimit": true,
+      "effectiveDomainCount": 5,
+      "effectiveDomains": [
+        {
+          "ids": [
+            "win-1"
+          ],
+          "factors": [],
+          "validators": 1
+        },
+        {
+          "ids": [
+            "win-2"
+          ],
+          "factors": [],
+          "validators": 1
+        },
+        {
+          "ids": [
+            "ubuntu-1"
+          ],
+          "factors": [],
+          "validators": 1
+        },
+        {
+          "ids": [
+            "ubuntu-2"
+          ],
+          "factors": [],
+          "validators": 1
+        },
+        {
+          "ids": [
+            "ubuntu-3"
+          ],
+          "factors": [],
+          "validators": 1
+        }
+      ],
+      "tolerateWholeDomainLoss": true
+    }
+  }
+}

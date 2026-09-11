@@ -31,6 +31,12 @@ preflight_tools() {
 preflight_protocol() {
   [ -r "${PROTOCOL_FILE}" ] || pf_fail ${EXIT_DEPS} configuration "protocol file not readable at ${PROTOCOL_FILE}; is ./blockchain mounted read-only at /workspace/blockchain?"
   jq -e . "${PROTOCOL_FILE}" >/dev/null 2>&1 || pf_fail ${EXIT_DEPS} configuration "protocol file is not valid JSON: ${PROTOCOL_FILE}"
+  # 功能 005：部署描述是第二个必需文件。缺它时若不在这里拦下，
+  # 报出来的会是一句 jq 的 "null (null) has no keys" —— 无从下手。
+  if [ -n "${DEPLOYMENT_FILE:-}" ]; then
+    [ -r "${DEPLOYMENT_FILE}" ] || pf_fail ${EXIT_DEPS} configuration "deployment file not readable at ${DEPLOYMENT_FILE}; is ./blockchain mounted at /workspace/blockchain?"
+    jq -e . "${DEPLOYMENT_FILE}" >/dev/null 2>&1 || pf_fail ${EXIT_DEPS} configuration "deployment file is not valid JSON: ${DEPLOYMENT_FILE}"
+  fi
   [ "$(proto_environment)" = "dev" ] || pf_fail ${EXIT_DEPS} configuration "protocol.json environment must be 'dev' (got $(proto_environment))"
   [ "$(proto_chain_id)" != "$(proto_mainnet_chain_id)" ] || pf_fail ${EXIT_DEPS} configuration "chainId equals reservedMainnetChainId — refusing to impersonate mainnet"
   local genesis="/workspace/blockchain/genesis/karmachain.genesis.json"

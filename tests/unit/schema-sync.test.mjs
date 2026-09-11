@@ -10,7 +10,7 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO_ROOT, DEFAULT_SCHEMA_PATH } from '../../tools/protocol/load.mjs';
+import { REPO_ROOT, DEFAULT_SCHEMA_PATH, mergedSchema } from '../../tools/protocol/load.mjs';
 
 const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 
@@ -20,9 +20,28 @@ const IDENTITY_CONTRACT = resolve(REPO_ROOT, 'specs/002-resilient-validator-netw
 const IDENTITY_RUNTIME = resolve(REPO_ROOT, 'blockchain/chain-identity.schema.json');
 
 describe('protocol.schema.json 与其两个契约同步', () => {
-  const runtime = readJson(DEFAULT_SCHEMA_PATH);
-  const base = readJson(BASE_CONTRACT);
-  const frag = readJson(TOPOLOGY_CONTRACT);
+  // 功能 005 把 schema 拆成了两份（协议参数 / 部署描述）。
+  // **契约没有变** —— 001 与 002 的契约描述的是"一份完整配置长什么样"，
+  // 而那个形状现在由两份 schema 的并集表达。所以这里比对的是合并后的 schema：
+  // 拆分本身不该让契约漂移，若它漂了，说明拆的时候顺手改了别的东西。
+  // 合并 schema 有自己的 $id（ajv 按 $id 缓存，两份不同 schema 不能共用一个）。
+  // **契约描述的是一份完整配置长什么样，不是它叫什么** —— 所以比对前归一化 $id。
+  // 若哪天真要改契约描述的形状，下面的逐字段比对照样会红。
+  //
+  // 另一处归一化：JSON Schema 的 `required` 语义上是**集合**，顺序无意义。
+  // 分家把 validators 的必填项拆到了两份 schema 里，合并时的拼接顺序与拆分前不同 ——
+  // 那不是漂移。**排序是归一化，不是放宽**：少一项或多一项照样会红。
+  const sortRequired = (x) => {
+    if (Array.isArray(x)) return x.map(sortRequired);
+    if (x && typeof x === 'object') {
+      return Object.fromEntries(Object.entries(x).map(([k, v]) =>
+        [k, k === 'required' && Array.isArray(v) ? [...v].sort() : sortRequired(v)]));
+    }
+    return x;
+  };
+  const runtime = sortRequired({ ...mergedSchema(), $id: readJson(BASE_CONTRACT).$id });
+  const base = sortRequired(readJson(BASE_CONTRACT));
+  const frag = sortRequired(readJson(TOPOLOGY_CONTRACT));
 
   test('基础部分与 001 契约逐字段一致（除 topology、$defs 与 required 的增量外无差异）', () => {
     // required 单独比对（见下一条：只增不减）—— 002 把 topology 列为必填，属于合法增量

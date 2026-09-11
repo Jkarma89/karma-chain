@@ -11,11 +11,17 @@ import {
   readJson,
   DEFAULT_PROTOCOL_PATH,
   DEFAULT_SCHEMA_PATH,
+  mergedSchema,
   RPC_CHAIN_VM_PROTOCOL,
 } from '../../tools/protocol/load.mjs';
 
-const schema = readJson(DEFAULT_SCHEMA_PATH);
-const good = readJson(DEFAULT_PROTOCOL_PATH);
+// 功能 005 之后，"一份完整的配置"来自**两个文件的合并** ——
+// 协议参数（本文件校验的重点）与部署描述各住一份，由装载层合并成一个视图。
+// 本套件校验的是**完整形状**上的业务约束（如 T-5 同时需要验证者数与边界划分），
+// 所以用合并视图 + 合并 schema；而"分家是否干净"由
+// tests/unit/deployment-split.test.mjs 守着，两者各管一段。
+const schema = mergedSchema();
+const good = loadProtocol();
 
 /** 深拷贝后应用一次变更，返回违例样本。 */
 function mutate(fn) {

@@ -12,9 +12,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadContext } from '../../tools/dashboard/poll.mjs';
-import { REPO_ROOT } from '../../tools/protocol/load.mjs';
+import { REPO_ROOT, loadProtocol } from '../../tools/protocol/load.mjs';
 
-const protocol = JSON.parse(readFileSync(resolve(REPO_ROOT, 'blockchain/protocol.json'), 'utf8'));
+// 功能 005：合并视图。下方「面板不得改写事实来源」那条仍按字节读**原文**比对 ——
+// 那条测的是「文件没被动过」，与「取值取自哪一侧」是两件事。
+const protocol = loadProtocol();
 
 describe('活动形态（lan）的节点与边界', () => {
   let ctx;

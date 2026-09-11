@@ -1,0 +1,174 @@
+{
+  "$schema": "./deployment.schema.json",
+  "deploymentVersion": "1.0.0",
+  "topology": {
+    "activeDeployment": "lan",
+    "nodes": [
+      {
+        "id": "l1-1",
+        "role": "l1-validator",
+        "validatorIndex": 1
+      },
+      {
+        "id": "l1-2",
+        "role": "l1-validator",
+        "validatorIndex": 2
+      },
+      {
+        "id": "l1-3",
+        "role": "l1-validator",
+        "validatorIndex": 3
+      },
+      {
+        "id": "l1-4",
+        "role": "l1-validator",
+        "validatorIndex": 4
+      },
+      {
+        "id": "l1-5",
+        "role": "l1-validator",
+        "validatorIndex": 5
+      },
+      {
+        "id": "primary-1",
+        "role": "primary",
+        "httpPort": 21650,
+        "stakingPort": 21651,
+        "keyDir": "blockchain/validators/dev/primary-1/"
+      },
+      {
+        "id": "primary-2",
+        "role": "primary",
+        "httpPort": 21652,
+        "stakingPort": 21653,
+        "keyDir": "blockchain/validators/dev/primary-2/"
+      }
+    ],
+    "deployments": {
+      "local": {
+        "description": "单机全部节点（阶段一）。只有 1 个故障边界，不做整机失效容错承诺。",
+        "containerNetwork": {
+          "subnet": "172.28.0.0/24",
+          "firstHost": 11
+        },
+        "failureDomains": [
+          {
+            "id": "local",
+            "platform": "linux",
+            "address": "127.0.0.1",
+            "nodes": [
+              "l1-1",
+              "l1-2",
+              "l1-3",
+              "l1-4",
+              "l1-5",
+              "primary-1",
+              "primary-2"
+            ],
+            "sharedFailureFactors": [
+              "host:single-machine"
+            ]
+          }
+        ]
+      },
+      "lan": {
+        "description": "5 台独立物理机，5 个故障边界，每边界恰好 1 个 L1 验证者。2026-09-08 换过硬件并重新清点：五台的 MAC 互不相同、无虚拟机厂商 OUI、win-1 上已无 vmware-vmx 进程 —— 此前（2026-09-07）声明的 5 个边界里有 3 个是 win-1/win-2 上的 VMware 客户机，那次的 hypervisor 因素已随硬件更换消除。ubuntu-1/ubuntu-2 的 MAC OUI 为 DC:A6:32（Raspberry Pi Trading），即 arm64 —— 节点镜像走 TARGETARCH，binaries.env 备有 arm64 的 sha256。2 个 Primary 节点放在 Ubuntu 机器上：它们是验证者的引导目标，而 Windows 上的容器运行时需要用户登录才启动（ADR-0006）。清点方法与维护责任见 docs/adr/0007-failure-domain-independence.md。",
+        "failureDomains": [
+          {
+            "id": "win-1",
+            "platform": "windows",
+            "address": "192.168.1.3",
+            "nodes": [
+              "l1-1"
+            ],
+            "sharedFailureFactors": []
+          },
+          {
+            "id": "win-2",
+            "platform": "windows",
+            "address": "192.168.1.13",
+            "nodes": [
+              "l1-2"
+            ],
+            "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-1",
+            "platform": "linux",
+            "address": "192.168.1.21",
+            "nodes": [
+              "l1-3",
+              "primary-1"
+            ],
+            "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-2",
+            "platform": "linux",
+            "address": "192.168.1.22",
+            "nodes": [
+              "l1-4",
+              "primary-2"
+            ],
+            "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-3",
+            "platform": "linux",
+            "address": "192.168.1.23",
+            "nodes": [
+              "l1-5"
+            ],
+            "sharedFailureFactors": []
+          }
+        ]
+      }
+    }
+  },
+  "endpoints": {
+    "hostRpcPort": 8545,
+    "publishedHosts": [
+      "127.0.0.1",
+      "localhost"
+    ],
+    "rpcPath": "/ext/bc/karmachain/rpc"
+  },
+  "primaryNetwork": {
+    "nodeCount": 2
+  },
+  "validators": {
+    "count": 5,
+    "nodes": [
+      {
+        "index": 1,
+        "httpPort": 21660,
+        "stakingPort": 21661,
+        "keyDir": "blockchain/validators/dev/node-1/"
+      },
+      {
+        "index": 2,
+        "httpPort": 21662,
+        "stakingPort": 21663,
+        "keyDir": "blockchain/validators/dev/node-2/"
+      },
+      {
+        "index": 3,
+        "httpPort": 21664,
+        "stakingPort": 21665,
+        "keyDir": "blockchain/validators/dev/node-3/"
+      },
+      {
+        "index": 4,
+        "httpPort": 21666,
+        "stakingPort": 21667,
+        "keyDir": "blockchain/validators/dev/node-4/"
+      },
+      {
+        "index": 5,
+        "httpPort": 21668,
+        "stakingPort": 21669,
+        "keyDir": "blockchain/validators/dev/node-5/"
+      }
+    ]
+  }
+}

@@ -17,7 +17,7 @@ import { loadContext } from '../../tools/dashboard/poll.mjs';
 import { deriveTier } from '../../tools/dashboard/snapshot.mjs';
 import { loadProtocol, deriveTopology, REPO_ROOT } from '../../tools/protocol/load.mjs';
 
-const protocol = JSON.parse(readFileSync(resolve(REPO_ROOT, 'blockchain/protocol.json'), 'utf8'));
+const protocol = loadProtocol();   // 功能 005：合并视图（topology 已在 deployment.json）
 
 describe('面板与 load.mjs 的容错视图是同一个对象', () => {
   let ctx; let fromLoad;

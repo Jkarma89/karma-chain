@@ -4,6 +4,18 @@
 $ctx = Get-DevnetContext; Assert-Docker
 
 $identity = Join-Path $ctx.Root 'blockchain/chain-identity/karmachain.identity.json'
+# --- 配置格式检查（功能 005 / T020 / FR-008）---------------------------------
+# 与 devnet-start.sh 等价。五台机器靠 git pull 同步，而 pull 会失败、会被跳过、
+# 会停在旧提交上。「这台机器还在读旧格式」有两种样子，两种都要指名道姓报出来。
+if (-not (Test-Path './blockchain/deployment.json')) {
+    Write-Error 'blockchain/deployment.json 不存在 —— 这台机器还在读旧格式。功能 005 把部署描述从 protocol.json 切了出来；本机的仓库停在分家之前。修法：git pull（生成物已提交，本机不需要 node/npm）'
+    exit 10
+}
+if (Select-String -Path './blockchain/protocol.json' -Pattern '"topology"' -Quiet) {
+    Write-Error 'blockchain/protocol.json 里仍有 topology —— 半新半旧。两个文件都在，但协议参数文件是分家前的版本；取值会从哪一份来取决于读取路径，而两份可以不一致。修法：git status 看是否有本地改动挡住了 pull'
+    exit 10
+}
+
 if (-not (Test-Path $identity)) {
     Write-Error "链尚未建立 —— 先运行 scripts/devnet-bootstrap.ps1"; exit 10
 }

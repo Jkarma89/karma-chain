@@ -3,11 +3,13 @@
 // 全部用内存对象构造，不改动 blockchain/protocol.json。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { loadProtocol, validateProtocol, validateConstraints, deriveTopology, readJson, DEFAULT_SCHEMA_PATH, TOPOLOGY_VIOLATION_TAG } from '../../tools/protocol/load.mjs';
+import { loadProtocol, validateProtocol, validateConstraints, deriveTopology, readJson, mergedSchema, DEFAULT_SCHEMA_PATH, TOPOLOGY_VIOLATION_TAG } from '../../tools/protocol/load.mjs';
 import { analyze } from '../../tools/protocol/validate-topology.mjs';
 import { readInventory } from '../../tools/verify/lib/avalanche-api.mjs';
 
-const SCHEMA = readJson(DEFAULT_SCHEMA_PATH);
+// 功能 005：拓扑住在部署描述里了，所以校验"完整形状"要用两份 schema 的并集。
+// 单独的 protocol.schema.json 现在会把 topology 判成 additionalProperties。
+const SCHEMA = mergedSchema();
 const BASE = loadProtocol();
 const clone = () => JSON.parse(JSON.stringify(BASE));
 

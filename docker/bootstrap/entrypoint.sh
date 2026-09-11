@@ -66,7 +66,7 @@ seed_node_volumes() {
       | [ $n.id,
           (if $n.role == "primary" then $n.keyDir
            else ($v[] | select(.index == $n.validatorIndex) | .keyDir) end) ]
-      | @tsv' "${PROTOCOL_FILE}")
+      | @tsv' "${DEPLOYMENT_FILE}")
 
   local seeded=0
   # CLI 的节点目录：L1 在 local/<name>-local-node-local-network/NodeID-*，Primary 在 runs/network_*/NodeID-*

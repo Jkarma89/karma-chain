@@ -104,6 +104,7 @@ COPY docker/bootstrap/entrypoint.sh /opt/karmachain/bin/
 RUN chmod +x /opt/karmachain/bin/*
 
 ENV PROTOCOL_FILE=/workspace/blockchain/protocol.json \
+    DEPLOYMENT_FILE=/workspace/blockchain/deployment.json \
     KARMACHAIN_LIB=/opt/karmachain/lib \
     KARMACHAIN_BIN=/opt/karmachain/bin
 WORKDIR /workspace
