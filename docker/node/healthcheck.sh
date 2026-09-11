@@ -23,6 +23,10 @@ set -uo pipefail
 FLAGS="${KARMACHAIN_CONFIG}/flags.json"
 IDENTITY="${KARMACHAIN_CONFIG}/identity.json"
 PROTOCOL="${KARMACHAIN_CONFIG}/protocol.json"
+# 功能 005：期望验证者数属**部署描述**（成员集合是可变的部署事实，不是链身份）。
+# 取不到时下方会退回「拿不准就放行」，不会误判 unhealthy —— 但那两条诊断会一起失效，
+# 所以 tests/unit/node-image-fields.test.mjs 锁住「这里读的字段确实在那个文件里」。
+DEPLOYMENT="${KARMACHAIN_CONFIG}/deployment.json"
 PROGRESS="${KARMACHAIN_DATA}/.health-progress"
 # 「引导/追赶中」多久算「卡住」。取值依据：实测单验证者从空卷重新同步约 6s、
 # 崩溃后恢复 12–17s，留一个量级的余量。compose 的 start_period 覆盖首次启动。
@@ -35,7 +39,7 @@ ROLE="$(jq -r '.role' "${IDENTITY}" 2>/dev/null || echo '')"
 # 节点明明好着，Docker 却报 unhealthy，进而可能被反复重启。
 CHAIN_PATH="$(jq -r '.blockchainId' "${KARMACHAIN_CONFIG}/karmachain.identity.json" 2>/dev/null || echo '')"
 SUBNET_ID="$(jq -r '.subnetId' "${KARMACHAIN_CONFIG}/karmachain.identity.json" 2>/dev/null || echo '')"
-VALIDATOR_COUNT="$(jq -r '.validators.count' "${PROTOCOL}" 2>/dev/null || echo '')"
+VALIDATOR_COUNT="$(jq -r '.validators.count' "${DEPLOYMENT}" 2>/dev/null || echo '')"
 BASE="http://127.0.0.1:${PORT}"
 
 rpc() { # rpc <path> <method> -> stdout(json) / 非零退出表示不可达

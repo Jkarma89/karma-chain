@@ -115,6 +115,33 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
   两个文件的分家成为摆设。为此把判定提成 `isAuditSeam(path, doc)` 并补四条断言
   （四种组合逐一断言），两半各自都能变红。
   **教训：判定藏在表达式里，就等于没有判定。**
+
+  **实施期缺陷 ③（现场发现，最危险的一个）**：ubuntu-1 上跑 `devnet-start` 时
+  陈旧挂载告警如期而至，而在执行 `--force-recreate` **之前**查出：
+  `docker/node/healthcheck.sh` 从 `/config/protocol.json` 读 `.validators.count` ——
+  那个字段已搬进 `deployment.json`，**而节点容器根本没挂载它**。
+
+  后果不是崩溃，是**静默降级**：取空之后 `expected_peers` 留空，两条判据都要求它非空，于是
+  「等其余边界：只看见 x/y 个对等验证者」这句诊断消失、`stalled` 升级再也不触发
+  （节点真坏了也只报 bootstrapping）。**节点照样 healthy，面板照样绿，844 条断言无一变红。**
+
+  既有守卫全都漏了它：JS 侧的残留扫描只看 `.mjs`；shell 侧那条只看 `proto_get`，
+  而**节点镜像里没有 `docker/lib`** —— `docker/node/*.sh` 自己定义 `PROTOCOL` 变量直接 jq。
+
+  修法：把 `deployment.json` 也挂进节点容器，healthcheck 改从它取数；
+  并补 `tests/unit/node-image-fields.test.mjs` —— **按文件变量反查**，
+  断言「每个 jq 读的字段路径确实存在于它读的那个文件里」，外加
+  「容器里读得到的文件，compose 必须真的挂进去」。三条变红检查全通过，
+  其中第一条复现的正是现场这个缺陷。
+
+  这条守卫与分家无关，日后任何一次字段搬家都会被它挡下。
+
+  **顺带发现（留给 T021 的判据）**：`flags.json` 里的 `http-allowed-hosts` 是一份
+  **全局清单**（所有故障边界地址 + 所有节点地址），每个节点拿同一份。
+  所以加第六台机器会改到**每一个既有节点**的 flags.json → 五台机器上所有容器的挂载
+  全部陈旧 → 要生效必须全部重建。**这会直接违反 T021 的判据 ④（既有容器不重启）。**
+  注意这与"重置链"是两回事：stamp 六项不变、链数据保留、创世不变 ——
+  重启 ≠ 重置。但判据 ④ 按现在的写法是达不到的，T021 动手前必须先定这件事怎么办。
 - [X] T011 [US1] 改 `docker/bootstrap/entrypoint.sh`：`jq` 从新文件读 topology
       （shell 侧唯一直接读原始字段的地方）
 - [X] T012 [US1] **用脚本枚举**所有直接读旧路径（`protocol.topology` / `p.topology`）的文件

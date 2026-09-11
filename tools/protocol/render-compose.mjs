@@ -179,6 +179,10 @@ function composeText(p, deployment, domain, nodes, rpcHost, net) {
     L.push('      - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro');
     L.push('      - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro');
     L.push('      - ../../blockchain/protocol.json:/config/protocol.json:ro');
+    // 功能 005：健康检查要的「期望验证者数」在部署描述里。
+    // **节点入口（出生证明那六项）仍然只读协议文件** —— 见 tests/unit/stamp-scope.test.mjs：
+    // 挂进来不等于让节点启动依赖它，改部署仍不会让任何节点退出 12。
+    L.push('      - ../../blockchain/deployment.json:/config/deployment.json:ro');
     L.push('      - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro');
     L.push('      - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro');
     // 单机形态下只有承载对外 RPC 的那个节点需要发布端口，其余一个都不发布

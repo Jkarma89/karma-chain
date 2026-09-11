@@ -40,6 +40,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -64,6 +65,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -88,6 +90,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -112,6 +115,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -136,6 +140,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -155,6 +160,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
@@ -174,6 +180,7 @@ services:
       - ../../blockchain/chain-identity/primary-network.genesis.json:/config/primary-network.genesis.json:ro
       - ../../blockchain/chain-identity/karmachain.identity.json:/config/karmachain.identity.json:ro
       - ../../blockchain/protocol.json:/config/protocol.json:ro
+      - ../../blockchain/deployment.json:/config/deployment.json:ro
       - ../../blockchain/genesis/karmachain.genesis.json:/config/karmachain.genesis.json:ro
       - ../../blockchain/genesis/karmachain.genesis.hash:/config/karmachain.genesis.hash:ro
 
