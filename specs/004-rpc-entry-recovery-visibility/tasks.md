@@ -105,16 +105,16 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 行为判据
 
-- [!] T008 [P] [US1] `tests/integration/proxy-health.test.mjs`：起一个最小 nginx + 假上游，
+- [X] T008 [P] [US1] `tests/integration/proxy-health.test.mjs`：起一个最小 nginx + 假上游，
       让上游对探测路径回 503，断言**真实请求路径**不受影响（C-2 的可自动化一半）
 - [!] T009 [P] [US1] `tests/e2e/proxy-entry-availability.test.mjs`：单机形态 ——
       上游综合健康位不健康时，① 入口仍能确认交易；② 代理健康位**保持 healthy**（C-5）
 
 ### 变红检查（每一条都要真做，结果记进 dod）
 
-- [!] T010 [US1] 变红 ①：把配置改坏到无法加载 → 代理健康位转 `unhealthy`（V-02，quickstart D①）
-- [!] T011 [US1] 变红 ②：杀掉 nginx 进程 → 转 `unhealthy`（V-02，quickstart D②）
-- [!] T012 [US1] **反向确认**：全部上游不可服务 → **保持 `healthy`**（V-02b / C-5，quickstart D2）
+- [X] T010 [US1] 变红 ①：把配置改坏到无法加载 → 代理健康位转 `unhealthy`（V-02，quickstart D①）
+- [X] T011 [US1] 变红 ②：杀掉 nginx 进程 → 转 `unhealthy`（V-02，quickstart D②）
+- [X] T012 [US1] **反向确认**：全部上游不可服务 → **保持 `healthy`**（V-02b / C-5，quickstart D2）
 - [X] T013 [US1] 变红 ③：把 `/ext/health` 加回生成器 → T003 必须失败
 - [X] T014 [US1] 变红 ④：把 `max_fails=1` 改成 `max_fails=2` → T004 必须失败
 
@@ -124,7 +124,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 现场验收
 
-- [!] T015 [US1] quickstart 场景 B：探测跑满数个 `fail_timeout` 周期后，
+- [X] T015 [US1] quickstart 场景 B：探测跑满数个 `fail_timeout` 周期后，
       上游日志里**没有**探测条目、代理日志里**没有** `no live upstreams` /
       `upstream server temporarily disabled`（C-1 / C-2）
 - [!] T016 [US1] quickstart 场景 F：单个 L1 验证者失效时入口仍能确认交易（SC-006 / V-04）——
