@@ -146,6 +146,37 @@ section.card > h2 {
 
 .tier .symbol, .tier .percent, .tier .label { color: var(--accent); }
 
+/* --- 恢复能力（功能 004）：与档位正交的一条 --- */
+
+/* 版式刻意与 .tier--critical 不同：链在出块，这不是活性紧急事件。
+   三个通道都有区别 —— 色（warn 而非 critical）、版式（左竖条而非四面粗框）、
+   字形（◆ 而非 ■）。只换颜色对色觉障碍者与打印件都无效（FR-009）。 */
+.recovery {
+  margin: 0.9rem 0 0;
+  padding: 0.65rem 0.9rem;
+  border-left: 5px solid var(--accent);
+  border-radius: 0 6px 6px 0;
+  background: var(--wash);
+}
+
+.recovery--attention {
+  --accent: var(--warn);
+  --wash: var(--warn-wash);
+}
+
+.recovery-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.recovery-symbol { font-size: 1.15rem; color: var(--accent); line-height: 1; }
+.recovery-label  { font-size: 1.02rem; font-weight: 600; color: var(--accent); }
+.recovery-body   { margin-top: 0.3rem; color: var(--fg); }
+/* 处置方向比正文再暗一档但仍达 AA（--dim 对 --bg 约 5.6:1）——
+   它是"接下来做什么"，读的人会专门找它，不需要抢注意力 */
+.recovery-action { margin-top: 0.35rem; color: var(--dim); font-size: 0.92rem; }
+
 /* --- 余量 --- */
 
 .margins { display: flex; flex-wrap: wrap; gap: 1.5rem; margin-top: 1rem; }

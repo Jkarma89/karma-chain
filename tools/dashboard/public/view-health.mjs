@@ -5,7 +5,7 @@
 //
 // **不做任何判定** —— tier / healthPercent / 两个余量 / incidents 全部取自快照。
 // 文案全部来自 copy.mjs（那样才测得到"不得出现某些话"，见 tests/unit/dashboard-copy）。
-import { tierCopy, LIVENESS_KINDS } from './copy.mjs';
+import { tierCopy, recoveryCopy, LIVENESS_KINDS } from './copy.mjs';
 
 export const meta = { id: 'health', title: '链健康度', order: 1 };
 
@@ -29,6 +29,39 @@ function renderTier(s, root) {
   box.append(el('div', 'label', copy.label));
   box.append(el('div', 'body', copy.body));
   if (copy.action) box.append(el('div', 'action', copy.action));
+  root.append(box);
+}
+
+/**
+ * 恢复能力 —— **与档位正交**的一条（功能 004）。
+ *
+ * ## 为什么它在档位下面、余量上面
+ *
+ * 读的顺序应当是「链现在怎么样 → 有件事你现在不能做 → 还剩多少余量」。
+ * 放到最下面会被余量和节点表挤走，而它要防的恰好是一个**本能动作**
+ * （看到 Primary 停了就去重启点什么）—— 那个动作发生在人往下滚之前。
+ *
+ * ## 为什么版式与停摆报警不同
+ *
+ * 链在出块。做成同样的红框会**稀释**「链已停止出块」那一档的含义 ——
+ * 003 期间为此删掉过一条会误报的守卫，理由记在那边："噪音会让人开始忽略红灯。"
+ *
+ * 所以它是：左侧粗竖条 + 自己的字形（◆）+ 自己的色（warn 而非 critical），
+ * 三个通道都与 critical 有区别，而不是只换个颜色（FR-009 / FR-021）。
+ *
+ * `ok` 与 `unknown` 时 `recoveryCopy()` 返回 null —— 不呈现，无噪音。
+ */
+function renderRecovery(s, root) {
+  const copy = recoveryCopy(s);
+  if (!copy) return;
+
+  const box = el('div', `recovery recovery--${copy.severity}`);
+  const head = el('div', 'recovery-head');
+  head.append(el('span', 'recovery-symbol', copy.symbol));
+  head.append(el('span', 'recovery-label', copy.label));
+  box.append(head);
+  box.append(el('div', 'recovery-body', copy.body));
+  box.append(el('div', 'recovery-action', copy.action));
   root.append(box);
 }
 
@@ -147,6 +180,7 @@ let lastRoot = null;
 function draw(s, root) {
   root.replaceChildren();
   renderTier(s, root);
+  renderRecovery(s, root);
   renderMargins(s, root);
   renderDegraded(s, root);
   renderProbe(s, root);

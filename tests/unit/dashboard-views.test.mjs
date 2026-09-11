@@ -165,7 +165,10 @@ const snap = ({ rows, faultTolerance, observer, baseline = BASELINE, containerFa
 
 const five = (over = []) => [1, 2, 3, 4, 5].map((i) => validator(i, over[i - 1] ?? {}));
 
-/** 十种形态 —— 覆盖五个档位、分叉、未知创世、本机路径故障、合并边界、降级。 */
+/**
+ * 全部形态 —— 覆盖五个档位、分叉、未知创世、本机路径故障、合并边界、降级，
+ * 以及功能 004 的恢复能力三种（blocked×正常 / blocked×停摆 / ok×本机链路故障）。
+ */
 const SCENARIOS = {
   normal: () => snap({ rows: [...five(), primary(1), primary(2)] }),
 
@@ -252,6 +255,36 @@ const SCENARIOS = {
     faultTolerance: { ...ft([5]), effectiveDomains: [{ ids: ['d-1'], factors: ['host:single-machine'], validators: 5 }], domainCount: 1, effectiveDomainCount: 1, tolerateWholeDomainLoss: false },
     deployment: 'local',
   }),
+
+  // ---------- 功能 004：恢复能力（与档位正交）----------
+  //
+  // 既有形态里 zero-margin 与 stopped 已经**偶然**触发了 blocked
+  // （前者只挂了一个 primary、后者一个都没有）。偶然覆盖会在别人调整夹具时
+  // 悄悄消失而没有任何提示，所以下面三种是**刻意**的。
+
+  // 最要紧的那个组合：链完全正常，而这张网已经无法自愈。它看起来毫无问题。
+  'recovery-blocked-normal': () => snap({
+    rows: [...five(),
+      primary(1, { state: 'stopped', reachable: false, countsAsOffline: true, peers: null, detail: '容器已退出' }),
+      primary(2, { state: 'stopped', reachable: false, countsAsOffline: true, peers: null, detail: '容器已退出' })],
+  }),
+
+  // 两条信息必须能同时呈现：一条说"链停了"，另一条说"别重启"。
+  'recovery-blocked-and-stopped': () => snap({
+    rows: [...five([{}, {}, {},
+      { state: 'stopped', countsAsOffline: true, reachable: false, height: null, genesisHash: null },
+      { state: 'stopped', countsAsOffline: true, reachable: false, height: null, genesisHash: null }]),
+      primary(1, { state: 'stopped', reachable: false, countsAsOffline: true, peers: null, detail: '容器已退出' }),
+      primary(2, { state: 'stopped', reachable: false, countsAsOffline: true, peers: null, detail: '容器已退出' })],
+  }),
+
+  // 本机链路故障不该产生提示：那个 Primary 活着，其余节点看得见它。
+  // 写错这一格的后果是"一根网线松了，面板就告诉人现在不能重启任何东西"。
+  'recovery-ok-link-fault': () => snap({
+    rows: [...five(),
+      primary(1),
+      primary(2, { state: 'unreachable', reachable: false, countsAsOffline: false, peers: null, detail: '本机视角不可达 —— 其余节点仍看得见它' })],
+  }),
 };
 
 const VIEWS = ['view-health', 'view-nodes', 'view-observer', 'view-domains', 'view-identity', 'view-public'];
@@ -280,7 +313,7 @@ after(() => {
 
 // ---------- 测试 ----------
 
-describe('六个视图 × 十四种快照形态：渲染不得抛错', () => {
+describe('六个视图 × 十七种快照形态：渲染不得抛错', () => {
   for (const name of VIEWS) {
     for (const [scenario, build] of Object.entries(SCENARIOS)) {
       test(`${name} 渲染 ${scenario}`, async () => {
@@ -396,6 +429,55 @@ describe('渲染结果的几条内容判据', () => {
     const root = await renderView('view-health', 'degraded');
     assert.ok(root.allClasses.has('degraded'));
     assert.match(root.allText, /观测降级/);
+  });
+
+  // ---------- 功能 004：恢复能力的呈现 ----------
+
+  test('恢复能力已丧失时：档位仍是正常，但另有一条显目提示（最要紧的那个组合）', async () => {
+    const root = await renderView('view-health', 'recovery-blocked-normal');
+    // 档位那一侧不许变 —— 链在出块（FR-013）
+    assert.ok(root.allClasses.has('tier--ok'), '档位应当仍是正常那一档');
+    assert.match(root.allText, /100%/, '百分比不该被恢复能力影响');
+    // 而提示必须在
+    assert.ok(root.allClasses.has('recovery--attention'),
+      '缺了恢复能力那条提示 —— 这个形态恰恰是"看起来完全健康却无法自愈"，'
+      + '而它要防的是一个本能动作：看到 Primary 停了就去重启点什么');
+    assert.match(root.allText, /无法重新加入/, '要说出**后果**，不是只重复"Primary 停了"');
+    assert.match(root.allText, /不要重启/, '要说清在那之前别动验证者');
+  });
+
+  test('它的版式与停摆报警**可区分**（FR-021）', async () => {
+    const root = await renderView('view-health', 'recovery-blocked-normal');
+    assert.ok(!root.allClasses.has('tier--critical'),
+      '恢复能力用了 critical 那套版式 —— 链在出块，这会**稀释**「链已停止出块」那一档的含义。'
+      + '003 期间为此删掉过一条会误报的守卫："噪音会让人开始忽略红灯。"');
+    assert.ok(!root.allClasses.has('recovery--critical'),
+      '同上 —— 它有自己的等级（attention），不该借用 critical');
+  });
+
+  test('链停了 + 无法恢复：两条信息同时在，不互相吃掉', async () => {
+    const root = await renderView('view-health', 'recovery-blocked-and-stopped');
+    assert.ok(root.allClasses.has('tier--critical'), '链确实停了 —— 那一档不能被盖掉');
+    assert.ok(root.allClasses.has('recovery--attention'), '"别重启"那条也必须在');
+    assert.match(root.allText, /停止出块/);
+    assert.match(root.allText, /无法重新加入/);
+  });
+
+  test('只是本机链路故障时**不**呈现 —— 一根网线松了不该叫人别重启', async () => {
+    const root = await renderView('view-health', 'recovery-ok-link-fault');
+    assert.ok(!root.allClasses.has('recovery--attention'),
+      '那个 Primary 是活的（其余节点看得见它），断的是本机到它的路径（FR-018）。'
+      + '在这里报"恢复能力已丧失"是一次假提示 —— 002 里 ubuntu-1 的网线故障正是这一类');
+    assert.doesNotMatch(root.allText, /无法重新加入/);
+  });
+
+  test('恢复能力提示不含"需要重置"这类话（呈现侧再验一遍）', async () => {
+    const root = await renderView('view-health', 'recovery-blocked-and-stopped');
+    for (const word of ['数据可能丢失', '需要重置', '需要重建']) {
+      assert.ok(!root.allText.includes(word),
+        `渲染出来的页面里出现了「${word}」。停摆与卡住不损坏任何东西 ——`
+        + '003 的 V-04 实证：链停期间那笔 45 秒无回执的交易，恢复后被原样打包进区块 834');
+    }
   });
 
   test('view-domains 在单边界形态说明不做整机失效承诺', async () => {

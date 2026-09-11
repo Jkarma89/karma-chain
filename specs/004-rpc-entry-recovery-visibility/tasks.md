@@ -180,10 +180,10 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       门槛写**常量 `2`** 并注明它来自**权益门槛**而非"Primary 总数"（R-06 / data-model §2）
 - [X] T026 [US2] 改 `tools/dashboard/public/copy.mjs`：恢复能力的文案（**零 import 纯函数**，
       沿用 003 的约定）。三个必含成分见 [recovery-capability 契约 §5](./contracts/recovery-capability.md)
-- [ ] T027 [US2] 改 `tools/dashboard/public/view-*.mjs`：呈现恢复能力。
+- [X] T027 [US2] 改 `tools/dashboard/public/view-*.mjs`：呈现恢复能力。
       版式与「链已停止出块」的报警**可区分**（FR-021），遵守 003 的 FR-009 三通道
       （文案 + 版式 + 字形，**不只靠颜色**）；对比度满足 WCAG AA
-- [ ] T028 [US2] 扩 `tests/unit/dashboard-views.test.mjs`：六个视图 × 新增形态
+- [X] T028 [US2] 扩 `tests/unit/dashboard-views.test.mjs`：六个视图 × 新增形态
       （`blocked` / `unknown` / 与 `stopped` 并存）都能 `render()` 而不抛。
       **003 的 456 个单元测试没有一个执行过 `render()`**，代价是用户在浏览器里
       看到「此视图渲染失败」—— 那个 DOM 桩已经在，接着用
