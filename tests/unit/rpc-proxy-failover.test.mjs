@@ -100,3 +100,106 @@ describe('RPC 代理的故障转移在客户端超时之内完成', () => {
     });
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 功能 004 追加：**这一组守的是"什么都没改"。**
+//
+// 上面那套件守的是"故障转移要够快"，它的值可以调。下面这一组相反 ——
+// 它守的是 004 期间**一个字符都不许动**：`max_fails` / `fail_timeout` /
+// `proxy_next_upstream` / `zone` / `ip_hash` / 三项超时。
+//
+// ## 为什么要专门写一组"测试没改的东西"
+//
+// 004 修的缺陷是"代理的健康探测在制造上游失败"。看到成因链里那句
+// `max_fails=1 fail_timeout=60s —— 一次失败就关 60 秒`，
+// **最本能的反应是"太激进了，放宽一点"。**
+//
+// 但那是 002 在 2026-09-09 **实测后**定下的，推导写在 render-rpc-proxy.mjs 的注释里：
+//
+//   - `max_fails=2 fail_timeout=10s` 在**低频请求下等于没生效**：请求间隔一旦超过
+//     fail_timeout，窗口内只累积到 1 次失败，永远到不了 2 次 —— 死节点因此从不被标记，
+//     每个请求都要重新付一遍连接超时。**5 次测量 5 次都付了。**
+//   - `fail_timeout` 15s → 60s：反复去探一个持续死着的后端没有收益；而 `ip_hash`
+//     在后端被标记/恢复时会重新分配，每分钟 4 次重探 = 每分钟 4 次机会打断
+//     "读到自己刚写的"那份亲和性。
+//
+// **当前的 502 不是这些参数的错，是探测在制造失败。先去病因，再谈剂量。**
+// 放宽它们会把 002 已经解决的另一个问题放回来 ——
+// 而"改一个自己没有量过的参数"，是在用别人量过的结论换自己的直觉。
+//
+// 若将来真要调，做法是：**先删掉本套件里对应的那条断言并写明新的实测依据**，
+// 而不是让断言跟着实现一起改。判据先于实现，不是反过来。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 004 期间必须逐字符不变的配置片段。改动任一条都要先有新的实测依据。 */
+const FROZEN_BY_004 = [
+  {
+    re: /^\s*server\s+\S+\s+max_fails=1\s+fail_timeout=60s;/m,
+    what: 'server … max_fails=1 fail_timeout=60s',
+    why: 'max_fails=2 在低频请求下等于没生效（5 次测量 5 次都付了连接超时）；'
+       + 'fail_timeout=60s 是为了少打断 ip_hash 的客户端亲和性',
+  },
+  {
+    re: /proxy_next_upstream\s+error\s+timeout\s+http_502\s+http_503\s+http_504;/,
+    what: 'proxy_next_upstream error timeout http_502 http_503 http_504',
+    why: '这一行让 503 应答被计为上游失败 —— 它正是 004 缺陷链的第 3 环。'
+       + '但去掉 http_503 会改变**真实流量**的故障转移语义，'
+       + '为了修探测的问题去动业务路径，方向是错的。004 选择去掉病因（探测不碰上游），'
+       + '而不是改这一行',
+  },
+  {
+    re: /zone\s+karmachain_rpc\s+64k;/,
+    what: 'zone karmachain_rpc 64k',
+    why: '失败计数必须在所有 worker 之间共享（实测 18 个 worker）。'
+       + '注意它同时是 004 那个缺陷的**放大器** —— 一次探测毒遍全体 worker 的共享状态。'
+       + '但 zone 本身是对的：不加它，整域缺席时几乎每次请求都命中一个"还不知道那台已死"的 worker。'
+       + '**一个正确的修复放大了另一个缺陷，不等于那个修复错了**',
+  },
+  {
+    re: /^\s*ip_hash;/m,
+    what: 'ip_hash',
+    why: '客户端亲和：避免"发完交易立刻读高度却读到旧视图"（实测过）',
+  },
+  {
+    re: /proxy_connect_timeout\s+2s;/,
+    what: 'proxy_connect_timeout 2s',
+    why: '局域网内健康连接 < 5ms，2 秒是 400 倍余量；不设它则整台机器没了时要等满 nginx 默认的 60s',
+  },
+  {
+    re: /proxy_next_upstream_timeout\s+15s;/,
+    what: 'proxy_next_upstream_timeout 15s',
+    why: '最坏情况的总预算，须短于客户端超时（viem 20s）',
+  },
+  {
+    re: /proxy_read_timeout\s+300s;/,
+    what: 'proxy_read_timeout 300s',
+    why: '长轮询/订阅需要它；与故障转移无关，但同属"既有行为一律保持"（FR-010）',
+  },
+];
+
+describe('功能 004：故障转移相关配置一律不动（FR-010 / research R-02）', () => {
+  for (const d of DEPLOYMENTS) {
+    describe(`部署形态 ${d}`, () => {
+      const conf = confOf(d);
+      for (const { re, what, why } of FROZEN_BY_004) {
+        test(`${what} 保持原样`, () => {
+          assert.match(conf, re,
+            `\`${what}\` 不在生成的配置里，或被改动了。\n`
+            + `  这一条是 002 在 2026-09-09 实测后定下的：${why}。\n`
+            + '  功能 004 承诺**一个字符都不动**（research.md R-02）—— 当前的 502 不是这些\n'
+            + '  参数的错，是健康探测在制造上游失败。先去病因，再谈剂量。\n'
+            + '  若确实要调：先删掉本断言并写明新的实测依据，不要让断言跟着实现改。');
+        });
+      }
+
+      test('upstream 里每一个后端都带同样的 max_fails / fail_timeout', () => {
+        const servers = [...conf.matchAll(/^\s*server\s+(\S+)\s+max_fails=(\d+)\s+fail_timeout=(\d+)s;/gm)];
+        assert.ok(servers.length > 0, 'upstream 里应当有带 max_fails/fail_timeout 的 server 行');
+        const odd = servers.filter(([, , mf, ft]) => mf !== '1' || ft !== '60');
+        assert.equal(odd.length, 0,
+          `以下后端的取值与其余不一致：${odd.map(([l]) => l.trim()).join(' / ')}\n`
+          + '  取值不齐会让故障转移的最坏延迟随"命中哪个后端"变化 —— 那是最难复现的一类问题。');
+      });
+    });
+  }
+});

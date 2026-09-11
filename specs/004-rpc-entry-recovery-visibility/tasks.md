@@ -43,7 +43,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 **Purpose**: 验收清单就位
 
-- [ ] T001 建 `specs/004-rpc-entry-recovery-visibility/checklists/dod.md`：宪法第十七条八项、
+- [X] T001 建 `specs/004-rpc-entry-recovery-visibility/checklists/dod.md`：宪法第十七条八项、
       **并在建表时逐条补齐编号标注**（`/speckit-analyze` 的 L1：24/34 条 FR、2/12 条 SC、
       V-06、C-3/C-4 在 tasks.md 里没有编号引用 —— 语义上基本都被覆盖，
       但本项目的 dod 是**按编号逐条核**的，编号断链会让回填时漏项）、
@@ -56,7 +56,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 **Purpose**: 两条 P1 都依赖的那一件事 —— **基线**。
 
-- [ ] T002 建 `specs/004-rpc-entry-recovery-visibility/baseline.md`，记下本期**开始前**的：
+- [X] T002 建 `specs/004-rpc-entry-recovery-visibility/baseline.md`，记下本期**开始前**的：
       `blockchain/protocol.json` 的 sha256 与 `configVersion`、创世哈希、
       两份 `rpc-proxy.conf` 的 sha256、六份 compose 里 healthcheck 那一行的原文、
       公开投影（`tools/dashboard/public-view.mjs`）的**字段集合**、
@@ -78,12 +78,12 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 守卫先行（TDD）
 
-- [ ] T003 [P] [US1] `tests/unit/proxy-health-boundaries.test.mjs`：静态守卫 ——
+- [X] T003 [P] [US1] `tests/unit/proxy-health-boundaries.test.mjs`：静态守卫 ——
       ① `/ext/health` **不得**出现在 `render-compose.mjs` 的代理健康判定处，
       也不得出现在六份生成的 compose 里；
       ② 探测位置的配置块**不得**含 `proxy_pass`（C-1 的静态一半）。
       **扫源码前先剥注释** —— 003 期间这一条栽过三次，解释性注释里的字符串被当成了真配置
-- [ ] T004 [P] [US1] 扩 `tests/unit/rpc-proxy-failover.test.mjs`：断言
+- [X] T004 [P] [US1] 扩 `tests/unit/rpc-proxy-failover.test.mjs`：断言
       `max_fails=1` / `fail_timeout=60s` / `proxy_next_upstream error timeout http_502 http_503 http_504` /
       `zone karmachain_rpc 64k` / `ip_hash` / `proxy_connect_timeout 2s` /
       `proxy_next_upstream_tries` / `proxy_next_upstream_timeout 15s` **逐字符不变**（R-02 / FR-010）
@@ -94,29 +94,29 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 实现
 
-- [ ] T005 [US1] 改 `tools/protocol/render-rpc-proxy.mjs`：新增一个由 nginx **自己应答**的位置
+- [X] T005 [US1] 改 `tools/protocol/render-rpc-proxy.mjs`：新增一个由 nginx **自己应答**的位置
       （`location = /_alive`，`return 200`），**不 `proxy_pass`**。
       注释里写明为什么它不碰上游（否则下一个人会"顺手"给它加个 `proxy_pass` 让它"更有意义"）
-- [ ] T006 [US1] 改 `tools/protocol/render-compose.mjs`（约 208 行）：代理的 healthcheck
+- [X] T006 [US1] 改 `tools/protocol/render-compose.mjs`（约 208 行）：代理的 healthcheck
       由 `/ext/health` 改指新位置。**六份 compose 的唯一来源** ——
       `local-local` 与 `lan-{win-1,win-2,ubuntu-1,ubuntu-2,ubuntu-3}` 一并生效（FR-009）
-- [ ] T007 [US1] `npm run render` 重新生成，`npm run render:check` 必须 10/10；
+- [X] T007 [US1] `npm run render` 重新生成，`npm run render:check` 必须 10/10；
       逐份 diff 六个 compose 与两份 `rpc-proxy.conf`，确认**只有**预期的两处变化
 
 ### 行为判据
 
-- [ ] T008 [P] [US1] `tests/integration/proxy-health.test.mjs`：起一个最小 nginx + 假上游，
+- [!] T008 [P] [US1] `tests/integration/proxy-health.test.mjs`：起一个最小 nginx + 假上游，
       让上游对探测路径回 503，断言**真实请求路径**不受影响（C-2 的可自动化一半）
-- [ ] T009 [P] [US1] `tests/e2e/proxy-entry-availability.test.mjs`：单机形态 ——
+- [!] T009 [P] [US1] `tests/e2e/proxy-entry-availability.test.mjs`：单机形态 ——
       上游综合健康位不健康时，① 入口仍能确认交易；② 代理健康位**保持 healthy**（C-5）
 
 ### 变红检查（每一条都要真做，结果记进 dod）
 
-- [ ] T010 [US1] 变红 ①：把配置改坏到无法加载 → 代理健康位转 `unhealthy`（V-02，quickstart D①）
-- [ ] T011 [US1] 变红 ②：杀掉 nginx 进程 → 转 `unhealthy`（V-02，quickstart D②）
-- [ ] T012 [US1] **反向确认**：全部上游不可服务 → **保持 `healthy`**（V-02b / C-5，quickstart D2）
-- [ ] T013 [US1] 变红 ③：把 `/ext/health` 加回生成器 → T003 必须失败
-- [ ] T014 [US1] 变红 ④：把 `max_fails=1` 改成 `max_fails=2` → T004 必须失败
+- [!] T010 [US1] 变红 ①：把配置改坏到无法加载 → 代理健康位转 `unhealthy`（V-02，quickstart D①）
+- [!] T011 [US1] 变红 ②：杀掉 nginx 进程 → 转 `unhealthy`（V-02，quickstart D②）
+- [!] T012 [US1] **反向确认**：全部上游不可服务 → **保持 `healthy`**（V-02b / C-5，quickstart D2）
+- [X] T013 [US1] 变红 ③：把 `/ext/health` 加回生成器 → T003 必须失败
+- [X] T014 [US1] 变红 ④：把 `max_fails=1` 改成 `max_fails=2` → T004 必须失败
 
 > **T012 与 T010/T011 同等重要。** T010/T011 证明判据会变红，
 > T012 证明它**不会在错误的时候变红** —— 两条合起来才说明职责划分真的落地了。
@@ -124,15 +124,15 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ### 现场验收
 
-- [ ] T015 [US1] quickstart 场景 B：探测跑满数个 `fail_timeout` 周期后，
+- [!] T015 [US1] quickstart 场景 B：探测跑满数个 `fail_timeout` 周期后，
       上游日志里**没有**探测条目、代理日志里**没有** `no live upstreams` /
       `upstream server temporarily disabled`（C-1 / C-2）
-- [ ] T016 [US1] quickstart 场景 F：单个 L1 验证者失效时入口仍能确认交易（SC-006 / V-04）——
+- [!] T016 [US1] quickstart 场景 F：单个 L1 验证者失效时入口仍能确认交易（SC-006 / V-04）——
       **002 不回归**。这是本期最容易越界伤到的地方
-- [ ] T017 [US1] quickstart 场景 J：`git diff blockchain/protocol.json` 为空、
+- [~] T017 [US1] quickstart 场景 J：`git diff blockchain/protocol.json` 为空、
       `configVersion` 未递增、创世哈希不变、无节点因 stamp 退出 12（SC-008 / V-08）；
       对着 T002 的基线核对**节点容器未被重启**（FR-032）
-- [ ] T018 [US1] quickstart 场景 E（**需五台**）：两个 Primary 全停的 10 分钟窗口内，
+- [!] T018 [US1] quickstart 场景 E（**需五台**）：两个 Primary 全停的 10 分钟窗口内，
       **每一台**机器各经本机入口发 ≥10 笔交易，全部确认、**零次 5xx**（SC-001 / V-03）。
       *（`/speckit-analyze` 的 I2：原先写"需三台"—— 三台只够**造出**场景
       （两台停 Primary + 一台发交易），而 SC-001 的判据是**每一台**都要发，

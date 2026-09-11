@@ -194,7 +194,7 @@ services:
       - l1-4
       - l1-5
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8545/ext/health"]
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8545/_alive"]
       interval: 10s
       timeout: 5s
       retries: 3

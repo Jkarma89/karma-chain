@@ -27,6 +27,41 @@ import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
 import { loadProtocol, deriveTopology, readJson, REPO_ROOT } from './load.mjs';
 
+/**
+ * 代理容器**自检**用的路径 —— 由 nginx 自己应答，**不转发到任何上游**。
+ *
+ * ## 为什么需要一个专门的路径
+ *
+ * 2026-09-10：两个 Primary 全停时 RPC 入口间歇性 502，而五个 L1 在各自端口上
+ * 全部 200、正在出块。**链好着，门坏了。** 成因是代理容器的 Docker healthcheck
+ * 原先打的是 `/ext/health` —— avalanchego 的**综合**健康位，它包含 P 链可达性，
+ * 两个 Primary 一停就返回 503。而这个请求**经由代理自己**打到上游：
+ *
+ *   nginx 把上游的 503 计为一次失败（`proxy_next_upstream … http_503`）
+ *     → `max_fails=1 fail_timeout=60s` 一次就关该上游 60 秒
+ *     → `proxy_next_upstream_tries 5` 让同一个探测依次试完五个上游（**一次毒遍全部**）
+ *     → 探测间隔 10 秒 < 60 秒惩罚期（**永不排空**）
+ *     → 真实客户端流量一起吃 `no live upstreams` → **502**
+ *
+ * 修法是**去掉病因**：探测不再接触上游。真实 RPC 流量拿到的是 200，
+ * 200 不会被计为失败，惩罚期因此永远是空的。
+ * 三个故障转移参数**一个字符都不动** —— 它们是 002 在 2026-09-09 实测后定下的
+ * （见下方 upstream 块的注释），当前的 502 不是它们的错。
+ *
+ * ## 两条不许改的性质
+ *
+ * 1. **必须 `location = `（精确匹配）**。用前缀匹配会被文件末尾那个 `location /`
+ *    catch-all 抢走，于是探测又被转发到上游 —— 回到缺陷本身。
+ * 2. **块里不许出现 `proxy_pass`**。将来若有人觉得"只 return 200 太弱、
+ *    让它顺便验一下转发吧"—— 那就是把病因请回来。「转发是否正确」由
+ *    生成物漂移核对与 `devnet-verify` 覆盖（规格 FR-034），不由容器健康位回答。
+ *
+ * 两条都有守卫：`tests/unit/proxy-health-boundaries.test.mjs`。
+ *
+ * 路径特意不放在 `/ext` 下 —— 那是 avalanchego 的命名空间，会和真实 API 撞车。
+ */
+export const PROXY_PROBE_PATH = '/_alive';
+
 export const OUTPUT_DIR = resolve(REPO_ROOT, 'blockchain', 'nodes');
 export const outputPathFor = (deployment) => resolve(OUTPUT_DIR, deployment, 'rpc-proxy.conf');
 const IDENTITY_PATH = resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json');
@@ -117,6 +152,17 @@ export function renderRpcProxy(p = loadProtocol(), identity = readJson(IDENTITY_
   L.push('    proxy_connect_timeout 2s;');
   L.push(`    proxy_next_upstream_tries ${validators.length};`);
   L.push('    proxy_next_upstream_timeout 15s;');
+  L.push('');
+  // 代理自检位置 —— 由 nginx 自己应答，**不碰上游**（详见 PROXY_PROBE_PATH 的说明）。
+  // 放在最前面只是为了读的人先看到它；`=` 精确匹配的优先级与书写顺序无关。
+  L.push(`    # 代理自检：容器健康位只回答"代理自己有没有在正常工作"。`);
+  L.push(`    # **不得**改成 proxy_pass —— 探测一接触上游就会参与失败计数，`);
+  L.push(`    # 而"探测在制造上游失败"正是 2026-09-10 那个入口 502 缺陷的病因。`);
+  L.push(`    location = ${PROXY_PROBE_PATH} {`);
+  L.push('        access_log off;');
+  L.push("        return 200 'ok';");
+  L.push("        add_header Content-Type text/plain;");
+  L.push('    }');
   L.push('');
   L.push(`    location /ext/bc/${alias}/ {`);
   L.push(`        rewrite ^/ext/bc/${alias}/(.*)$ /ext/bc/${bid}/$1 break;`);

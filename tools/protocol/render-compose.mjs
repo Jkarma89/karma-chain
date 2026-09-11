@@ -14,6 +14,9 @@ import { writeFileSync, mkdirSync, readFileSync, readdirSync, rmSync } from 'nod
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { loadProtocol, deriveTopology, REPO_ROOT } from './load.mjs';
+// 探测路径的**唯一来源**是渲染 nginx 配置的那个模块 —— 两处各写一份必然漂移，
+// 而漂移的表现是"healthcheck 永远失败"，排查起来毫无线索。
+import { PROXY_PROBE_PATH } from './render-rpc-proxy.mjs';
 
 export const OUTPUT_DIR = resolve(REPO_ROOT, 'docker', 'compose');
 export const NODE_IMAGE = 'karmachain/node:local';
@@ -205,7 +208,13 @@ function composeText(p, deployment, domain, nodes, rpcHost, net) {
     L.push('    depends_on:');
     for (const n of nodes.filter((x) => x.role === 'l1-validator')) L.push(`      - ${n.id}`);
     L.push('    healthcheck:');
-    L.push(`      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:${p.endpoints.hostRpcPort}/ext/health"]`);
+    // 代理的健康判定**只回答代理自己**：nginx 进程活着、配置解析通过、端口在监听。
+    // 它原先打的是 avalanchego 的综合健康位，而那个位含 P 链可达性 ——
+    // 两个 Primary 一停就 503，nginx 把 503 计为上游失败，一次探测毒遍五个上游，
+    // 探测间隔又短于惩罚期，于是**真实客户端流量一起吃 502 而链好着**（2026-09-10 实测）。
+    // 现在打的是由 nginx 自己应答、不碰任何上游的自检位置。
+    // 「链能不能用」由面板与 devnet-verify 回答，不由这里回答（规格 FR-002 / FR-034）。
+    L.push(`      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:${p.endpoints.hostRpcPort}${PROXY_PROBE_PATH}"]`);
     L.push('      interval: 10s');
     L.push('      timeout: 5s');
     L.push('      retries: 3');
