@@ -13,7 +13,7 @@
 | # | 项 | 状态 | 依据 |
 |---|---|---|---|
 | 1 | Specification 满足 | ⬜ | 34 条 FR 逐条（第三节） |
-| 2 | Constitution 满足 | ⬜ | plan 的 20 条核查 + Gate 三查；**第十四条（ADR-0011）与第十五条（逐项核验）是必办项** |
+| 2 | Constitution 满足 | ⚠️ | plan 的 20 条核查 + Gate 三查。**第十四条已补**（ADR-0011 + README 索引）。**第十五条已核**：`protocol.json` 与创世 `git diff` 为空、`configVersion` 未递增、win-1 的节点容器 `Created`/`StartedAt` 逐字符不变；其余四台由用户重建代理时核。剩余：收尾复跑（T044）后整体重查一遍 |
 | 3 | 测试通过 | ⬜ | 单元 ≥600 且**无既有断言被放宽**、集成、e2e、`render:check` 10/10、`devnet-verify`、秘密扫描 |
 | 4 | 安全评估完成 | ⬜ | 恢复能力**不进**对外精简视图（R-07 / 宪法第四条）；新探测位置只在容器内被访问且不返回任何内部信息；公开投影字段集合逐字段不变（SC-011） |
 | 5 | 文档更新 | ✅ | [ADR-0011](../../../docs/adr/0011-proxy-health-answers-only-for-itself.md)（含四条为何不与 `zone` 那条观察）+ README 索引；`docs/devnet.md` §9.3.1（部署，FR-033）、§10.3.1（恢复能力，与 §9.5 互指）、§10.5 补「代理健康位不回答链能不能用」 |
