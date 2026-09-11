@@ -668,6 +668,64 @@ $env:KARMACHAIN_DOMAIN='<本机的边界 id>'; scripts\devnet-start.ps1   # Wind
 `primary-2` 的 `bootstrap-ips` 只指向 `ubuntu-1`，5 个验证者的指向这两台；
 Primary Network 也是 2 个验证者的集合，缺一个就只有 50% 权益，P 链推不动。
 
+### 9.3.1 只更新 RPC 代理（**不需要重置链**）
+
+改动只涉及 `rpc-proxy.conf` 与 compose 里代理那几行时，用这套步骤 ——
+**不动节点、不动数据卷、不重置链**。
+
+逐台执行（五台都要做，一台不做那台的入口行为就还是旧的）：
+
+```bash
+git pull
+npm run render                      # 重新生成 rpc-proxy.conf 与 compose
+npm run render:check                # 10 项生成物必须与 protocol.json 一致
+
+# 只重建代理容器。<COMPOSE> = docker/compose/lan-<本机边界>.yml
+docker compose -f <COMPOSE> up -d --no-deps --force-recreate rpc
+```
+
+Windows 上把最后一行的路径换成对应的 `lan-win-1.yml` / `lan-win-2.yml` 即可，
+命令本身一样。
+
+**为什么必须`重建`而不是 `restart` 或 `nginx -s reload`**：
+代理配置是**单文件 bind mount**，Docker 绑的是 inode，而 `git pull` / 重新渲染是
+原子替换（写临时文件 + rename）—— inode 变了，容器仍指向旧的那一个。
+`restart` 与不带 `--force-recreate` 的 `up -d` 都不会重建容器（容器配置本身没变），
+`nginx -s reload` 会打印 `signal process started` 看着像成功，**重载的是旧配置**。
+
+> **这个坑只在 Linux 宿主上存在。** Docker Desktop（Windows / macOS）的文件共享层
+> 按**路径**解析，替换能被看到。也就是说"在 Windows 上开发、在 Linux 上部署"时它不可见 ——
+> 正好是最坏的组合。`devnet-start` 里的 `warn_stale_mounts` 会逐台比对宿主与容器内的
+> md5 并把这条打出来，**git pull 之后先跑一次 `scripts/devnet-start` 看有没有那条警告**。
+
+**节点不会被牵连。** 指定服务名时 compose 只重建 `rpc`，
+`depends_on` 的节点只会被标为 `Running` 而不重建 —— 2026-09-11 用
+`docker compose … up -d --dry-run --force-recreate rpc` 实测确认过。
+加 `--no-deps` 是双保险，不加也不会动节点。
+
+**核对它真的没被牵连**（FR-032 的判据是**时刻**，不是状态）：
+
+```bash
+# 重建前后各跑一次，两次输出必须逐字符相同
+docker inspect --format '{{.Name}} {{.Created}} {{.State.StartedAt}}' karmachain-<本机节点>
+```
+
+**不要用"容器还在跑"代替这一项**：若有人手滑打成 `docker compose up -d`
+（漏了服务名），节点会被一起重建 —— 那时容器仍然"在跑"，而 `StartedAt` 已经变了。
+
+#### 这次变更为什么不需要重置链
+
+`configVersion` 与 `blockchain/protocol.json` **逐字节未变**，
+创世哈希不变，节点标志不变 —— 因此**不触发出生证明（stamp）守卫**，
+不会有节点退出 12，**不需要 `devnet-reset`**。
+
+这一点特意写出来，是为了防止有人出于谨慎去做一次不必要的重置：
+重置会丢掉链上全部状态，而这次改动连协议文件都没碰。
+
+判据：`git diff blockchain/protocol.json blockchain/genesis/` 应当为空。
+
+---
+
 ### 9.4 验证
 
 ```bash

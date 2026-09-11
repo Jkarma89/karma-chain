@@ -127,7 +127,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [X] T015 [US1] quickstart 场景 B：探测跑满数个 `fail_timeout` 周期后，
       上游日志里**没有**探测条目、代理日志里**没有** `no live upstreams` /
       `upstream server temporarily disabled`（C-1 / C-2）
-- [!] T016 [US1] quickstart 场景 F：单个 L1 验证者失效时入口仍能确认交易（SC-006 / V-04）——
+- [X] T016 [US1] quickstart 场景 F：单个 L1 验证者失效时入口仍能确认交易（SC-006 / V-04）——
       **002 不回归**。这是本期最容易越界伤到的地方
 - [~] T017 [US1] quickstart 场景 J：`git diff blockchain/protocol.json` 为空、
       `configVersion` 未递增、创世哈希不变、无节点因 stamp 退出 12（SC-008 / V-08）；
@@ -262,7 +262,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       （POST `eth_chainId` / 删 `http_503` / 拉长间隔 / 直接删掉 healthcheck）、
       以及**「`zone` 这个正确修复放大了另一个缺陷」**这条观察 ——
       它说明"每个改动单独都对"不等于"合起来也对"。进 `docs/adr/README.md` 索引
-- [ ] T042 [P] 改 `docs/devnet.md` 的部署步骤：说明本次变更**不需要重置链**（FR-033），
+- [X] T042 [P] 改 `docs/devnet.md` 的部署步骤：说明本次变更**不需要重置链**（FR-033），
       只重建代理容器（`docker compose … up -d rpc`），节点数据卷不动。
       **写明这一点是为了防止有人出于谨慎去做一次不必要的重置**
 - [ ] T043 quickstart 场景 K（R-08 / V-09）：`local` 与 `lan` **两种形态各验一次**。
