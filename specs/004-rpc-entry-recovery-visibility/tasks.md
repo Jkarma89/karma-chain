@@ -44,6 +44,9 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 **Purpose**: 验收清单就位
 
 - [ ] T001 建 `specs/004-rpc-entry-recovery-visibility/checklists/dod.md`：宪法第十七条八项、
+      **并在建表时逐条补齐编号标注**（`/speckit-analyze` 的 L1：24/34 条 FR、2/12 条 SC、
+      V-06、C-3/C-4 在 tasks.md 里没有编号引用 —— 语义上基本都被覆盖，
+      但本项目的 dod 是**按编号逐条核**的，编号断链会让回填时漏项）、
       12 条 SC 逐条、[recovery-capability 契约 §8](./contracts/recovery-capability.md) 的变红核对表 8 行、
       V-01…V-10（含 V-02b）、以及一节留给实施期缺陷（003 的 dod 记了 15 条，本期照办）
 
@@ -129,8 +132,11 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [ ] T017 [US1] quickstart 场景 J：`git diff blockchain/protocol.json` 为空、
       `configVersion` 未递增、创世哈希不变、无节点因 stamp 退出 12（SC-008 / V-08）；
       对着 T002 的基线核对**节点容器未被重启**（FR-032）
-- [ ] T018 [US1] quickstart 场景 E（**需三台**）：两个 Primary 全停的 10 分钟窗口内，
-      每台机器经本机入口发 ≥10 笔交易，全部确认、**零次 5xx**（SC-001 / V-03）
+- [ ] T018 [US1] quickstart 场景 E（**需五台**）：两个 Primary 全停的 10 分钟窗口内，
+      **每一台**机器各经本机入口发 ≥10 笔交易，全部确认、**零次 5xx**（SC-001 / V-03）。
+      *（`/speckit-analyze` 的 I2：原先写"需三台"—— 三台只够**造出**场景
+      （两台停 Primary + 一台发交易），而 SC-001 的判据是**每一台**都要发，
+      因为"入口可用"是逐边界的性质，不是全局的。）*
 
 **Checkpoint**: US1 到此可独立交付 —— 一个真实的可用性缺陷已修，且有会变红的守卫。
 
@@ -182,6 +188,18 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       **003 的 456 个单元测试没有一个执行过 `render()`**，代价是用户在浏览器里
       看到「此视图渲染失败」—— 那个 DOM 桩已经在，接着用
 
+- [ ] T046 [P] [US2] `tests/unit/recovery-blind.test.mjs`：**观察者失明时不作任何断言**
+      （FR-019）—— 断言 `observer.blind === true` 时 `recoveryCapability === 'unknown'`，
+      且**不产生** `recovery-blocked` 异常；无论那一刻有几个 Primary 看起来在服务。
+
+  *（编号在后：本条是 `/speckit-analyze` 的 C1 补上的，既有编号引用一律不动。）*
+
+> **为什么这条不能省。** `unknown` 那个分支原先只在 T025 被实现、在 T028 被渲染，
+> **没有任何一条测试断言它的行为** —— 而失明恰好是面板**知道得最少**的时刻。
+> 一个在本机网线松了的时候仍然断言「别重启任何东西」的面板，
+> 会把一次局部链路故障变成一次不必要的停手。003 把 `observer-blind` 定为
+> **P1 优先级**就是为这个；本期差点把它漏掉。
+
 ### 行为判据
 
 - [ ] T029 [P] [US2] `tests/e2e/recovery-capability.test.mjs`：单机形态下
@@ -197,6 +215,11 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [ ] T033 [US2] 变红 ④：文案去掉「两个」，或加入「需要重置」→ T021 必须失败
 - [ ] T034 [US2] 变红 ⑤：往公开投影加一个字段 → T023 必须失败
 - [ ] T035 [US2] 变红 ⑥：改动 `docs/devnet.md` §9.5 里的门槛数字 → T022 必须失败
+- [ ] T047 [US2] 变红 ⑦：让失明时**照常按 Primary 数判**（即删掉 `unknown` 那一支）→
+      T046 必须失败。**这一条尤其要做** —— 判据从"五态之一"退化成"数个数"是最容易
+      发生的简化，而它恰好在面板最不该说话的时候让面板说话
+
+  *（编号在后：同 T046，来自 `/speckit-analyze` 的 C1。）*
 
 ### 现场验收
 
@@ -246,7 +269,11 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
       「在一台机器上验过」不等于「验过」—— 本期要修的缺陷当初能活下来正是因为这个
 - [ ] T044 全套复跑：`npm test`（单元，应 ≥600 且**无既有断言被放宽**）、
       `npm run test:integration`、`npm run test:e2e`、`npm run render:check`、
-      `npm run test:secrets`、`scripts/devnet-verify`
+      `npm run test:secrets`、`scripts/devnet-verify`；
+      **另加一条机械判据**：`git diff --exit-code package.json package-lock.json`
+      必须为空（**FR-030** 零新增依赖）。
+      *（`/speckit-analyze` 的 C2：这一条此前在**任何**制品里都没有判据，只靠人记得 ——
+      而它本来就该是机械的。）*
 - [ ] T045 回填 `checklists/dod.md`：12 条 SC 逐条、变红核对表 8 行的**实际结果**、
       V-01…V-10 的实测数据、以及实施期缺陷一节。
       **凡未实测的一律不写"已达成"** —— 003 的 spec 里那句「不写"已交付"」照搬
@@ -264,7 +291,7 @@ Phase 3 (US1)：T003/T004 [P] → T005 → T006 → T007 → T008/T009 [P]
                → T010…T014（变红）→ T015…T018（现场）
 
 Phase 4 (US2)：T019…T023 [P] → T024 → T025 → T026 → T027 → T028
-               → T029 → T030…T035（变红）→ T036（现场）
+               → T046 [P] → T029 → T030…T035 + T047（变红）→ T036（现场）
 
 Phase 5 (US3)：依赖 US1 与 US2 都完成（它验的是两者的自愈）
 Phase 6 (US4)：依赖 US2（要有东西可看）
@@ -292,9 +319,10 @@ T020  tests/unit/recovery-tier-isolation.test.mjs
 T021  tests/unit/recovery-copy.test.mjs
 T022  tests/unit/recovery-docs-parity.test.mjs
 T023  tests/unit/dashboard-public-view.test.mjs（改）
+T046  tests/unit/recovery-blind.test.mjs
 ```
 
-**两条 P1 并行**：T003…T018（US1）与 T019…T036（US2）之间无文件冲突。
+**两条 P1 并行**：T003…T018（US1）与 T019…T036 + T046/T047（US2）之间无文件冲突。
 
 **Polish 的文档两条**：T041（ADR）与 T042（devnet.md 部署步骤）。
 
@@ -324,9 +352,9 @@ T023  tests/unit/dashboard-public-view.test.mjs（改）
 |---|---|---|---|
 | Phase 1 Setup | 1 | — | — |
 | Phase 2 Foundational | 1 | — | — |
-| Phase 3 US1（P1） | 16 | 5 | T018 |
-| Phase 4 US2（P1） | 18 | 6 | T036 |
+| Phase 3 US1（P1） | 16 | 5 | T018（**五台**） |
+| Phase 4 US2（P1） | 20 | 7 | T036 |
 | Phase 5 US3（P2） | 2 | — | T037 |
 | Phase 6 US4（P3） | 2 | — | — |
 | Phase 7 Polish | 5 | — | T043 |
-| **合计** | **45** | **11** | **4** |
+| **合计** | **47** | **12** | **4** |

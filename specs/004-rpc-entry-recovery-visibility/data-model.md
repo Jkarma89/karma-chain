@@ -96,6 +96,26 @@ Primary 的 `countsTowardTolerance` **恒为 `false`**，所以这个函数对**
 > 不在 `blockchain/protocol.json` 里，也可能随版本变化。判据只用我们能直接观测、
 > 直接断言、直接告诉人的东西。
 
+### 快照里的字段名与它的 API 面
+
+| | |
+|---|---|
+| 字段名 | `recoveryCapability` |
+| 取值 | `'ok'` ｜ `'blocked'` ｜ `'unknown'` |
+| 出现在 | `/api/snapshot`（**附加**字段，既有字段的语义与取值一律不变） |
+| **不**出现在 | `/api/public`（对外精简视图，FR-022 / R-07） |
+
+**与 003 的 API 契约的关系**（宪法第十条）：003 的
+[`contracts/dashboard-api.md`](../003-chain-health-dashboard/contracts/dashboard-api.md)
+定义了面板的四个端点。本期**不新增端点、不改动任何既有字段**，
+只在 `/api/snapshot` 上**附加**一个字段 —— 因此不需要改那份契约，
+但字段名必须在这里声明清楚。
+
+> **为什么这一段是补上来的**：`/speckit-analyze` 的 I1 指出，
+> `recoveryCapability` 这个名字原先**只出现在 tasks.md** ——
+> 两份契约与本文件都只描述了实体的取值，没声明字段名。
+> 一个 API 面的改动只活在任务清单里，是宪法第十条不允许的。
+
 ### 与既有五类异常的关系
 
 `recovery-blocked` 是第**六**类异常分类，与 `observation` / `node-infra` / `sync-lag` /
