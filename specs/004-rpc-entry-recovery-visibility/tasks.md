@@ -132,7 +132,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 - [~] T017 [US1] quickstart 场景 J：`git diff blockchain/protocol.json` 为空、
       `configVersion` 未递增、创世哈希不变、无节点因 stamp 退出 12（SC-008 / V-08）；
       对着 T002 的基线核对**节点容器未被重启**（FR-032）
-- [!] T018 [US1] quickstart 场景 E（**需五台**）：两个 Primary 全停的 10 分钟窗口内，
+- [X] T018 [US1] quickstart 场景 E（**需五台**）：两个 Primary 全停的 10 分钟窗口内，
       **每一台**机器各经本机入口发 ≥10 笔交易，全部确认、**零次 5xx**（SC-001 / V-03）。
       *（`/speckit-analyze` 的 I2：原先写"需三台"—— 三台只够**造出**场景
       （两台停 Primary + 一台发交易），而 SC-001 的判据是**每一台**都要发，
