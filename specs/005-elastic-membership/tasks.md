@@ -62,7 +62,9 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
 - [ ] T003 归属表定稿：把 [data-model 第 0 节](./data-model.md) 的逐字段归属写成
       **可执行的清单**（生成器与守卫共用同一份），并对三个边界情形做出决定并记录理由：
       ① `avalanche.*Version`（倾向留在协议侧）② `endpoints.rpcPath`（倾向移出 + 一致性守卫）
-      ③ `validators.count`（降级为期望成员数）
+      ③ `validators.count`（降级为期望成员数）；
+      并确认 [R-10](./research.md) 的决定：`docs/protocol-parameters.md` **文档两个文件**、
+      保持逐字节相同（`/speckit-analyze` 的 A1）
 - [ ] T004 ABI 取得途径定稿（research R-03 三选一），并写明版本锁定方式 ——
       ABI 必须与 `avalancheCliVersion`（当前 v1.9.6）对得上，且有守卫防止两者漂移
 - [ ] T005 `f(n)` 通用化：把容错推导从"按当前 n 写死"改为对任意 n 正确，
@@ -99,8 +101,10 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       **`deriveTopology()` 的输出形状一个字段都不许变**
 - [ ] T011 [US1] 改 `docker/bootstrap/entrypoint.sh`：`jq` 从新文件读 topology
       （shell 侧唯一直接读原始字段的地方）
-- [ ] T012 [US1] 改约 12 个**直接读 `protocol.topology`** 的测试文件改读新来源
-      （清单见 [research R-02](./research.md)）
+- [ ] T012 [US1] **用脚本枚举**所有直接读旧路径（`protocol.topology` / `p.topology`）的文件
+      并逐个改读新来源，最后断言**零残留**。
+      *（`/speckit-analyze` 的 D1：research R-02 的清单结尾是"等"，**那不是穷举** ——
+      按名单改一定会漏。把"数数"换成"扫描"。）*
 - [ ] T013 [US1] `npm run render` 重新生成，`npm run render:check` 必须 10/10
 
 ### 判据
@@ -119,6 +123,25 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 > **T017 与 T016 同等重要。** T016 证明保护范围缩小了，
 > T017 证明它**没有缩过头** —— 只做前者会得到一个什么都不拦的守卫。
+
+- [ ] T063 [US1] 改 `tools/protocol/render-docs.mjs`：读**两个**文件，
+      使 `docs/protocol-parameters.md` 分家前后**逐字节相同**（[R-10](./research.md)）。
+      它还维护着一份"每个字段都必须被文档化"的完整性清单 —— 那份清单要覆盖两个文件
+
+  *（编号在后：本条与 T064 是 `/speckit-analyze` 补的，既有编号引用一律不动。）*
+
+- [ ] T064 [US1] `tests/unit/stamp-scope.test.mjs`：**守卫 stamp 的作用域** ——
+      ① 从当前两个文件计算 stamp 六项，断言结果**只依赖协议参数侧**：
+      改部署文件（含**它自己的版本号**）后六项的计算结果**逐字节不变**；
+      ② 断言 `stamp_fields()` 的输入里**不含**部署文件的任何内容。
+      **变红检查**：把部署文件的版本号加进 stamp 的输入 → 本守卫必须失败
+
+  *（`/speckit-analyze` 的 C1 + C2：FR-033 自己写着「**不能只靠一次人工核对**」，
+  而原先唯一承接它的 T021 正是一次五台机器的人工现场核对；
+  FR-002「部署版本号不进 stamp」此前**一条断言都没有** ——
+  而"字段分离成立"与"版本号被排除在 stamp 外"是两件事，
+  有人可能把部署版本号也加进 `stamp_fields()` 而字段分离仍然成立。
+  这条守卫**纯离线**，不需要机器。）*
 
 ### 跨机与现场
 
@@ -258,7 +281,9 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 - [ ] T060 全套复跑：`npm test`（应 ≥736 且**无既有断言被放宽**）、
       `npm run test:integration`、`npm run test:e2e`、`npm run render:check`、
       `npm run test:secrets`、`scripts/devnet-verify`、
-      `git diff --exit-code package.json package-lock.json`
+      `git diff --exit-code package.json package-lock.json`（**FR-035** 零新增依赖）；
+      并确认 `tests/integration/no-cli-in-runtime.test.mjs` **保持通过**
+      （**FR-034** 不请回 Avalanche CLI —— 既有守卫已覆盖，本期只需不打破它）
 - [ ] T061 **quickstart 场景 R（SC-016）**：找一名**未参与本期**的人，
       只给他文档，让他把一台机器加成验证者。**卡住就改文档，不改判据**
 - [ ] T062 回填 `checklists/dod.md`：16 条 SC、38 条 FR、两份契约的变红核对表、
@@ -280,6 +305,9 @@ Phase 6 (US4)：可与 US2/US3 并行，但**动手前要问用户**
 Phase 7 (US5)：依赖 T005/T006；呈现侧改动依赖 US2/US3 产生的状态
 Phase 8 (US6)：纯文档 + 一次现场，随时可做
 Phase 9    ：T057–T059 [P] 随时可做；T060–T062 收尾
+
+T063 / T064 属 Phase 3（US1），编号在后只是为了不动既有引用。
+T064 纯离线，可与 T007/T008 并行。
 ```
 
 **US1 是地基**：US2/US3 要往"期望成员"声明里写，而那个声明在 US1 之后才存在。
@@ -320,11 +348,11 @@ T008  tests/unit/derive-topology-shape.test.mjs
 |---|---|---|---|
 | Phase 1 Setup | 2 | — | T002 逐台记 |
 | Phase 2 Foundational | 4 | — | — |
-| Phase 3 US1（P1） | 16 | 4 | T021 / T022（**五台**） |
+| Phase 3 US1（P1） | **18** | **5** | T021 / T022（**五台**） |
 | Phase 4 US2（P1） | 12 | 1 | T033 / T034（两台） |
 | Phase 5 US3（P1） | 8 | 2 | T041（两台） |
 | Phase 6 US4（P2） | 5 | — | T043 / T047（**五台**，先问用户） |
 | Phase 7 US5（P2） | 7 | 2 | — |
 | Phase 8 US6（P3） | 2 | — | 1 台新机 |
 | Phase 9 Polish | 6 | — | T061（一名他人） |
-| **合计** | **62** | **9** | **6** |
+| **合计** | **64** | **10** | **6** |

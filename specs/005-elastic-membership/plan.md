@@ -169,8 +169,8 @@ specs/005-elastic-membership/
 blockchain/
 ├── protocol.json                  # 改：移出部署描述（一次切干净）
 ├── protocol.schema.json           # 改：去掉被移出的字段
-├── deployment.json                # 新：部署描述（名称待定）
-└── deployment.schema.json         # 新
+├── deployment.json                # 新：部署描述（**文件名由 T003 定**）
+└── deployment.schema.json         # 新（同上）
 
 tools/protocol/
 └── load.mjs                       # 改：读两个文件；**deriveTopology() 输出形状不变**
@@ -231,6 +231,18 @@ docs/
   [quickstart.md](./quickstart.md)。
 - **Phase 1 后重查宪法**：六条 ⚠️ 已列为必办项，其余 14 条通过。
   设计过程中**没有**新增偏离 —— Complexity Tracking 的五条全部在 Phase 0 就已识别。
+- **`/speckit-analyze` 的结果（2026-09-11）**：0 CRITICAL、2 HIGH、3 MEDIUM、2 LOW；
+  幽灵编号 0、模糊形容词 0、重复需求 0。已修六条：
+  **A1**（`docs/protocol-parameters.md` 与 SC-003 的内在张力 → R-10 选 (a)，新增 T063）、
+  **C1 + C2**（FR-033 自己写着"不能只靠人工核对"却只有人工核对；FR-002 一条断言都没有
+  → 新增 T064，纯离线）、**C3**（FR-034 由既有 `no-cli-in-runtime` 覆盖，T060 标注）、
+  **D1**（T012 由"按名单改"换成"脚本枚举 + 零残留断言"）、**D2**（去掉裸的"待定"）。
+  **L1**（13/38 FR 在 tasks 里缺编号引用，语义已覆盖）由 **T001 的任务描述**承接，不另处理。
+
+> **A1 值得单独记一句。** 它不是漏了一条判据，是**两条判据互相矛盾**：
+> SC-003 要求全部生成物逐字节相同，而其中一项生成物按定义就会变。
+> 这种张力如果留到实施时才撞上，最短路径是**把 SC-003 悄悄放宽** ——
+> 而那恰好是本期最强的不回归判据。
 
 ## 分阶段交付建议
 
