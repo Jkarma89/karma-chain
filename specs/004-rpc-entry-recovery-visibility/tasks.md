@@ -247,7 +247,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ## Phase 6: US4 — 照着面板就能按正确顺序恢复 (Priority: P3)
 
-- [ ] T039 [US4] 改 `docs/devnet.md` §10（面板）：加一节讲恢复能力，与 §9.5「恢复顺序」互指。
+- [X] T039 [US4] 改 `docs/devnet.md` §10（面板）：加一节讲恢复能力，与 §9.5「恢复顺序」互指。
       两处的门槛数字与顺序由 T022 守着
 - [ ] T040 [US4] quickstart 场景 M（SC-009）：请一名**未参与本期**的人，
       在两个 Primary 停着时打开面板、**不许查文档**，说出他要做的第一件事。
@@ -257,7 +257,7 @@ description: "任务清单：RPC 入口可用性修复与「恢复能力」呈�
 
 ## Phase 7: Polish & Cross-Cutting
 
-- [ ] T041 [P] 建 `docs/adr/0011-proxy-health-answers-only-for-itself.md`（宪法第十四条）：
+- [X] T041 [P] 建 `docs/adr/0011-proxy-health-answers-only-for-itself.md`（宪法第十四条）：
       记「代理健康位只回答代理自己」这个决定、**四条被否方案**
       （POST `eth_chainId` / 删 `http_503` / 拉长间隔 / 直接删掉 healthcheck）、
       以及**「`zone` 这个正确修复放大了另一个缺陷」**这条观察 ——
