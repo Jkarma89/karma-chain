@@ -16,6 +16,9 @@ const readJson = (p) => JSON.parse(readFileSync(p, 'utf8'));
 
 const BASE_CONTRACT = resolve(REPO_ROOT, 'specs/001-local-avalanche-devnet/contracts/protocol-config.schema.json');
 const TOPOLOGY_CONTRACT = resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/topology.schema.json');
+// 功能 005：创世之后加入的验证者的身份（公开材料）。与 002 的 topology 同样是**片段**，
+// 嵌在 validators.nodes.items.properties.identity 上，所以要单独比、并从基础比对里剔除。
+const IDENTITY_FRAGMENT = resolve(REPO_ROOT, 'specs/005-elastic-membership/contracts/validator-identity.schema.json');
 const IDENTITY_CONTRACT = resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/chain-identity.schema.json');
 const IDENTITY_RUNTIME = resolve(REPO_ROOT, 'blockchain/chain-identity.schema.json');
 
@@ -43,13 +46,31 @@ describe('protocol.schema.json 与其两个契约同步', () => {
   const base = sortRequired(readJson(BASE_CONTRACT));
   const frag = sortRequired(readJson(TOPOLOGY_CONTRACT));
 
-  test('基础部分与 001 契约逐字段一致（除 topology、$defs 与 required 的增量外无差异）', () => {
+  test('基础部分与 001 契约逐字段一致（除 topology、identity、$defs 与 required 的增量外无差异）', () => {
     // required 单独比对（见下一条：只增不减）—— 002 把 topology 列为必填，属于合法增量
     const { topology, ...props } = runtime.properties;
+    // 功能 005 的 identity 片段单独比对（见下一条）—— 从基础比对里剔除，
+    // **但不是排除掉不管**：剔除之后它必须与 005 的契约片段逐字段相等。
+    props.validators = structuredClone(props.validators);
+    delete props.validators.properties.nodes.items.properties.identity;
     const { $defs, required, ...rest } = runtime;
     const { required: baseRequired, ...baseRest } = base;
     assert.deepEqual({ ...rest, properties: props }, baseRest,
       `schema 漂移：运行时 schema 的基础部分偏离了 ${BASE_CONTRACT}`);
+  });
+
+  test('identity 片段与 005 契约逐字段一致', () => {
+    const { $schema, $id, title, $comment, ...expected } = readJson(IDENTITY_FRAGMENT);
+    const actual = mergedSchema().properties.validators.properties.nodes.items.properties.identity;
+    assert.deepEqual(sortRequired(actual), sortRequired(expected),
+      `schema 漂移：identity 片段偏离了 ${IDENTITY_FRAGMENT}`);
+  });
+
+  test('identity 必须是**可选**的（创世那几个不写这一块）', () => {
+    const item = mergedSchema().properties.validators.properties.nodes.items;
+    assert.ok(!(item.required ?? []).includes('identity'),
+      'identity 被列为必填 —— 那会让创世那五个验证者的声明全部非法，而它们的身份本来就该从 keyDir 里的密钥派生。');
+    assert.ok(item.properties.identity, 'identity 属性不见了 —— 创世后加入的成员无处声明身份');
   });
 
   test('topology 段与 002 契约片段逐字段一致', () => {

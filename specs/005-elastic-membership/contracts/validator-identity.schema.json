@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.dev/schemas/validator-identity.schema.json",
+  "title": "创世之后加入的验证者的身份（公开材料）—— 功能 005 契约片段",
+  "$comment": "嵌入位置：deployment.schema.json 的 validators.nodes.items.properties.identity。与 002 的 topology.schema.json 同样是片段，不是独立配置文件。由 tests/unit/schema-sync.test.mjs 逐字段比对。",
+  "description": "创世**之后**加入的成员的身份，**全部是公开材料**。创世那几个不写这一块（它们的身份从 keyDir 里的密钥派生，密钥按宪法第四条 v1.1.0 的例外提交在仓库里）。功能 005 的安全约束对新验证者更严：私钥必须在**目标机器上生成**、不得经过仓库、对话或任何中间环节。三个 sha256 是私钥文件的**指纹、不是私钥** —— 容器的 check_key_material() 逐个比对它们，字段缺了会取到 null 并退出 12，所以必须一次报齐。见 tools/verify/lib/identity.mjs 的 identityOf()。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "origin",
+    "nodeId",
+    "blsPublicKey",
+    "certSha256",
+    "keySha256",
+    "signerSha256",
+    "reportedBy",
+    "reportedAt"
+  ],
+  "properties": {
+    "origin": {
+      "description": "**必须显式声明。** crossCheckIdentity() 靠它跳过\"建链制品里查得到\"那条检查 —— 若改成\"查不到就当成新成员\"，创世成员的材料被换掉时会被静默放行。",
+      "enum": [
+        "joined"
+      ]
+    },
+    "nodeId": {
+      "type": "string",
+      "pattern": "^NodeID-[1-9A-HJ-NP-Za-km-z]+$"
+    },
+    "blsPublicKey": {
+      "type": "string",
+      "pattern": "^0x[0-9a-f]{96}$"
+    },
+    "certSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "keySha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "signerSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "reportedBy": {
+      "description": "哪台机器报上来的（故障边界 id + 地址）。出了问题要能找回那台机器重新取。",
+      "type": "string",
+      "minLength": 3
+    },
+    "reportedAt": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    }
+  }
+}

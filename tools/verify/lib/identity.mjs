@@ -97,6 +97,45 @@ export function identityFromKeyDir(keyDir) {
 }
 
 /**
+ * 一个验证者的身份 —— **创世成员从本地密钥派生，创世后加入的凭声明的公开材料**。
+ *
+ * ## 为什么需要两条路
+ *
+ * `identityFromKeyDir()` 读 `signer.key`（**BLS 私钥**）来派生公钥。对创世那五个
+ * 没问题：它们的密钥按宪法第四条 v1.1.0 的例外提交在仓库里。
+ *
+ * 但功能 005 的安全约束对**新**验证者更严：私钥**必须在目标机器上生成、
+ * 不得经过仓库、对话或任何中间环节**，只有公开材料参与注册。
+ * 所以创世后加入的成员，仓库里根本没有它的 `signer.key` —— 派生这条路走不通。
+ *
+ * ## 声明里放什么（全部是公开材料）
+ *
+ *   nodeId / blsPublicKey     —— 注册时链上要的就是这两样
+ *   certSha256                —— 证书本身是公开的
+ *   keySha256 / signerSha256  —— **私钥文件的 sha256 指纹，不是私钥**
+ *
+ * 后两个为什么可以放：`docker/node/entrypoint.sh` 的 `check_key_material()`
+ * 会把三个文件的 sha256 逐一比对，**字段缺了 `jq` 返回 null、直接退出 12**。
+ * 另一条路是给入口加一条"字段不存在就跳过"的分支 —— 那是静默关掉守卫的典型做法。
+ * 取指纹这条：完整性校验保持统一、不加分支，而私钥一步都不离开那台机器。
+ * 32 字节熵的秘密，公开它的 sha256 只能用来**核对一个猜测**，不构成可行攻击。
+ *
+ * @param {object} v `validators.nodes[]` 里的一项
+ */
+export function identityOf(v) {
+  if (v.identity) {
+    const missing = ['nodeId', 'blsPublicKey', 'certSha256', 'keySha256', 'signerSha256']
+      .filter((k) => !v.identity[k]);
+    if (missing.length) {
+      throw new Error(`validators.nodes[${v.index}].identity 缺字段：${missing.join(', ')} —— `
+        + '创世后加入的成员必须把全部公开材料一次报齐，否则渲染出的身份制品是半份的');
+    }
+    return { ...v.identity, keyDir: v.keyDir, derived: false };
+  }
+  return { ...identityFromKeyDir(v.keyDir), derived: true };
+}
+
+/**
  * 交叉校验建链制品与密钥材料是否同源（FR-017）。
  * @returns {string[]} 不匹配的说明；空数组 = 全部同源
  */
@@ -105,6 +144,16 @@ export function crossCheckIdentity(identityArtifact, validatorNodes) {
   const byNodeId = new Map(identityArtifact.bootstrapValidators.map((v) => [v.nodeId, v]));
 
   for (const v of validatorNodes) {
+    // 创世**之后**加入的成员：这份制品里永远不会有它 —— 它记录的是链的**出生**，
+    // 不是当前成员。所以这里跳过，改由「链上实际成员」那条比对来验
+    // （tools/membership/member-set.mjs，data-model 第 2 节的三种漂移）。
+    //
+    // **必须靠显式声明判断，不能靠"制品里查不到就当成新成员"** ——
+    // 那样一来，创世成员的材料被换掉时（证书打错、密钥目录指错），
+    // 派生出的 NodeID 查不到，就会被当成"新加入的"而静默放行。
+    // 下方"制品里还剩谁"那一轮是这条的兜底：五个创世成员必须被逐个认领。
+    if (v.identity?.origin === 'joined') continue;
+
     let derived;
     try {
       derived = identityFromKeyDir(v.keyDir);
@@ -123,6 +172,9 @@ export function crossCheckIdentity(identityArtifact, validatorNodes) {
     byNodeId.delete(derived.nodeId);
   }
 
+  // 兜底：制品里的每个创世验证者都必须被某个声明认领。
+  // 少认领一个，说明要么有人删了声明，要么某个创世成员的材料被换掉了 ——
+  // 后者若只看上一轮，会因为"查不到"而看起来像新成员。
   for (const leftover of byNodeId.keys()) {
     problems.push(`artifact lists ${leftover}, but no validator key directory derives it`);
   }
