@@ -65,7 +65,7 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
       ③ `validators.count`（降级为期望成员数）；
       并确认 [R-10](./research.md) 的决定：`docs/protocol-parameters.md` **文档两个文件**、
       保持逐字节相同（`/speckit-analyze` 的 A1）
-- [ ] T004 ABI 取得途径定稿（research R-03 三选一），并写明版本锁定方式 ——
+- [X] T004 ABI 取得途径定稿（research R-03 三选一），并写明版本锁定方式 ——
       ABI 必须与 `avalancheCliVersion`（当前 v1.9.6）对得上，且有守卫防止两者漂移
 - [X] T005 `f(n)` 通用化：把容错推导从"按当前 n 写死"改为对任意 n 正确，
       落在 `tools/protocol/load.mjs` 的 `faultTolerance`
@@ -283,7 +283,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ### 实现
 
-- [ ] T025 [US2] 新建 `tools/membership/abi/validator-manager.json`（按 T004 的途径取得并锁版本）
+- [X] T025 [US2] 新建 `tools/membership/abi/validator-manager.json`（按 T004 的途径取得并锁版本）
 - [ ] T026 [US2] 新建 `tools/membership/member-set.mjs`：读链上实际成员；
       与"期望成员"比对并给出三种漂移的分类
 - [ ] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步

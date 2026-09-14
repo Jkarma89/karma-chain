@@ -109,6 +109,89 @@
 **已有可复用的合约调用能力**：`scripts/devnet-contracts` + `tools/verify/` 已经能编译并部署合约
 （solc 在 verify 镜像里、调用走 `viem`）。范围 B 不需要从零建工具链。
 
+### R-03 的结论（T004，2026-09-14 定）
+
+**都不选那三条，用第四条：手写最小 ABI，每一项对着字节码离线核验。**
+
+方法：**提出候选签名，用 keccak 命中来确认** —— 不是从字节码反推签名（R-03 标了"不推荐"），
+而是我给出候选、由字节码裁决：
+
+- 函数：`keccak256(sig).slice(0,10)` 必须出现在实现字节码的某个 `PUSH4` 操作数里
+- 事件：`keccak256(sig)` 必须出现在某个 `PUSH32` 操作数里
+
+命中即确认，**未命中的一律不写进 ABI**。为什么这比 vendor 外部 ABI 好：
+vendor 要引入一份外部数据并**自行论证它与 CLI v1.9.6 对得上**，而那份论证
+只能靠人读版本号 —— 正是本项目反复栽过的"自述式合规"。现在合约一变守卫就红。
+
+制品：`tools/membership/abi/validator-manager.json`（11 个函数 / 5 个事件，带出处）
+守卫：`tests/unit/validator-manager-abi.test.mjs`（**离线**，24 条，5 条变红检查全过）
+
+能离线是因为 `blockchain/genesis/validator-manager.alloc.json` 里存着创世注入的完整字节码
+（实现 30920 字符），而那正是链上跑着的那份 —— 对活链 `eth_getCode` 核对过长度一致。
+
+**这条守卫不证明什么**：选择器只证明**签名存在**，不证明语义。参数含义与返回布局
+它都说不了 —— 那部分见下面 V-24，是在活链上逐字段解码核实的。
+
+---
+
+## 三之二、US2 的实测（2026-09-14，全部对活链）
+
+- **V-20** ✅ **实现合约的接口全部确认**。我提出的 15 个候选签名**全部命中**，
+  正是 ACP-77 v2 的 `ValidatorManager`：
+
+  | 选择器 | 签名 | 用途 |
+  |---|---|---|
+  | `0x9cb7624e` | `initiateValidatorRegistration(bytes,bytes,(uint32,address[]),(uint32,address[]),uint64)` | 加入第 1 步 |
+  | `0xa3a65e48` | `completeValidatorRegistration(uint32)` | 加入第 4 步 |
+  | `0xb6e6a2ca` | `initiateValidatorRemoval(bytes32)` | 退出第 1 步 |
+  | `0x9681d940` | `completeValidatorRemoval(uint32)` | 退出第 4 步 |
+  | `0xbee0a03f` | `resendRegisterValidatorMessage(bytes32)` | **重试**（FR-016） |
+  | `0xfd7ac5e7` | `registeredValidators(bytes)` | NodeID → validationID |
+  | `0xd5f20ff6` | `getValidator(bytes32)` | 读单个成员 |
+  | `0xbb0b1938` | `l1TotalWeight()` | 总权重 |
+  | `0x5dc1f535` | `subnetID()` | 子网 id |
+  | `0x09c1df66` | `getChurnPeriodSeconds()` | churn 限制 |
+  | `0x8da5cb5b` / `0xf2fde38b` / `0x715018a6` | `owner()` / `transferOwnership` / `renounceOwnership` | PoA 治理主体 |
+  | `0x66109669` / `0xce161f14` | `initiateValidatorWeightUpdate` / `completeValidatorWeightUpdate` | 改权重（本期不用） |
+
+  `PUSH4` 扫描会捞到非选择器的 4 字节常量（`0x4e487b71` 是 `Panic()`，
+  `0x616c6c20` 是 ASCII `"all "`），所以**只用正向命中**，"未命中"那 61 个是噪声、不作结论。
+
+- **V-21** ✅ **链上成员集合可以从事件重建，而且只能这么做。**
+  实现合约**没有任何枚举函数** —— 选择器里只有按 NodeID 查的 `registeredValidators(bytes)`。
+  这一点决定了实现路径：**按声明的 NodeID 逐个查，查不出"你不知道的成员"**，
+  而那正是 data-model 第 2 节的第一种漂移（「链上有、声明里没有 —— 有人绕过工具加了一个」）。
+
+  实测：代理地址上共 7 条日志 —— 区块 3 的 `OwnershipTransferred` 与 `Initialized(1)`，
+  区块 4 的 **5 条 `RegisteredInitialValidator(bytes32,bytes20,uint64)`**，每个创世验证者一条。
+  从事件重建出的 5 个 NodeID 与 `validators.nodes[]` 的证书派生结果**逐个对上**。
+
+  九个候选事件签名（含注册/退出/改权重那几个至今未发生过的）**全部在字节码的
+  `PUSH32` 常量里命中** —— 所以事件签名是离线可证的，不必等到第一次注册才知道写对没写对。
+
+- **V-22** ✅ **五个验证者完全等权**：各 `weight = 100`，`l1TotalWeight() = 500`。
+  这是 `f(n) = ⌊n/4⌋` 那套推导的前提（等权），现在在链上得到确认，不再是假设。
+
+- **V-23** ✅ `owner()` = `0x8db97C7cEcE249c2b98bDC0226Cc4C2A57BF52FC`，
+  即 `validators.ownerAccount` 声明的 `ewoq`。PoA 的治理主体与声明一致，签名密钥可用。
+
+- **V-24** ✅ **`getValidator(bytes32)` 的返回布局逐字段解码确认**（352 字节）：
+
+  ```
+  status=2（Active）  nodeID=0x46967f15…  startingWeight=100
+  sentNonce=0  receivedNonce=0  weight=100  startTime=1788857838  endTime=0
+  ```
+
+  选择器证明不了返回布局，所以这一条必须实测。同理 `owner()` / `subnetID()` /
+  `l1TotalWeight()` / `getChurnPeriodSeconds()` 的返回类型也是这样核实的。
+
+- **V-25** ⚠ **`getChurnPeriodSeconds() = 0` —— 成员变更没有速率限制。**
+  少一个故障模式（不必处理"改得太频繁被拒"），但也说明这条链**没有**生产环境
+  该有的 churn 保护。本期不改它（那是协议参数，属宪法第十五条），但要写进文档：
+  **谁把这套流程搬去生产，churn period 必须先设起来。**
+
+---
+
 ### R-04 · 成员的事实来源在链上 —— 并且要有一条漂移守卫
 
 **决策**：链上是事实来源；部署描述只声明**期望成员**。两者不一致 **MUST 可见**（FR-030）。

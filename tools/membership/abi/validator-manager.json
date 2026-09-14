@@ -1,0 +1,168 @@
+{
+  "$comment": "PoA ValidatorManager 的**最小** ABI —— 只含 tools/membership/ 真正调用的入口。功能 005 / T004。取得方式：不从外部仓库取整份 ABI，也不从字节码反推签名；而是**提出候选签名、用 keccak 命中来确认**，未命中的一律不写。每个 function 的 4 字节选择器与每个 event 的 topic0 都必须出现在 blockchain/genesis/validator-manager.alloc.json 的字节码里 —— 由 tests/unit/validator-manager-abi.test.mjs 离线核验。合约一变，守卫就红。",
+  "provenance": {
+    "verifiedAgainst": "blockchain/genesis/validator-manager.alloc.json",
+    "implementation": "0c0deba5e0000000000000000000000000000000",
+    "avalancheCliVersion": "v1.9.6",
+    "date": "2026-09-14",
+    "method": "候选签名 → keccak256 → 在实现字节码的 PUSH4（函数）/ PUSH32（事件）操作数里命中",
+    "liveChainChecks": "owner() / subnetID() / l1TotalWeight() / getChurnPeriodSeconds() / getValidator(bytes32) 的**返回布局**在活链上逐字段解码核实过（research V-20…V-24）。initiate*/complete* 的返回值本工具不解码 —— 结果从事件读，见 FR-016 的分步可见性要求。"
+  },
+  "abi": [
+    {
+      "type": "function",
+      "name": "initiateValidatorRegistration",
+      "stateMutability": "nonpayable",
+      "inputs": [
+        { "name": "nodeID", "type": "bytes" },
+        { "name": "blsPublicKey", "type": "bytes" },
+        {
+          "name": "remainingBalanceOwner",
+          "type": "tuple",
+          "components": [
+            { "name": "threshold", "type": "uint32" },
+            { "name": "addresses", "type": "address[]" }
+          ]
+        },
+        {
+          "name": "disableOwner",
+          "type": "tuple",
+          "components": [
+            { "name": "threshold", "type": "uint32" },
+            { "name": "addresses", "type": "address[]" }
+          ]
+        },
+        { "name": "weight", "type": "uint64" }
+      ],
+      "outputs": [{ "name": "validationID", "type": "bytes32" }]
+    },
+    {
+      "type": "function",
+      "name": "completeValidatorRegistration",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "messageIndex", "type": "uint32" }],
+      "outputs": [{ "name": "validationID", "type": "bytes32" }]
+    },
+    {
+      "type": "function",
+      "name": "resendRegisterValidatorMessage",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "validationID", "type": "bytes32" }],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "initiateValidatorRemoval",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "validationID", "type": "bytes32" }],
+      "outputs": []
+    },
+    {
+      "type": "function",
+      "name": "completeValidatorRemoval",
+      "stateMutability": "nonpayable",
+      "inputs": [{ "name": "messageIndex", "type": "uint32" }],
+      "outputs": [{ "name": "validationID", "type": "bytes32" }]
+    },
+    {
+      "type": "function",
+      "name": "registeredValidators",
+      "stateMutability": "view",
+      "inputs": [{ "name": "nodeID", "type": "bytes" }],
+      "outputs": [{ "name": "validationID", "type": "bytes32" }]
+    },
+    {
+      "type": "function",
+      "name": "getValidator",
+      "stateMutability": "view",
+      "inputs": [{ "name": "validationID", "type": "bytes32" }],
+      "outputs": [
+        {
+          "name": "validator",
+          "type": "tuple",
+          "components": [
+            { "name": "status", "type": "uint8" },
+            { "name": "nodeID", "type": "bytes" },
+            { "name": "startingWeight", "type": "uint64" },
+            { "name": "sentNonce", "type": "uint64" },
+            { "name": "receivedNonce", "type": "uint64" },
+            { "name": "weight", "type": "uint64" },
+            { "name": "startTime", "type": "uint64" },
+            { "name": "endTime", "type": "uint64" }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "function",
+      "name": "l1TotalWeight",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint64" }]
+    },
+    {
+      "type": "function",
+      "name": "subnetID",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "bytes32" }]
+    },
+    {
+      "type": "function",
+      "name": "getChurnPeriodSeconds",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "uint64" }]
+    },
+    {
+      "type": "function",
+      "name": "owner",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [{ "name": "", "type": "address" }]
+    },
+    {
+      "type": "event",
+      "name": "RegisteredInitialValidator",
+      "inputs": [
+        { "name": "validationID", "type": "bytes32", "indexed": true },
+        { "name": "nodeID", "type": "bytes20", "indexed": true },
+        { "name": "weight", "type": "uint64", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "InitiatedValidatorRegistration",
+      "inputs": [
+        { "name": "validationID", "type": "bytes32", "indexed": true },
+        { "name": "nodeID", "type": "bytes20", "indexed": true },
+        { "name": "registrationMessageID", "type": "bytes32", "indexed": false },
+        { "name": "registrationExpiry", "type": "uint64", "indexed": false },
+        { "name": "weight", "type": "uint64", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "CompletedValidatorRegistration",
+      "inputs": [
+        { "name": "validationID", "type": "bytes32", "indexed": true },
+        { "name": "weight", "type": "uint64", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "InitiatedValidatorRemoval",
+      "inputs": [
+        { "name": "validationID", "type": "bytes32", "indexed": true },
+        { "name": "validatorWeightMessageID", "type": "bytes32", "indexed": false },
+        { "name": "weight", "type": "uint64", "indexed": false },
+        { "name": "endTime", "type": "uint64", "indexed": false }
+      ]
+    },
+    {
+      "type": "event",
+      "name": "CompletedValidatorRemoval",
+      "inputs": [{ "name": "validationID", "type": "bytes32", "indexed": true }]
+    }
+  ]
+}
