@@ -63,8 +63,35 @@ if [ -e "${KEYDIR}/staker.key" ]; then
   exit ${EXIT_DEPS}
 fi
 
-docker image inspect "${IMAGE}" >/dev/null 2>&1 || {
-  echo "找不到镜像 ${IMAGE} —— 先 'docker build -f docker/node/Dockerfile -t ${IMAGE} .'" >&2
+# --- docker 能不能用，和镜像在不在，是**两件事** -----------------------------
+#
+# 初版把它们混成一句「找不到镜像，先 docker build」。而在一台刚 usermod 还没重新登录的
+# 机器上，`docker image inspect` 失败的真实原因是**权限不足** —— 报"找不到镜像"会把人
+# 引去重新构建一个已经存在的镜像。两种失败要分开说。
+DOCKER=docker
+if ! docker info >/dev/null 2>&1; then
+  echo "docker 不能直接用（本用户不在 docker 组，或 usermod 后还没重新登录）。" >&2
+  echo "  试着用 sudo 调它 —— 可能要输密码。" >&2
+  echo "  **只有 docker 走 sudo**，生成的文件仍属于你自己（容器带 --user）。" >&2
+  if sudo docker info >/dev/null 2>&1; then
+    DOCKER="sudo docker"
+  else
+    echo "" >&2
+    echo "连不上 docker。两种情况：" >&2
+    echo "  1. 本用户不在 docker 组：sudo usermod -aG docker \$USER，然后**重新登录**" >&2
+    echo "  2. docker 服务没起：sudo systemctl start docker" >&2
+    echo "" >&2
+    echo "  **不要整条 sudo 跑本脚本** —— 那样生成的文件属主是 root，" >&2
+    echo "  接下来 git 的任何操作都会撞到属主问题（2026-09-14 在 ubuntu-1 上刚栽过：" >&2
+    echo "  早先某次 sudo git 让 .git/objects 变成 root 属主，git pull 直接失败）。" >&2
+    exit ${EXIT_DEPS}
+  fi
+fi
+
+${DOCKER} image inspect "${IMAGE}" >/dev/null 2>&1 || {
+  echo "" >&2
+  echo "docker 可用，但**找不到镜像** ${IMAGE}。先构建：" >&2
+  echo "  docker build -f docker/node/Dockerfile --build-arg TARGETARCH=\$(dpkg --print-architecture) -t ${IMAGE} ." >&2
   exit ${EXIT_DEPS}
 }
 
@@ -80,7 +107,11 @@ trap cleanup EXIT
 echo "在本机生成 node-${INDEX} 的 staking 材料（约 30 秒）…" >&2
 
 # 端口给得很高且只绑回环：这个临时节点不该被任何人连上，也不该撞到正在跑的节点。
-docker run --rm --entrypoint sh -e NETWORK_ID="${NETWORK_ID}" -v "${WORK}:/out" "${IMAGE}" -c '
+# `--user` 让容器以**调用者**的身份写文件。少了它，avalanchego 以 root 生成
+# staker.key（权限 0600、属主 root），后面这个脚本以普通用户 cp 就**读不出来** ——
+# 而那时报的是一句 Permission denied，看不出根因在容器的运行身份上。
+${DOCKER} run --rm --entrypoint sh --user "$(id -u):$(id -g)" \
+  -e NETWORK_ID="${NETWORK_ID}" -v "${WORK}:/out" "${IMAGE}" -c '
   mkdir -p /out/data
   timeout 25 /avalanchego/build/avalanchego \
     --network-id="${NETWORK_ID}" --data-dir=/out/data \
