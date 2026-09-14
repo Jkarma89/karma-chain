@@ -212,13 +212,21 @@ describe('跨机形态（多故障边界）', () => {
     p.topology.deployments.lan = {
       description: '测试用 5 边界形态',
       // 刻意不声明 containerNetwork —— 节点分处不同机器，地址即机器地址
-      failureDomains: [
-        dom('m1', 'windows', '10.0.0.1', ['l1-1', 'primary-1']),
-        dom('m2', 'windows', '10.0.0.2', ['l1-2', 'primary-2']),
-        dom('m3', 'linux', '10.0.0.3', ['l1-3']),
-        dom('m4', 'linux', '10.0.0.4', ['l1-4']),
-        dom('m5', 'linux', '10.0.0.5', ['l1-5']),
-      ],
+      // 边界从**声明**派生，不枚举 l1-1…l1-5：每个验证者独占一个边界、
+      // primary 依次搭在前几个边界上（与真实 lan 同形）。
+      // 写死五个的后果不是测试变错，而是加一个成员时 l1-6 没有归属边界 →
+      // deriveTopology 给它 address: null → 本套件在 startsWith 上抛 TypeError，
+      // 而那个失败在 npm test 的总数里看不见（describe 体抛异常 → not ok 但不计入 fail）。
+      failureDomains: (() => {
+        const vids = p.topology.nodes.filter((n) => n.role === 'l1-validator').map((n) => n.id);
+        const pids = p.topology.nodes.filter((n) => n.role === 'primary').map((n) => n.id);
+        return vids.map((id, i) => dom(
+          `m${i + 1}`,
+          i < 2 ? 'windows' : 'linux',
+          `10.0.0.${i + 1}`,
+          [id, ...(pids[i] ? [pids[i]] : [])],
+        ));
+      })(),
     };
     p.topology.activeDeployment = 'lan';
     return p;

@@ -70,11 +70,16 @@ export function renderNodeFlags(p = loadProtocol(), identity = readJson(IDENTITY
   //
   // 这条实测是**版本相关的行为**，因此由 tests/integration/host-header-policy.test.mjs
   // 对活节点断言 —— 哪天 avalanchego 改了策略，那条会红，而不是等到跨机访问全断。
+  // `address` 可能是 **null** —— `deriveTopology` 对没有归属边界的节点就返回 null。
+  // 第一版写成 `h.includes(':')`，于是在这种夹具上直接 TypeError；而那个失败
+  // **在 `npm test` 的总数里是看不见的**（describe 体抛异常 → not ok 但不计入 fail），
+  // 是 tools/test/run-tests.mjs 把它顶出来的。先滤成非空字符串，再排除 IP 字面量。
   const isIpLiteral = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':');
+  const namesOnly = (list) => list.filter((h) => typeof h === 'string' && h !== '' && !isIpLiteral(h));
   const allowedHosts = [...new Set([
     ...p.endpoints.publishedHosts,
-    ...d.failureDomains.map((x) => x.address).filter((h) => !isIpLiteral(h)),
-    ...d.topologyNodes.map((n) => n.address).filter((h) => !isIpLiteral(h)),
+    ...namesOnly(d.failureDomains.map((x) => x.address)),
+    ...namesOnly(d.topologyNodes.map((n) => n.address)),
   ])];
 
   // L1 验证者的引导目标是 Primary 节点（实测：bootstrap-ids 恰为两个 Primary 的 NodeID）

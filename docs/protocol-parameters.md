@@ -59,7 +59,7 @@
 | 参数 | 值 | 取值理由 |
 |---|---|---|
 | `primaryNetwork.nodeCount` | 2 | 2：Avalanche CLI 本地 Primary Network 默认规模；对开发者透明，无需更多。 |
-| `validators.count` | 5 | 5：2026-08-31 用户裁定（Q1=B）。可在本地暴露多验证者共识/同步行为；默认 Snow 参数下容忍 1 个离线（research R-05）。 |
+| `validators.count` | 6 | 5：2026-08-31 用户裁定（Q1=B）。可在本地暴露多验证者共识/同步行为；默认 Snow 参数下容忍 1 个离线（research R-05）。 |
 | `validators.management` | "proof-of-authority" | proof-of-authority：本地开发无质押经济需求；ValidatorManager 由 Avalanche CLI 部署（官方合约）。 |
 | `validators.ownerAccount` | "ewoq" | ewoq：Avalanche 官方公开测试账户，CLI 在本地网络为其预置 P/C 链资金，可直接支付 P-Chain 交易并担任 PoA 管理员。 |
 | `validators.nodes` | 见下 | 端口 21660-21669（HTTP/staking 交替）：keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。【端口迁移，configVersion 1.4.0】原用 9660-9669，实测 Windows 的 Hyper-V 从动态端口范围（本机 1024-15000）中切走了 9617-9716 等多个区间，覆盖全部节点端口；而跨机 P2P 要求 staking 端口发布到宿主，且 avalanchego 对外通告的就是 public-ip:staking-port（通告端口必须等于宿主发布端口，没有内外不同端口的选项），因此这些端口在 Windows 故障边界上无法使用。迁到 21650-21669：该区段在动态端口范围之外，Hyper-V 不会再切走它。编号保持原有对应关系（9660→21660）以便对照。8545 未受影响，本就不在保留区间内。 |
@@ -68,6 +68,7 @@
 | `validators.nodes[2]` | http 21664 / staking 21665，密钥 `blockchain/validators/dev/node-3/` | ↑ |
 | `validators.nodes[3]` | http 21666 / staking 21667，密钥 `blockchain/validators/dev/node-4/` | ↑ |
 | `validators.nodes[4]` | http 21668 / staking 21669，密钥 `blockchain/validators/dev/node-5/` | ↑ |
+| `validators.nodes[5]` | http 21670 / staking 21671，密钥 `blockchain/validators/dev/node-6/` | ↑ |
 
 ### 创世开发账户
 
@@ -95,7 +96,7 @@
 |---|---|---|
 | `topology` | 见下 | 功能 002 引入。声明有哪些节点、各属哪个故障边界、部署在哪里 —— 此前这些是「单容器里跑 7 个进程」的隐含结果，既无法表达跨机部署，也无法校验容错约束。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]；Primary 节点的端口在仓库中无其他出处，故在此声明（21650/21651、21652/21653；原为 001 实测值 9650-9653，随 configVersion 1.4.0 的端口迁移一并改动）。故障边界 = 会同时失效的一组节点：容错上限 f ≤ ⌊n/4⌋ 由共识参数推导（001 研究 R-05），边界数 > 1 时任一边界内的验证者不得超过该上限。sharedFailureFactors 必填，因为「独立失效」无法由代码验证，只能要求部署者显式声明共享的供电、交换机与更新窗口（研究 R-12）。 |
 | `topology.activeDeployment` | "lan" | 当前生效的部署形态。它是**唯一**决定"节点用哪套地址启动"的开关：生成物按形态分目录（blockchain/nodes/<deployment>/），改这一个字段再重新生成即可切换，不必改动任何其他声明。取 local（单机全部节点）：阶段一形态，只有 1 个故障边界，不做整机失效容错承诺。 |
-| `topology.nodes` | 共 7 个 | 声明有哪些节点及其角色。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]（此处只用 validatorIndex 引用）；Primary 节点的端口与 keyDir 在仓库中无其他出处，故在此声明。 |
+| `topology.nodes` | 共 8 个 | 声明有哪些节点及其角色。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]（此处只用 validatorIndex 引用）；Primary 节点的端口与 keyDir 在仓库中无其他出处，故在此声明。 |
 | `topology.deployments` | 2 个形态：local、lan | 每个部署形态声明一套"节点 → 故障边界"的归属。故障边界 = 会同时失效的一组节点。容错上限 f ≤ ⌊n/4⌋ 由共识参数推导（001 研究 R-05）；边界数 > 1 时任一边界内的验证者不得超过该上限（约束 T-5，违规即退出码 13）。sharedFailureFactors 必填且可为空数组，但空必须是**有意识的**空："独立失效"无法由代码验证，只能要求部署者显式声明共享的供电、交换机、更新窗口与虚拟化宿主（研究 R-12）。共享同一因素的边界会被合并为一个**有效边界**，整域失效容忍按合并后判定 ——否则"5 个边界各 1 个验证者"这种声明会在真实宿主只有 2 台时依然显示绿灯（研究 R-12 的 2026-09-07 修正）。 |
 | `topology.deployments.local.containerNetwork` | {"subnet":"172.28.0.0/24","firstHost":11} | 单机形态下 7 个容器需要**稳定且可预测**的地址：节点的 --public-ip 与 --bootstrap-ips 必须在容器启动前就能算出来，而 Docker 默认网络的地址分配不保证顺序。因此声明一个专用网段，按节点序号确定性地分配（firstHost 起）。跨机形态不声明本项 —— 那里用各机器的真实地址。 |
 
@@ -110,6 +111,7 @@
 | `l1-5` | l1-validator | http 21668 / staking 21669 | `blockchain/validators/dev/node-5/` |
 | `primary-1` | primary | http 21650 / staking 21651 | `blockchain/validators/dev/primary-1/` |
 | `primary-2` | primary | http 21652 / staking 21653 | `blockchain/validators/dev/primary-2/` |
+| `l1-6` | l1-validator | http 21670 / staking 21671 | `blockchain/validators/dev/node-6/` |
 
 **部署形态**
 
@@ -119,9 +121,9 @@
 
 | 故障边界 | 平台 | 地址 | 节点 | 验证者数 | 共享失效因素 |
 |---|---|---|---|---|---|
-| `local` | linux | 127.0.0.1 | l1-1、l1-2、l1-3、l1-4、l1-5、primary-1、primary-2 | 5 | host:single-machine |
+| `local` | linux | 127.0.0.1 | l1-1、l1-2、l1-3、l1-4、l1-5、primary-1、primary-2、l1-6 | 6 | host:single-machine |
 
-容错：5 个等权验证者，查询门槛 75% → 可容忍 1 个离线。单边界形态，不做整机失效容错承诺。
+容错：6 个等权验证者，查询门槛 75% → 可容忍 1 个离线。单边界形态，不做整机失效容错承诺。
 
 #### `lan`（**当前生效**）
 
@@ -134,8 +136,9 @@
 | `ubuntu-1` | linux | 192.168.1.21 | l1-3、primary-1 | 1 | — |
 | `ubuntu-2` | linux | 192.168.1.22 | l1-4、primary-2 | 1 | — |
 | `ubuntu-3` | linux | 192.168.1.23 | l1-5 | 1 | — |
+| `ubuntu-4` | linux | 192.168.1.31 | l1-6 | 1 | — |
 
-容错：5 个等权验证者，查询门槛 75% → 可容忍 1 个离线。每边界至多 1 个验证者 → **可**容忍 1 个边界整体失效。
+容错：6 个等权验证者，查询门槛 75% → 可容忍 1 个离线。每边界至多 1 个验证者 → **可**容忍 1 个边界整体失效。
 
 ### 派生值（不存储，由 `tools/protocol/load.mjs derive()` 计算）
 
@@ -145,7 +148,7 @@
 | 宿主 RPC URL | `http://127.0.0.1:8545/ext/bc/karmachain/rpc` |
 | 宿主 WS URL | `ws://127.0.0.1:8545/ext/bc/karmachain/ws` |
 | 初始供应 | 39500000 KARMA（39500000000000000000000000 wei） |
-| 节点总数 | 7（2 主网 + 5 L1） |
+| 节点总数 | 8（2 主网 + 6 L1） |
 | 创世区块哈希（实测基准） | `0x19cfde1f02e585020cdae83071bac33c7d81e411cacf7f306b82ceabe98892ed` |
 
 ### 创世配置

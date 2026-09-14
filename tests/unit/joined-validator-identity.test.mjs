@@ -17,16 +17,20 @@
 //   ② `crossCheckIdentity()`   —— 创世制品里永远不会有新成员，按 `origin` **显式**跳过
 //   ③ `renderNodeIdentities()` —— 用声明的哈希，而不是去 sha256 一个不存在的文件
 //
-// ## 这条守卫不碰仓库里的 descriptor
+// ## 这条守卫用**构造的**声明，不依赖仓库里那份
 //
-// 真实的第六台机器的密钥要在那台机器上生成，此刻还没有。所以这里用**构造的**
-// 声明来跑通机制 —— 机制先证明可用，再去现场取材料。
+// 仓库里的 descriptor 现在确实有一个 origin=joined 的成员了（node-6 / ubuntu-4，
+// 材料 2026-09-14 在 192.168.1.31 上生成）。但本套件仍用自己构造的声明 ——
+// 否则它就变成了"当前这份配置恰好是对的"，而不是"这条机制成立"。
+// 构造的好处还在于能测**缺字段**、**origin 写错**这些真实配置里不该出现的情形。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
 import { loadProtocol, readJson, REPO_ROOT, validateSchema } from '../../tools/protocol/load.mjs';
-import { identityOf, crossCheckIdentity, cb58Encode } from '../../tools/verify/lib/identity.mjs';
+import {
+  identityOf, crossCheckIdentity, cb58Encode, genesisValidators,
+} from '../../tools/verify/lib/identity.mjs';
 import { renderNodeIdentities } from '../../tools/protocol/render-node-flags.mjs';
 
 const IDENTITY_ARTIFACT = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
@@ -93,7 +97,9 @@ const declaredWith = (identity) => {
 
 describe('① identityOf：有声明用声明，没声明才派生', () => {
   test('创世成员仍从密钥派生（derived = true）', () => {
-    for (const v of BASE.validators.nodes) {
+    // 只取创世那批 —— 声明里现在真的有一个 origin=joined 的成员了（node-6），
+    // 遍历全部会把它也要求「从密钥派生」，而那正是本套件要否掉的前提。
+    for (const v of genesisValidators(BASE.validators.nodes)) {
       const id = identityOf(v);
       assert.equal(id.derived, true, `${v.keyDir} 应当从密钥派生`);
       assert.match(id.nodeId, /^NodeID-[1-9A-HJ-NP-Za-km-z]+$/);

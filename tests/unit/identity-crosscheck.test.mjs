@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProtocol, readJson, REPO_ROOT } from '../../tools/protocol/load.mjs';
 import {
-  identityFromKeyDir, nodeIdFromCert, blsPublicKeyFromSignerKey,
+  identityFromKeyDir, nodeIdFromCert, blsPublicKeyFromSignerKey, genesisValidators,
   crossCheckIdentity, base58Encode, cb58Encode, pemToDer,
 } from '../../tools/verify/lib/identity.mjs';
 
@@ -16,18 +16,20 @@ const P = loadProtocol();
 const IDENTITY = readJson(resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json'));
 
 describe('身份派生（对照真实建链的已知值）', () => {
-  test('5 个密钥目录派生出的 NodeID 全部命中制品', () => {
+  // 功能 005：只遍历**创世**成员。创世之后加入的成员仓库里没有它的私钥
+  // （安全约束要求私钥留在目标机器上），也不在建链制品里 —— 两头都对不上。
+  test('每个创世密钥目录派生出的 NodeID 都命中制品', () => {
     const inArtifact = new Set(IDENTITY.bootstrapValidators.map((v) => v.nodeId));
-    for (const v of P.validators.nodes) {
+    for (const v of genesisValidators(P.validators.nodes)) {
       const { nodeId } = identityFromKeyDir(v.keyDir);
       assert.match(nodeId, /^NodeID-[1-9A-HJ-NP-Za-km-z]+$/, `${v.keyDir} 派生出的 NodeID 格式不对`);
       assert.ok(inArtifact.has(nodeId), `${v.keyDir} 派生出 ${nodeId}，但制品中没有`);
     }
   });
 
-  test('5 个 signer.key 派生出的 BLS 公钥与制品逐一相等', () => {
+  test('每个创世 signer.key 派生出的 BLS 公钥与制品逐一相等', () => {
     const byId = new Map(IDENTITY.bootstrapValidators.map((v) => [v.nodeId, v]));
-    for (const v of P.validators.nodes) {
+    for (const v of genesisValidators(P.validators.nodes)) {
       const { nodeId, blsPublicKey } = identityFromKeyDir(v.keyDir);
       assert.equal(blsPublicKey, byId.get(nodeId).blsPublicKey, `${v.keyDir} 的 BLS 公钥与制品不符`);
       assert.match(blsPublicKey, /^0x[0-9a-f]{96}$/, 'BLS 公钥应为 48 字节压缩 G1 点');
@@ -69,7 +71,7 @@ describe('Primary Network 节点身份', () => {
   });
 
   test('Primary 与 L1 验证者的身份材料互不重用', () => {
-    const l1 = new Set(P.validators.nodes.map((v) => identityFromKeyDir(v.keyDir).nodeId));
+    const l1 = new Set(genesisValidators(P.validators.nodes).map((v) => identityFromKeyDir(v.keyDir).nodeId));
     for (const n of primaries) {
       assert.ok(!l1.has(identityFromKeyDir(n.keyDir).nodeId), `${n.keyDir} 与某个 L1 验证者共用了身份`);
     }

@@ -57,8 +57,13 @@ describe('committed protocol.json', () => {
     assert.equal(p.chain.reservedMainnetChainId, 20188);
     assert.equal(p.avalanche.networkId, 1337);
     assert.equal(p.nativeToken.symbol, 'KARMA');
-    assert.equal(p.validators.count, 5);
     assert.equal(p.environment, 'dev');
+    // **validators.count 不再列在这里。** 本组断言刻意双写「关键身份值」——
+    // 改了它们就是另一条链，所以值得在测试里再写一遍防止事实来源被误改。
+    // 但功能 005 之后成员是**运行期可变**的：加一个验证者不换链。
+    // 继续写死一个数字，只会让每次成员变化都红在一条与被测性质无关的断言上。
+    // 「声明的成员数与节点数一致」由 validateConstraints 保证（T-1），
+    // 「创世成员数与建链制品一致」由 tests/unit/chain-identity.test.mjs 保证。
   });
 
   test('derived values are consistent', () => {
@@ -66,7 +71,10 @@ describe('committed protocol.json', () => {
     assert.equal(d.chainIdHex, '0x4edd');
     assert.equal(d.rpcUrl, 'http://127.0.0.1:8545/ext/bc/karmachain/rpc');
     assert.equal(d.wsUrl, 'ws://127.0.0.1:8545/ext/bc/karmachain/ws');
-    assert.equal(d.totalNodeCount, 7);
+    // 与**拓扑声明**交叉核对，不写死数字 —— derive() 走的是
+    // validators.count + primaryNetwork.nodeCount，而 topology.nodes 是另一条路径，
+    // 两者相等才说明派生没漂。写死 7 的话，加一个成员就红在这里。
+    assert.equal(d.totalNodeCount, good.topology.nodes.length);
     // ewoq 1M + anvil-0 1M + anvil-1 10M + anvil-2 7.5M + anvil-3 10M + anvil-4 10M（configVersion 1.1.0）
     assert.equal(d.initialSupplyTokens, 39_500_000n);
     assert.equal(BigInt(good.devAccounts[0].balanceWei), 10n ** 24n);   // ewoq = 1,000,000 KARMA

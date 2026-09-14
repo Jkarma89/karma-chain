@@ -42,6 +42,11 @@
         "httpPort": 21652,
         "stakingPort": 21653,
         "keyDir": "blockchain/validators/dev/primary-2/"
+      },
+      {
+        "id": "l1-6",
+        "role": "l1-validator",
+        "validatorIndex": 6
       }
     ],
     "deployments": {
@@ -63,7 +68,8 @@
               "l1-4",
               "l1-5",
               "primary-1",
-              "primary-2"
+              "primary-2",
+              "l1-6"
             ],
             "sharedFailureFactors": [
               "host:single-machine"
@@ -120,6 +126,15 @@
               "l1-5"
             ],
             "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-4",
+            "platform": "linux",
+            "address": "192.168.1.31",
+            "nodes": [
+              "l1-6"
+            ],
+            "sharedFailureFactors": []
           }
         ]
       }
@@ -137,7 +152,7 @@
     "nodeCount": 2
   },
   "validators": {
-    "count": 5,
+    "count": 6,
     "nodes": [
       {
         "index": 1,
@@ -168,6 +183,22 @@
         "httpPort": 21668,
         "stakingPort": 21669,
         "keyDir": "blockchain/validators/dev/node-5/"
+      },
+      {
+        "index": 6,
+        "httpPort": 21670,
+        "stakingPort": 21671,
+        "keyDir": "blockchain/validators/dev/node-6/",
+        "identity": {
+          "origin": "joined",
+          "nodeId": "NodeID-XDe8eoqMS8JLd2UCF3VAuMT6kLeuLJuj",
+          "blsPublicKey": "0xa70f5e1d21a7c4bd0dbdbf8d5f939b2dfed4e179cca7374cfea4f65b8c5683afb28ab97cddef2aaee10a1e903f61a387",
+          "certSha256": "b2d7b988b82da6fc852e118d29f3fd071e88b649f1f6137d39ac59772aadd525",
+          "keySha256": "7de30b372aa02944126dbc57ccca9b3029db58ba1bcc88d14613aee28f2a0b54",
+          "signerSha256": "e02320dbf884627f228da0b5c31b4956805f7abfc798320a375aa2f85d524973",
+          "reportedBy": "ubuntu-4 (192.168.1.31)",
+          "reportedAt": "2026-09-14"
+        }
       }
     ]
   }

@@ -136,6 +136,26 @@ export function identityOf(v) {
 }
 
 /**
+ * 声明里的**创世**验证者 —— 建链制品（`karmachain.identity.json` 的
+ * `bootstrapValidators`）记录的是链的**出生**，只有这些该出现在其中。
+ *
+ * 功能 005 之前这个函数不存在，因为"声明的成员"与"创世的成员"是同一批。
+ * 之后成员运行期可变，两者分开了 —— 而**把它们当成同一批的代码会静默出错**：
+ * 拿 6 个声明成员去和 5 条制品记录比数量，报出来的是"建链制品与声明不符"，
+ * 而真实情况是"链后来多了一个成员，制品理应不含它"。
+ *
+ * **判据是显式声明的 `origin`，不是"制品里查不到"** —— 理由见 crossCheckIdentity。
+ */
+export function genesisValidators(validatorNodes) {
+  return validatorNodes.filter((v) => v.identity?.origin !== 'joined');
+}
+
+/** 声明里**创世之后加入**的成员。它们的身份凭公开材料声明，见 identityOf。 */
+export function joinedValidators(validatorNodes) {
+  return validatorNodes.filter((v) => v.identity?.origin === 'joined');
+}
+
+/**
  * 交叉校验建链制品与密钥材料是否同源（FR-017）。
  * @returns {string[]} 不匹配的说明；空数组 = 全部同源
  */

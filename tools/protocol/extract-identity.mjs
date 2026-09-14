@@ -17,6 +17,7 @@ import { resolve, dirname } from 'node:path';
 import Ajv from 'ajv/dist/2020.js';
 import addFormats from 'ajv-formats';
 import { loadProtocol, readJson, REPO_ROOT } from './load.mjs';
+import { genesisValidators } from '../verify/lib/identity.mjs';
 
 export const DEFAULT_NETWORK = 'Local Network';
 export const OUTPUT_PATH = resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json');
@@ -48,8 +49,13 @@ export function extractIdentity(sidecar, p, opts = {}) {
   want('token symbol', sidecar.TokenSymbol, p.nativeToken.symbol);
 
   const validators = net.BootstrapValidators ?? [];
-  if (validators.length !== p.validators.count) {
-    problems.push(`bootstrap validators: sidecar has ${validators.length}, validators.count is ${p.validators.count}`);
+  // 与**创世**成员数比，不与 validators.count 比（功能 005）。
+  // sidecar 是建链那一刻的产物，记录的是链的**出生**；而 validators.count 是
+  // 当前声明的成员数，创世之后可以增减。拿后者来比，加一个成员就会报出
+  // "建链制品与声明不符" —— 而真实情况是"制品理应不含新成员"。
+  const genesisCount = genesisValidators(p.validators.nodes).length;
+  if (validators.length !== genesisCount) {
+    problems.push(`bootstrap validators: sidecar has ${validators.length}, but the declaration has ${genesisCount} genesis validator(s)`);
   }
   const weights = new Set(validators.map((v) => v.Weight));
   if (weights.size > 1) {

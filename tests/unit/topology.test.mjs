@@ -25,6 +25,30 @@ const dom = (id, nodes, extra = {}) => ({
   id, platform: 'linux', address: '10.0.0.1', nodes, sharedFailureFactors: [], ...extra,
 });
 
+// 节点 id 一律**从声明派生**，不写死 l1-1…l1-5（功能 005）。
+//
+// 写死的后果不是测试变错，而是**加一个成员就红，而红的原因与被测性质无关** ——
+// 2026-09-14 加第六个验证者时，本文件里六条断言同时红，全是因为夹具只枚举了五个，
+// 于是 T-4（成员并集必须等于节点全集）被触发。那六条测的都不是成员数。
+const VALIDATOR_IDS = BASE.topology.nodes.filter((n) => n.role === 'l1-validator').map((n) => n.id);
+const PRIMARY_IDS = BASE.topology.nodes.filter((n) => n.role === 'primary').map((n) => n.id);
+const ALL_IDS = BASE.topology.nodes.map((n) => n.id);
+
+/**
+ * 与真实 lan 形态同形：**每个验证者独占一个边界**，primary 依次搭在前几个边界上。
+ * 这是"合法拓扑"的标准形状，多处用到。
+ */
+const spreadDomains = () => VALIDATOR_IDS.map((id, i) =>
+  dom(`d${i + 1}`, [id, ...(PRIMARY_IDS[i] ? [PRIMARY_IDS[i]] : [])]));
+
+/**
+ * 把**尚未分配**的节点各自放进一个独占边界。
+ * 构造违规拓扑时用：先显式写出要测的那几个分组，剩下的交给它 ——
+ * 这样既保留了测试意图，又不会因为成员增加而触发 T-4。
+ */
+const restDomains = (used, prefix = 'r') =>
+  ALL_IDS.filter((id) => !used.includes(id)).map((id, i) => dom(`${prefix}${i + 1}`, [id]));
+
 const errorsOf = (p) => validateConstraints(p);
 const hasError = (p, needle) => errorsOf(p).some((e) => e.includes(needle));
 
@@ -36,8 +60,8 @@ describe('拓扑约束', () => {
 
   test('T-1 / T-2：节点数量必须与 validators.count 和 primaryNetwork.nodeCount 一致', () => {
     const p = clone();
-    p.topology.nodes = p.topology.nodes.filter((n) => n.id !== 'l1-5');
-    assert.ok(hasError(p, 'validators.count is 5'), '少一个验证者应当报错');
+    p.topology.nodes = p.topology.nodes.filter((n) => n.id !== VALIDATOR_IDS.at(-1));
+    assert.ok(hasError(p, `validators.count is ${BASE.validators.count}`), '少一个验证者应当报错');
 
     const q = clone();
     q.topology.nodes = q.topology.nodes.filter((n) => n.id !== 'primary-2');
@@ -52,7 +76,7 @@ describe('拓扑约束', () => {
 
   test('validatorIndex 必须恰好覆盖 validators.nodes 的全部索引', () => {
     const p = clone();
-    p.topology.nodes.find((n) => n.id === 'l1-5').validatorIndex = 1;   // 与 l1-1 重复
+    p.topology.nodes.find((n) => n.id === VALIDATOR_IDS.at(-1)).validatorIndex = 1;   // 与第一个验证者重复
     assert.ok(hasError(p, 'exactly once each'), '索引重复应当报错');
   });
 
@@ -63,16 +87,18 @@ describe('拓扑约束', () => {
   });
 
   test('T-4：故障边界成员并集必须等于节点全集且互不重叠', () => {
-    const missing = withDeployment([dom('a', ['l1-1', 'l1-2', 'primary-1']), dom('b', ['l1-3', 'l1-4', 'primary-2'])]);
+    // 刻意漏掉最后一个验证者：意图是"有节点没被分配"，与成员总数无关
+    const assigned = ALL_IDS.filter((id) => id !== VALIDATOR_IDS.at(-1));
+    const missing = withDeployment([dom('a', assigned.slice(0, 3)), dom('b', assigned.slice(3))]);
     assert.ok(hasError(missing, 'not assigned to any failure domain'), '漏掉 l1-5 应当报错');
 
     const overlap = withDeployment([
       dom('a', ['l1-1', 'l1-2', 'l1-3', 'primary-1']),
-      dom('b', ['l1-3', 'l1-4', 'l1-5', 'primary-2']),   // l1-3 重复
+      dom('b', [VALIDATOR_IDS[2], ...ALL_IDS.slice(3)]),   // 第三个验证者重复
     ]);
     assert.ok(hasError(overlap, 'more than one failure domain'), '节点跨边界应当报错');
 
-    const unknown = withDeployment([dom('a', ['l1-1', 'l1-2', 'l1-3', 'l1-4', 'l1-5', 'primary-1', 'primary-2', 'ghost'])]);
+    const unknown = withDeployment([dom('a', [...ALL_IDS, 'ghost'])]);
     assert.ok(hasError(unknown, 'unknown node id'), '未知节点 id 应当报错');
   });
 
@@ -103,25 +129,19 @@ describe('拓扑约束', () => {
 
   test('T-5 的违规消息带机器可读标记，且合法拓扑不带', () => {
     const ok = withDeployment([
-      dom('d1', ['l1-1', 'primary-1']), dom('d2', ['l1-2', 'primary-2']),
-      dom('d3', ['l1-3']), dom('d4', ['l1-4']), dom('d5', ['l1-5']),
+      ...spreadDomains(),
     ]);
     assert.ok(!errorsOf(ok).some((e) => e.includes(TOPOLOGY_VIOLATION_TAG)),
       '合法拓扑不得产生 T-5 标记 —— 否则退出码 13 会误报');
   });
 
-  test('T-5：5 边界各 1 个验证者合法，且可容忍整域失效', () => {
-    const good = withDeployment([
-      dom('d1', ['l1-1', 'primary-1']),
-      dom('d2', ['l1-2', 'primary-2']),
-      dom('d3', ['l1-3']),
-      dom('d4', ['l1-4']),
-      dom('d5', ['l1-5']),
-    ]);
+  test('T-5：每个验证者独占一个边界时合法，且可容忍整域失效', () => {
+    const good = withDeployment(spreadDomains());
     assert.deepEqual(errorsOf(good), [], '合法拓扑不该报错');
     const ft = deriveTopology(good).faultTolerance;
-    assert.equal(ft.maxOfflineValidators, 1);
-    assert.equal(ft.domainCount, 5);
+    // 数字全部派生：验证者数变了，⌊n/4⌋ 与边界数都跟着变，而被测性质不变
+    assert.equal(ft.maxOfflineValidators, Math.floor(VALIDATOR_IDS.length / 4));
+    assert.equal(ft.domainCount, VALIDATOR_IDS.length, '每个验证者独占一个边界 → 边界数等于验证者数');
     assert.equal(ft.tolerateWholeDomainLoss, true);
   });
 });
@@ -161,12 +181,12 @@ describe('容错推导', () => {
 
 describe('共享失效因素告警', () => {
   test('两个边界共享同一因素、合计验证者超上限时告警，但不阻断', () => {
+    const shared = { platform: 'windows', sharedFailureFactors: ['update-window:patch-tuesday'] };
+    const used = [VALIDATOR_IDS[0], PRIMARY_IDS[0], VALIDATOR_IDS[1], PRIMARY_IDS[1]];
     const p = withDeployment([
-      dom('win-1', ['l1-1', 'primary-1'], { platform: 'windows', sharedFailureFactors: ['update-window:patch-tuesday'] }),
-      dom('win-2', ['l1-2', 'primary-2'], { platform: 'windows', sharedFailureFactors: ['update-window:patch-tuesday'] }),
-      dom('u-1', ['l1-3']),
-      dom('u-2', ['l1-4']),
-      dom('u-3', ['l1-5']),
+      dom('win-1', [VALIDATOR_IDS[0], PRIMARY_IDS[0]], shared),
+      dom('win-2', [VALIDATOR_IDS[1], PRIMARY_IDS[1]], shared),
+      ...restDomains(used, 'u-'),
     ]);
     assert.deepEqual(errorsOf(p), [], '共享失效因素不得阻断校验');
 
@@ -290,8 +310,8 @@ describe('有效边界与整域失效容忍', () => {
     if (!p.topology.deployments.lan) return;
     const ft = deriveTopology({ ...p, topology: { ...p.topology, activeDeployment: 'lan' } }).faultTolerance;
 
-    assert.equal(ft.effectiveDomainCount, 5,
-      '5 个声明边界必须对应 5 个**有效**边界 —— 若有共享失效因素把它们合并了，就不该声称能容忍整域失效');
+    assert.equal(ft.effectiveDomainCount, p.topology.deployments.lan.failureDomains.length,
+      '每个声明边界必须对应一个**有效**边界 —— 若有共享失效因素把它们合并了，就不该声称能容忍整域失效');
     assert.equal(ft.effectiveDomainCount, ft.domainCount, '不应存在把边界合并的共享因素');
     for (const g of ft.effectiveDomains) {
       assert.equal(g.validators, 1, `有效边界 ${g.ids.join('+')} 应恰好 1 个验证者，实际 ${g.validators}`);

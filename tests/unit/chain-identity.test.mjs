@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProtocol, readJson, REPO_ROOT } from '../../tools/protocol/load.mjs';
+import { genesisValidators, joinedValidators } from '../../tools/verify/lib/identity.mjs';
 import { extractIdentity, validateIdentity } from '../../tools/protocol/extract-identity.mjs';
 import { extractPrimaryGenesis } from '../../tools/protocol/extract-primary-genesis.mjs';
 
@@ -37,8 +38,32 @@ describe('chain-identity 制品', () => {
       `endpoints.rpcPath (${P.endpoints.rpcPath}) 必须包含链别名 ${IDENTITY.chainAlias}`);
   });
 
-  test('引导验证者数量等于 validators.count', () => {
-    assert.equal(IDENTITY.bootstrapValidators.length, P.validators.count);
+  // 功能 005 之前这条写的是 `=== P.validators.count`，因为"声明的成员"与
+  // "创世的成员"是同一批。之后成员运行期可变，两者分开了 ——
+  // 这份制品记录的是链的**出生**，创世之后加入的成员理应**不在**其中。
+  // 拿总数来比，加一个成员就会报出"建链制品与声明不符"，而真实情况恰恰相反。
+  test('引导验证者数量等于**创世**成员数', () => {
+    assert.equal(IDENTITY.bootstrapValidators.length, genesisValidators(P.validators.nodes).length);
+  });
+
+  test('创世之后加入的成员**不在**制品里（保护范围没缩过头）', () => {
+    // 这条是上一条的边界。少了它，"改成与创世成员数比"就退化成一句
+    // "只要数得上就行" —— 而制品里混进一个新成员意味着有人改了建链产物。
+    const inArtifact = new Set(IDENTITY.bootstrapValidators.map((v) => v.nodeId));
+    for (const v of joinedValidators(P.validators.nodes)) {
+      assert.ok(!inArtifact.has(v.identity.nodeId),
+        `${v.identity.nodeId}（origin=joined）出现在 bootstrapValidators 里。\n`
+        + '  这份制品是建链那一刻的产物，不该被后来的成员写进去 ——\n'
+        + '  要么这个成员其实是创世成员（那就该去掉 origin），要么制品被改过。');
+    }
+  });
+
+  test('创世成员与加入成员加起来就是声明的总数（没有第三类）', () => {
+    assert.equal(
+      genesisValidators(P.validators.nodes).length + joinedValidators(P.validators.nodes).length,
+      P.validators.count,
+      '有验证者既不算创世、也不算加入 —— origin 的取值出现了第三种，'
+      + '而上面两条断言都只认这两类，那样的成员会被两边都漏掉');
   });
 
   test('引导验证者必须等权 —— 容错上限的推导以此为前提', () => {
