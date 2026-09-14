@@ -51,10 +51,18 @@ RUN apt-get update \
 
 # 预置版本锁定的二进制到 /opt/avalanche（镜像层，不受运行时卷影响）
 RUN set -eux; \
+    if [ -z "${TARGETARCH:-}" ]; then \
+      echo "" >&2; \
+      echo "TARGETARCH 是空的 —— 这台机器用的是 docker 的 **legacy builder**。" >&2; \
+      echo "  修法：docker build --build-arg TARGETARCH=\$(dpkg --print-architecture) …" >&2; \
+      echo "    或：DOCKER_BUILDKIT=1 docker build …" >&2; \
+      echo "  详见 docker/node/Dockerfile 里同一处的说明（刻意不给默认值的理由）。" >&2; \
+      exit 1; \
+    fi; \
     case "${TARGETARCH}" in \
       amd64) SHA_AVAGO="${SHA_AVALANCHEGO_AMD64}"; SHA_EVM="${SHA_SUBNET_EVM_AMD64}" ;; \
       arm64) SHA_AVAGO="${SHA_AVALANCHEGO_ARM64}"; SHA_EVM="${SHA_SUBNET_EVM_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}（本镜像只备了 amd64 与 arm64 的 sha256）" >&2; exit 1 ;; \
     esac; \
     mkdir -p "${KARMACHAIN_OPT}" /tmp/dl; cd /tmp/dl; \
     AVAGO_TGZ="avalanchego-linux-${TARGETARCH}-${AVALANCHEGO_VERSION}.tar.gz"; \

@@ -25,10 +25,27 @@ RUN apt-get update \
 # subnet-evm 插件。放在固定路径，由入口按 protocol.json 推导出的 VM ID 链接进 plugin-dir ——
 # 插件文件名必须等于 VM ID，而 VM ID 由链名派生，因此不在镜像里写死。
 RUN set -eux; \
+    if [ -z "${TARGETARCH:-}" ]; then \
+      echo "" >&2; \
+      echo "TARGETARCH 是空的 —— 这台机器用的是 docker 的 **legacy builder**。" >&2; \
+      echo "" >&2; \
+      echo "  TARGETARCH 由 BuildKit 注入，legacy builder 不提供它。2026-09-14 在一台" >&2; \
+      echo "  用 apt 装 docker.io 的 Ubuntu 上撞到：它默认走 legacy builder，而报出来的" >&2; \
+      echo "  只有一句 'TARGETARCH: parameter not set'，毫无指向性。" >&2; \
+      echo "" >&2; \
+      echo "  两种修法，任选一个：" >&2; \
+      echo "    docker build --build-arg TARGETARCH=\$(dpkg --print-architecture) …" >&2; \
+      echo "    DOCKER_BUILDKIT=1 docker build …" >&2; \
+      echo "" >&2; \
+      echo "  **刻意不给 TARGETARCH 默认值**：猜错架构会下载到另一个平台的二进制，" >&2; \
+      echo "  而 sha256 校验会在下一步失败 —— 那时报出来的是校验不符，" >&2; \
+      echo "  更难查。宁可在这里停住并说清楚。" >&2; \
+      exit 1; \
+    fi; \
     case "${TARGETARCH}" in \
       amd64) SHA_EVM="${SHA_SUBNET_EVM_AMD64}" ;; \
       arm64) SHA_EVM="${SHA_SUBNET_EVM_ARM64}" ;; \
-      *) echo "unsupported TARGETARCH=${TARGETARCH}" >&2; exit 1 ;; \
+      *) echo "unsupported TARGETARCH=${TARGETARCH}（本镜像只备了 amd64 与 arm64 的 sha256）" >&2; exit 1 ;; \
     esac; \
     mkdir -p /opt/subnet-evm /tmp/dl; cd /tmp/dl; \
     EVM_TGZ="subnet-evm_${SUBNET_EVM_VERSION#v}_linux_${TARGETARCH}.tar.gz"; \
