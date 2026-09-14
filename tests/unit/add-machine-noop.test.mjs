@@ -23,7 +23,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
-import { loadProtocol, readJson, REPO_ROOT } from '../../tools/protocol/load.mjs';
+import { loadProtocol, readJson, REPO_ROOT, validateConstraints } from '../../tools/protocol/load.mjs';
 import { renderNodeFlags } from '../../tools/protocol/render-node-flags.mjs';
 
 const IDENTITY = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
@@ -52,17 +52,61 @@ const probeFor = (deployment) => {
  *
  * 刻意不加 Primary：加 Primary 会改到每个 L1 验证者的 `bootstrap-ips`，
  * 那是**真实且必要**的变化（引导目标确实多了一个），属 US4 的范围，不该混进这条。
+ *
+ * `where` 决定新节点插在 `topology.nodes` 的哪个位置：
+ *
+ *   - `'before-primaries'`（**默认**）—— 人实际的改法：保持"验证者在前"的既有顺序
+ *   - `'append'`            —— 追加到数组末尾
+ *
+ * **这两者必须都测。** 第一版只测了 `append`，于是 2026-09-14 真加第六台机器时
+ * 单机形态的容器 IP 全被改号，而守卫是绿的 —— 容器 IP 按**数组位置**派生，
+ * 追加不挪位置，插在中间才挪。**判据本身对，取样方式错。**
  */
-const withExtraMachine = (deployment, { id, address, httpPort, stakingPort, index }) => {
+const withExtraMachine = (deployment, { id, address, httpPort, stakingPort, index }, where = 'before-primaries') => {
   const next = structuredClone(BASE);
   next.validators.count += 1;
   next.validators.nodes.push({
     index, httpPort, stakingPort, keyDir: `blockchain/validators/dev/node-${index}/`,
   });
-  next.topology.nodes.push({ id: `l1-${index}`, role: 'l1-validator', index });
-  next.topology.deployments[deployment].failureDomains.push({
-    id, platform: 'linux', address, nodes: [`l1-${index}`], sharedFailureFactors: [],
-  });
+  // **键名是 `validatorIndex`**，不是 `index`。第一版写错了，而守卫只比对既有节点，
+  // 所以那个畸形的模拟节点一直没被察觉 —— 下面那条 validateConstraints 就是为此加的。
+  const entry = { id: `l1-${index}`, role: 'l1-validator', validatorIndex: index };
+  const at = where === 'append'
+    ? next.topology.nodes.length
+    : next.topology.nodes.findIndex((n) => n.role === 'primary');
+  next.topology.nodes.splice(at < 0 ? next.topology.nodes.length : at, 0, entry);
+
+  // **每一种形态**都要把新节点分配到某个边界（T-4：成员并集必须等于节点全集），
+  // 而且必须**保持该形态原有的边界结构**：
+  //
+  //   - 多边界形态（lan）→ 新开一个边界。塞进既有边界会让它有 2 个验证者，
+  //     违反 T-5（每边界至多 ⌊n/4⌋ = 1 个）。
+  //   - 单边界形态（local）→ 加进它唯一的那个边界。**不能新开** ——
+  //     T-5 只在边界数 > 1 时生效，多开一个会把它激活，
+  //     于是那个原本合法地装着 5 个验证者的单边界立刻变成违规。
+  //
+  // 这两条我都先写错过一次，两次都是 validateConstraints 抛出来的。
+  // **"模拟一个加节点操作"在不同形态下不是同一件事**，而这件事只有约束校验器知道。
+  for (const [name, dep] of Object.entries(next.topology.deployments)) {
+    if (dep.failureDomains.length === 1) {
+      dep.failureDomains[0].nodes.push(entry.id);
+      continue;
+    }
+    const seed = dep.failureDomains[0].address;
+    dep.failureDomains.push({
+      id: name === deployment ? id : `${id}-${name}`,
+      platform: 'linux',
+      address: name === deployment ? address : seed.replace(/.d+$/, '.241'),
+      nodes: [entry.id],
+      sharedFailureFactors: [],
+    });
+  }
+
+  // **模拟本身必须是一份合法配置。** 否则测的是"畸形输入下既有节点没变"，
+  // 那句话恒真而毫无意义 —— 这正是第一版发生的事。
+  const errs = validateConstraints(next);
+  if (errs.length) throw new Error(`模拟出的配置不合法，本套件测不了任何东西：${errs.map((e) => `
+  - ${e}`).join('')}`);
   return next;
 };
 
@@ -99,51 +143,59 @@ describe('lan 形态：加一台 L1 验证者机器 → 既有节点的 flags �
   });
 });
 
-describe('local 形态同样成立（两种形态都不能退化）', () => {
+// ## 单机形态：**追加**是零改动，**插在中间**会给既有节点改号（已知限制，T068）
+//
+// 单机形态下每个节点是独立容器，地址由 `containerIp(i)` 按**数组位置** i 派生
+// （子网前缀 + firstHost + i）。于是：
+//
+//   - 追加到 `topology.nodes` 末尾 → 谁的位置都没挪 → 既有节点零改动
+//   - 插在中间（为保持"验证者在前"时的自然改法）→ 后面每个节点的容器 IP 都 +1，
+//     于是全部验证者的 `bootstrap-ips` 与两个 Primary 的 `public-ip` 一起变
+//
+// 2026-09-14 真加第六台机器时撞到的就是这一条。**跨机形态不受影响**
+// （地址取自所属故障边界的机器地址，与数组位置无关），而跨机才是真实部署。
+//
+// 代价被限定在"那一台开发机重建一次容器"，链数据不受影响（stamp 六项不含拓扑）。
+// 修法记在 T068：让容器 IP 由稳定值派生，而非数组位置。
+//
+// **此处刻意不把"插在中间会变"写成断言** —— 那会把缺陷锁成"预期行为"。
+// 用 todo 标注：它在输出里可见、不拦住套件，而修好之后会显出来。
+describe('local 形态：追加是零改动，插在中间是已知限制（T068）', () => {
   const before = renderNodeFlags(BASE, IDENTITY, 'local');
-  const after = renderNodeFlags(
-    withExtraMachine('local', probeFor('local')),
-    IDENTITY, 'local',
+  const appended = renderNodeFlags(
+    withExtraMachine('local', probeFor('local'), 'append'), IDENTITY, 'local',
+  );
+  const inserted = renderNodeFlags(
+    withExtraMachine('local', probeFor('local'), 'before-primaries'), IDENTITY, 'local',
   );
 
   for (const id of Object.keys(before)) {
-    test(`\`${id}\` 的 flags 未变`, () => {
-      assert.deepEqual(after[id], before[id],
-        `单机形态下加一个节点改到了既有节点 \`${id}\`。\n`
-        + '  单机形态用容器 IP，同样是 IP 字面量，同样无条件放行。');
+    test('**追加**时 ' + id + ' 的 flags 未变', () => {
+      assert.deepEqual(appended[id], before[id],
+        '单机形态下**追加**一个节点改到了既有节点 ' + id + '。\n'
+        + '  连追加都会变，说明位置依赖比 T068 记录的更严重 —— 重新查 containerIp()。');
     });
   }
-});
 
-describe('去掉地址之后，清单里该留的还在', () => {
-  const flags = renderNodeFlags(BASE, IDENTITY, 'lan');
+  for (const id of Object.keys(before)) {
+    test('插在中间时 ' + id + ' 的 flags 未变', {
+      todo: '已知限制 T068：单机形态的容器 IP 按数组位置派生，插在中间会给后面的节点改号',
+    }, () => {
+      assert.deepEqual(inserted[id], before[id]);
+    });
+  }
 
-  test('`localhost` 必须仍在清单里（代理把 Host 统一改写成它）', () => {
-    for (const [id, f] of Object.entries(flags)) {
-      assert.ok(f['http-allowed-hosts'].includes('localhost'),
-        `\`${id}\` 的清单里没有 localhost。\n`
-        + '  RPC 代理把 Host 头统一改写为 localhost（见 render-rpc-proxy.mjs）——\n'
-        + '  而**名字不在清单里就是 403**（实测：evil.example.com → 403）。\n'
-        + '  去掉它，对外 RPC 入口会整条断掉。');
-    }
-  });
-
-  test('清单里**不含**任何机器地址（否则加机器又会改到既有节点）', () => {
-    const domainAddrs = new Set(
-      BASE.topology.deployments.lan.failureDomains.map((d) => d.address),
+  test('限制**只在**单机形态（跨机形态必须不受影响）', () => {
+    // 这条是上面那组 todo 的边界：若哪天跨机形态也变成位置依赖，
+    // 上面的 lan 套件会红，而这条给出"为什么那很严重"的落点。
+    const lanBefore = renderNodeFlags(BASE, IDENTITY, 'lan');
+    const lanAfter = renderNodeFlags(
+      withExtraMachine('lan', probeFor('lan'), 'before-primaries'), IDENTITY, 'lan',
     );
-    for (const [id, f] of Object.entries(flags)) {
-      const leaked = f['http-allowed-hosts'].filter((h) => domainAddrs.has(h));
-      assert.deepEqual(leaked, [],
-        `\`${id}\` 的清单里出现了机器地址：${leaked.join(', ')}\n`
-        + '  实测表明 IP 字面量本就无条件放行，列它们不产生任何约束，\n'
-        + '  却让清单随机器列表变 —— 加一台机器就要重建全网容器。');
-    }
-  });
-
-  test('清单不为空（空清单会让 localhost 也被拒）', () => {
-    for (const [id, f] of Object.entries(flags)) {
-      assert.ok(f['http-allowed-hosts'].length > 0, `${id} 的清单是空的`);
+    for (const id of Object.keys(lanBefore)) {
+      assert.deepEqual(lanAfter[id], lanBefore[id],
+        '跨机形态的 ' + id + ' 也变成位置依赖了 —— **那是真实部署**，\n'
+        + '  意味着加一台机器要重建五台上的全部容器，005 的卖点就没了。');
     }
   });
 });

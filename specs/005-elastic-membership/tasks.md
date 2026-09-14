@@ -220,6 +220,45 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 > ② 三台 Ubuntu 上 `.git/objects` 有 root 属主的对象（早先某次 `sudo git` 留下），
 >    `git pull` 直接失败。修法是 `chown -R`，并且此后 git 不带 sudo、只有 docker 带。
 
+> **T021 的一半已经用真实声明验过（2026-09-14）。**
+>
+> 往 `blockchain/deployment.json` 加真实的第六台机器（`ubuntu-4` / `192.168.1.31` / linux，
+> 承载 `l1-6`，端口 21670/21671），跑 `deriveTopology` + `renderNodeFlags`：
+>
+> - 全部约束**通过**（T-4 / T-5 都过：6 个边界各 1 个验证者）
+> - `maxOfflineValidators` 仍是 **1** —— 六个验证者，可离线数没变。
+>   规格的 F-5 在真实数据上印证：`f(6) = ⌊6/4⌋ = 1`，要变成 2 得 **n=8**。
+>   **加这台机器买不到任何容错提升**，它买到的是"多一个故障边界"。
+> - **跨机形态下既有七个节点的 flags 逐字节不变** ← T021 判据 ④ 的核心，成立
+>
+> 卡在哪：见下方 T069。渲染在"生成新节点身份"那一步失败 ——
+> 身份流水线要求私钥在仓库里，而 005 的安全约束禁止新验证者这么做。
+
+- [ ] T068 让单机形态的容器 IP 由**稳定值**派生，而非数组位置。
+      现状：`deriveTopology` 的 `containerIp(i)` 用 `topology.nodes` 的**数组下标**，
+      于是把新节点插在中间（为保持"验证者在前"的自然改法）会让后面每个节点的容器 IP +1,
+      全部验证者的 `bootstrap-ips` 与两个 Primary 的 `public-ip` 一起变。
+      **跨机形态不受影响**（地址取自故障边界，与位置无关），所以这只影响单机开发形态，
+      代价是那一台机器重建一次容器、链数据不受影响。
+      守卫已把边界划精确：`tests/unit/add-machine-noop.test.mjs` 里
+      "追加是零改动"是**硬断言**，"插在中间"是 7 条 **todo**（修好后会显出来）。
+      注意任何稳定方案都会**一次性**改动 `blockchain/nodes/local/*.flags.json`
+      （Primary 得挪出验证者的号段），那是有意的生成物变动
+
+- [ ] T069 **新验证者的身份与密钥**（T021 的另一半卡在这里，属 US2 的地基）。
+      三处必须一起改，少一处就做不成：
+      ① `identityFromKeyDir()` 读 **`signer.key`（BLS 私钥）**来派生 BLS 公钥。
+         而 005 的安全约束要求新验证者私钥**在目标机器上生成、不得经过仓库或对话**。
+         需要一条"只凭公开材料（`staker.crt` + 给定的 BLS 公钥）确定身份"的路径。
+      ② `crossCheckIdentity()` 要求每个声明的验证者都在
+         `karmachain.identity.json` 的 `bootstrapValidators` 里 —— 那份制品按定义
+         只含**创世那 5 个**，创世后加入的永远不在其中。必须区分
+         「创世验证者」与「当前声明成员」，而那正是 FR-030 的事实来源问题。
+      ③ `render-node-flags.mjs` 的 `renderNodeIdentities()` 对每个验证者无条件
+         调 `identityFromKeyDir()`，所以只要声明了第六个验证者，
+         **`npm run render` 直接失败**（实测 ENOENT: node-6/staker.crt）。
+      在此之前，descriptor 里加第六个验证者会让仓库处于**无法渲染**的状态
+
 - [ ] T021 [US1] **quickstart 场景 E（需五台）**：往部署描述加一台机器并同步到五台，
       核 stamp 六项逐字节不变、**零个节点退出 12**、创世哈希不变、
       既有节点容器 `Created`/`StartedAt` **逐字符相同**（对着 T002 的基线逐台核）
