@@ -278,13 +278,13 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 - [ ] T023 [P] [US2] `tests/unit/membership-preflight.test.mjs`：三条前置检查各一组用例 ——
       创世哈希不一致（FR-014）、T-5 越界（FR-013）、恢复能力不可用（FR-015）**都要拦下**
-- [ ] T024 [P] [US2] `tests/unit/member-set.test.mjs`：读"链上实际成员"的解析，
+- [X] T024 [P] [US2] `tests/unit/member-set.test.mjs`：读"链上实际成员"的解析，
       以及**三种漂移**各自的分类（[data-model 第 2 节](./data-model.md)）
 
 ### 实现
 
 - [X] T025 [US2] 新建 `tools/membership/abi/validator-manager.json`（按 T004 的途径取得并锁版本）
-- [ ] T026 [US2] 新建 `tools/membership/member-set.mjs`：读链上实际成员；
+- [X] T026 [US2] 新建 `tools/membership/member-set.mjs`：读链上实际成员；
       与"期望成员"比对并给出三种漂移的分类
 - [ ] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步
       （合约 → Warp → P 链 → 合约确认），**每一步的失败可见、可重试、能报出停在哪一步**（FR-016）

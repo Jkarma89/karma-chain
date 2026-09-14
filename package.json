@@ -20,7 +20,8 @@
     "topology:validate": "node tools/protocol/validate-topology.mjs",
     "node:render": "node tools/protocol/render-node-flags.mjs && node tools/protocol/render-aliases.mjs && node tools/protocol/render-chain-config.mjs && node tools/protocol/render-rpc-proxy.mjs && node tools/protocol/render-compose.mjs",
     "render": "node tools/protocol/render-all.mjs",
-    "render:check": "node tools/protocol/render-all.mjs --check"
+    "render:check": "node tools/protocol/render-all.mjs --check",
+    "membership:status": "node tools/membership/member-set.mjs"
   },
   "dependencies": {
     "@noble/curves": "^1.9.1",
