@@ -405,6 +405,69 @@ spec 的 FR-020 要求决定必须有实测数据。两条候选：
 
 ---
 
+- **V-27** ✅ **子网已转成 L1，ACP-77 是对的路**（2026-09-14，P 链实测）。
+  `platform.getSubnet` 返回：
+
+  ```
+  isPermissioned: false                                   ← 已转换
+  conversionID:   2DYRwZMNcobLRCYMtxYVgmH3MLWEn9DNWGZ1aAFNfT6ZjKPry
+  managerChainID: Wd8yzG1cggbUi2nqKC5RzJM8Vz8w7CEisxcvMRJiWwRVLhTqd   ← karmachain 自己
+  managerAddress: 0x0feedc0de0000000000000000000000000000000            ← 那个代理
+  ```
+
+  `managerAddress` 正是 V-20 核验过 ABI 的那个合约。
+  `getSubnets` 里仍有 `controlKeys`，那是**转换前的遗留**，不代表还受控制密钥管理 ——
+  只看 `getSubnets` 会得出"这是个许可子网"的错误结论，必须看 `getSubnet` 的 `isPermissioned`。
+
+- **V-28** ✅ **P 链能枚举 L1 验证者，而合约不能。**
+  `platform.getCurrentValidators({subnetID})` 返回每个成员的
+  nodeID / weight / validationID / publicKey / remainingBalanceOwner / deactivationOwner。
+
+  **这不是与 V-21 重复，而是第二个事实来源**：合约侧是「PoA owner 注册了谁」，
+  P 链侧是「谁真的在共识里带权重」。两者**可以不一致** —— ACP-77 第三步做完、
+  第四步没做完时就是那个状态。所以 T026 应把 P 链作为交叉验证的第二个来源
+  （记为 T070）。注意两侧的 validationID **编码不同**：P 链是 CB58
+  （`jbVejeab5dHj…`），合约是 hex（`0x60b76e92…`），同一个值两种表示。
+
+- **V-29** ✅ P 链上有钱。控制密钥地址 `P-custom18jma8pp…` 未锁定余额约
+  2000 万 AVAX，足够支付新验证者的持续费用；它的私钥就是 `ewoq`（按宪法第四条例外在仓库里）。
+
+- **V-30** ⚠ **节点上没有 Warp API**（`/ext/bc/<id>/warp` 与 `/ext/warp` 都是 404）。
+  subnet-evm 要在**链配置**里开（`warp-api-enabled`），而 `blockchain/nodes/chain-config/`
+  现在只有 `pruning-enabled` / `database-type` / `log-level` / `eth-apis`。
+
+  两条路：**开 Warp API**（生成器加一行 + 各机器 `docker restart` 节点；链配置是**目录挂载**，
+  内容变更不需要重建容器，但 avalanchego 在启动时读它，所以要重启；**不进 stamp，不重置链**），
+  或**跑 signature-aggregator 服务**（v0.5.3 已在 bootstrap 镜像里，走 P2P 收签名，
+  不需要动节点，但多一个要配置与运维的进程）。
+  倾向前者：一行配置 + 一次重启，比多养一个服务简单得多。
+
+---
+
+## 依赖偏离记录：`@avalabs/avalanchejs@5.1.0`（2026-09-14）
+
+**FR-035 要求零新增依赖，本期有且只有这一处偏离，由维护者拍板。**
+
+原因：ACP-77 的第三步是一笔 **P 链** `RegisterL1ValidatorTx` —— 不是 EVM 交易，
+`viem` 做不了。三条路各自的代价摆出来之后选了这条：
+
+| 路 | 代价 |
+|---|---|
+| **加 avalanchejs**（选定） | 违反"零新增依赖"，但它是**官方库**、是数据与编码库不是框架 |
+| 用 Avalanche CLI 跑这一步 | 要改 ADR-0008 与 no-cli-in-runtime 守卫；而且 CLI 靠自己的账本认链，那个账本在临时网络里早没了 |
+| 手写 P 链交易序列化 | 零新增依赖，但要自己实现 Avalanche 的 codec、UTXO 选择与费用计算 —— **几百行共识关键代码，错了不是报错而是发出一笔「合法但不对」的交易** |
+
+**实际引入**：`@avalabs/avalanchejs`、`@ethereumjs/rlp`、`@noble/secp256k1`、
+`micro-eth-signer`、`micro-packed`，外加 `@noble/*` 与 `@scure/base` 的嵌套副本 ——
+都是 noble/micro 那套小型加密与编码库。`npm audit` **没有新增任何漏洞**
+（既有的两条来自 `solc 0.8.36 → tmp`，与本次无关）。版本用 `--save-exact` 锁死。
+
+**边界**：它只许出现在 `tools/membership/` 里。守卫见 T071 ——
+少了那条守卫，这个例外会慢慢渗进运行时路径，而 ADR-0008 的结构性保证
+（节点镜像不含编排工具、运行时路径无此类调用）正是靠"边界写下来并被机械检查"维持的。
+
+---
+
 ## 四、当前环境
 
 五台机器在线，链健康（7/7 节点、`normal/100%`、高度 890+）。

@@ -24,6 +24,7 @@
     "membership:status": "node tools/membership/member-set.mjs"
   },
   "dependencies": {
+    "@avalabs/avalanchejs": "5.1.0",
     "@noble/curves": "^1.9.1",
     "ajv": "^8.20.0",
     "ajv-formats": "^3.0.1",

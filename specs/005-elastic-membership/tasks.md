@@ -286,6 +286,26 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 - [X] T025 [US2] 新建 `tools/membership/abi/validator-manager.json`（按 T004 的途径取得并锁版本）
 - [X] T026 [US2] 新建 `tools/membership/member-set.mjs`：读链上实际成员；
       与"期望成员"比对并给出三种漂移的分类
+- [ ] T070 T026 补第二个事实来源：**P 链的 `platform.getCurrentValidators({subnetID})`**
+      （research V-28）。合约侧是「PoA owner 注册了谁」，P 链侧是「谁真的在共识里带权重」——
+      **两者可以不一致**，ACP-77 第三步做完、第四步没做完时就是那个状态，
+      而那恰恰是最需要看清的中间态。注意两侧 validationID 编码不同
+      （P 链 CB58 / 合约 hex），比对前要归一化
+
+- [ ] T071 守卫：`@avalabs/avalanchejs` **只许出现在 `tools/membership/`**。
+      扫全部受跟踪的 .mjs/.js，导入它的文件必须在那个目录下（测试除外）；
+      并断言 package.json 里它是**精确版本**（`--save-exact`）。
+      反向断言：至少有一处真的导入它 —— 否则 T027 被删掉之后这条守卫会变成空跑。
+      **少了这条守卫，FR-035 的那个例外会慢慢渗进运行时路径**，
+      而 ADR-0008 的结构性保证靠的正是"边界写下来并被机械检查"
+
+- [ ] T072 开启 Warp API（research V-30）：`render-chain-config.mjs` 加
+      `warp-api-enabled`，重新渲染，各机器 `docker restart` 节点。
+      链配置是**目录挂载**，内容变更不需要重建容器；但 avalanchego 在启动时读它，
+      所以要重启。**不进 stamp，不重置链。**
+      备选是跑 signature-aggregator（v0.5.3 已在 bootstrap 镜像里，走 P2P 收签名），
+      代价是多一个要配置与运维的进程
+
 - [ ] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步
       （合约 → Warp → P 链 → 合约确认），**每一步的失败可见、可重试、能报出停在哪一步**（FR-016）
 - [ ] T028 [US2] 新建 `scripts/devnet-member.sh` 与 `.ps1` **两份等价实现**，
