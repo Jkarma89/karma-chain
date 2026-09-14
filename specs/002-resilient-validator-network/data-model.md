@@ -147,6 +147,13 @@
 由 `topology` + `chain-identity` + 既有 `protocol.json` 字段生成的每节点 avalanchego 标志集合。**生成物**，受漂移测试保护（FR-027）。
 
 落盘位置 `blockchain/nodes/<deployment>/<nodeId>.flags.json` —— **逐部署形态各一份**。
+> **功能 005 更正（2026-09-14）**：`--http-allowed-hosts` **不再随形态变化**，
+> 也不再列各机器地址。实测（005 的 V-19）表明 avalanchego 对 **IP 字面量的 Host 头
+> 无条件放行**，只对名字才查这份清单 —— 那些地址从一开始就不产生约束
+> （001 的 `acceptance.md` 第 76 行已记着这条），却让清单随机器列表变，
+> 使得**加一台机器会改到每个既有节点的 flags.json**。现在清单只含
+> `endpoints.publishedHosts`。下面这段关于该标志的描述按此理解。
+
 表中 `--public-ip`、`--bootstrap-ips`、`--http-allowed-hosts` 三项取值随形态变化（单机形态用容器网段，
 跨机形态用各机器的局域网地址），只渲染 `activeDeployment` 一份会导致把仓库拷到另一台机器跑跨机形态时，
 节点仍在用那台机器上不存在的容器地址。与形态无关的伴生物（`<nodeId>.identity.json`、`aliases.json`、
@@ -165,7 +172,7 @@
 | `--chain-aliases-file` | 由 `render-aliases.mjs` 生成（R-05） | 仅 `l1-validator` |
 | `--bootstrap-ips` / `--bootstrap-ids` | Primary 节点的 `address:stakingPort` 与其 NodeID | 验证者填；Primary 创世节点留空（实测值） |
 | `--http-host` | `0.0.0.0`（R-07，socat 退役） | 相同 |
-| `--http-allowed-hosts` | 显式声明，取值由部署形态决定 | 相同 |
+| `--http-allowed-hosts` | 显式声明；**功能 005 后只含 `endpoints.publishedHosts`，与形态和机器列表无关**（V-19） | 相同 |
 | `--http-port` / `--staking-port` | `node.httpPort` / `node.stakingPort` | 相同 |
 | `--public-ip` | 所属故障边界的 `address` | 相同 |
 | `--network-allow-private-ips` | `true`（默认，显式声明） | 相同 |

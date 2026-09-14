@@ -8,14 +8,7 @@
   "genesis-file": "/config/primary-network.genesis.json",
   "http-allowed-hosts": [
     "127.0.0.1",
-    "localhost",
-    "172.28.0.11",
-    "172.28.0.12",
-    "172.28.0.13",
-    "172.28.0.14",
-    "172.28.0.15",
-    "172.28.0.16",
-    "172.28.0.17"
+    "localhost"
   ],
   "http-host": "0.0.0.0",
   "http-port": "21664",

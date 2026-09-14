@@ -44,17 +44,37 @@ export function renderNodeFlags(p = loadProtocol(), identity = readJson(IDENTITY
   const d = deriveTopology(scoped);
   const nodes = d.topologyNodes;
 
-  // Host 头白名单：精确到已发布主机与各故障边界地址，不使用通配符。
+  // Host 头白名单：只列**名字**，不列地址。
+  //
   // avalanchego 的 --http-allowed-hosts 默认只放行 localhost，这是 001 记录的
-  // `403 invalid host specified` 的来源（研究 R-07）。显式声明后放宽范围是可审计的决策。
-  // 必须是 JSON 数组：配置文件里写成逗号拼接的字符串，avalanchego 会当成**单个**主机名，
-  // 于是清单形同虚设（实测：Host: localhost 被拒，因为 IP 字面量本就无条件放行，
-  // 而 localhost 依赖这份清单）。
+  // `403 invalid host specified` 的来源（研究 R-07）。必须是 JSON 数组：写成逗号拼接的
+  // 字符串会被当成**单个**主机名，清单形同虚设。
+  //
+  // ## 为什么不再列各机器地址（功能 005 / V-19，2026-09-14 对活节点实测）
+  //
+  // avalanchego 对 **IP 字面量的 Host 头无条件放行**，列不列都一样。对 l1-1 实测：
+  //
+  //   Host: 192.168.1.99   （未列，同网段）→ 200
+  //   Host: 10.99.99.99    （未列，外网段）→ 200
+  //   Host: 203.0.113.7    （未列，公网）  → 200
+  //   Host: evil.example.com（未列的域名）  → 403
+  //   Host: localhost       （列了）        → 200
+  //
+  // 所以那些地址在清单里**没有产生任何约束** —— 去掉它们不放宽任何东西。
+  // 而留着它们有一个实打实的代价：清单随机器列表变，于是
+  // **加一台机器会改到每一个既有节点的 flags.json**，逼得五台机器全部重建。
+  // 离线模拟证实：加一台只跑 L1 验证者的机器时，既有七个节点的 flags 里
+  // **只有这一个键会变**。去掉之后，加机器对既有节点是**零改动**。
+  //
+  // 只滤掉 IP 字面量，不滤名字：若日后有人用主机名当边界地址，那时它**确实**需要被列。
+  //
+  // 这条实测是**版本相关的行为**，因此由 tests/integration/host-header-policy.test.mjs
+  // 对活节点断言 —— 哪天 avalanchego 改了策略，那条会红，而不是等到跨机访问全断。
+  const isIpLiteral = (h) => /^\d{1,3}(\.\d{1,3}){3}$/.test(h) || h.includes(':');
   const allowedHosts = [...new Set([
     ...p.endpoints.publishedHosts,
-    ...d.failureDomains.map((x) => x.address),
-    // 单机形态下节点之间用容器 IP 互访，Host 头即该 IP
-    ...d.topologyNodes.map((n) => n.address),
+    ...d.failureDomains.map((x) => x.address).filter((h) => !isIpLiteral(h)),
+    ...d.topologyNodes.map((n) => n.address).filter((h) => !isIpLiteral(h)),
   ])];
 
   // L1 验证者的引导目标是 Primary 节点（实测：bootstrap-ids 恰为两个 Primary 的 NodeID）

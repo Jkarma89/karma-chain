@@ -59,8 +59,9 @@ describe('generated artifacts stay in sync with protocol.json', () => {
     }
   });
 
-  // 形态相关的标志必须真的随形态变化：public-ip / bootstrap-ips / http-allowed-hosts
-  // 全都相同，说明渲染没有按形态取地址（那正是这次分目录要修的缺陷）。
+  // 形态相关的标志必须真的随形态变化：public-ip / bootstrap-ips 全都相同，
+  // 说明渲染没有按形态取地址（那正是这次分目录要修的缺陷）。
+  // （http-allowed-hosts 曾在此列，功能 005 后它不再随形态变 —— 见 render-node-flags.mjs）
   test('lan 形态的节点地址取自各机器，而非单机形态的容器网段', () => {
     const { byDeployment } = checkNodeFlags();
     const lan = byDeployment.lan;

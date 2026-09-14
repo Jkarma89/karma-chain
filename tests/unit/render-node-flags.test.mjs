@@ -161,11 +161,32 @@ describe('端点与监听', () => {
     }
   });
 
-  test('http-allowed-hosts 精确到已发布主机与故障边界地址，且不含通配符', () => {
+  // 原断言（002 / T053）要求清单**包含**每个故障边界地址。**功能 005 把它反了过来。**
+  //
+  // 理由不是"放宽要求"，而是那些条目**从来没有产生过约束**：
+  // avalanchego 对 IP 字面量的 Host 头无条件放行 —— 这在 001 的 acceptance.md 第 76 行
+  // 就记着（「默认只放行 localhost 与 IP 字面量」），2026-09-14 又在活节点上复核：
+  // 未列出的 192.168.x / 10.x / 公网 IP 全部 200，未列出的域名 403。
+  //
+  // 留着它们的代价是实打实的：清单随机器列表变，于是**加一台机器会改到
+  // 每一个既有节点的 flags.json**，逼得五台机器全部重建 —— 而那正是 005 要消灭的东西。
+  //
+  // 覆盖面没有缩小，只是换了承接者：
+  //   - 「跨机 RPC 仍然可达」→ tests/integration/host-header-policy.test.mjs（对活节点）
+  //   - 「加机器时既有节点零改动」→ tests/unit/add-machine-noop.test.mjs
+  test('http-allowed-hosts 含全部已发布主机、不含通配符，且**不含机器地址**', () => {
     const allowed = anyValidator['http-allowed-hosts'];
     for (const h of P.endpoints.publishedHosts) assert.ok(allowed.includes(h), `应放行已发布主机 ${h}`);
-    for (const d of D.failureDomains) assert.ok(allowed.includes(d.address), `应放行故障边界地址 ${d.address}`);
     assert.ok(!allowed.includes('*'), '不得使用通配符 —— 放宽范围必须是可审计的具体清单');
+    for (const d of D.failureDomains) {
+      assert.ok(!allowed.includes(d.address),
+        `清单里出现了故障边界地址 ${d.address}。\n`
+        + '  它不产生任何约束（IP 字面量无条件放行），却让清单随机器列表变 ——\n'
+        + '  加一台机器就要重建全网容器。');
+    }
+    assert.ok(allowed.includes('localhost'),
+      'localhost 必须在清单里 —— 它是**名字**，而名字不在清单里就是 403。\n'
+      + '  RPC 代理把 Host 头统一改写为它，去掉会让对外入口整条断掉。');
   });
 
   test('端口与 public-ip 全部解析自拓扑，无写死', () => {
@@ -226,11 +247,17 @@ describe('跨机形态（多故障边界）', () => {
     ]);
   });
 
-  test('http-allowed-hosts 覆盖全部 5 台机器的地址', () => {
+  // 同上：原断言要求清单覆盖全部 5 台机器的地址，功能 005 反了过来。
+  // 这里用的是**假拓扑**（10.0.0.x），所以直接断言"一个都不在"最直白。
+  test('http-allowed-hosts **不随机器数变化** —— 五台的地址一个都不在清单里', () => {
     const allowed = LAN['l1-1']['http-allowed-hosts'];
-    for (const ip of ['10.0.0.1', '10.0.0.2', '10.0.0.3', '10.0.0.4', '10.0.0.5']) {
-      assert.ok(allowed.includes(ip), `应放行 ${ip}`);
+    for (const d of lan.topology.deployments.lan.failureDomains) {
+      assert.ok(!allowed.includes(d.address),
+        `${d.address} 出现在清单里 —— 清单又随机器列表变了，`
+        + '加一台机器会改到每个既有节点的配置（见 tests/unit/add-machine-noop.test.mjs）');
     }
+    assert.deepEqual(allowed, [...new Set(lan.endpoints.publishedHosts)],
+      '清单应当**恰好**等于已发布主机（去重后）—— 多一项少一项都说明派生逻辑变了');
   });
 
   test('地址可由环境变量覆盖（T060）—— 机器 IP 是安装特有数据', () => {
