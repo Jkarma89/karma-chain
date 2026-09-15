@@ -306,6 +306,25 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       备选是跑 signature-aggregator（v0.5.3 已在 bootstrap 镜像里，走 P2P 收签名），
       代价是多一个要配置与运维的进程
 
+- [ ] T073 **面板的容错判据改用链上成员集合**（research V-31，2026-09-15 实测的假警报）。
+      现状：`deriveTopology().faultTolerance` 的 n 取自 `validators.count`（**声明**），
+      于是声明多于链上时会算出一个偏小的余量，并在够用时报出「链已停止出块」——
+      实测那一刻链正常确认交易（区块 975，8.7 秒）。
+      改法：容错判据的 n 取自 `member-set.mjs` 读到的**链上注册成员数**；
+      声明与链上的差额单独作为漂移呈现（那是 FR-030 的事，不该混进容错结论）。
+      **变红检查必须覆盖这个具体情形**：声明 6 / 链上 5 / 在线 4 → 面板**不得**报停摆。
+      读不到链上成员时的退路要想清楚：宁可说「成员集合未知」，
+      也不要拿声明去凑一个看起来确定的结论
+
+- [ ] T074 `docs/devnet.md` 补一条：**这台 Windows 机器上 `docker restart` 会弄坏容器网络**。
+      2026-09-15 第三次撞到同类问题：`docker restart karmachain-l1-1` 之后，
+      **宿主连得上两个 Primary 的 staking 端口，而容器连不上** ——
+      节点卡在 `failed to connect to bootstrap nodes`，链的 VM 一直没初始化，
+      60 秒后转 unhealthy。`up -d --force-recreate` 立即恢复。
+      前两次是**入站**（已发布端口空回复，见 T067），这次是**出站**。
+      所以滚动配置变更时一律用 `up -d --force-recreate`，不要用 `restart`：
+      代价一样（都要停一下），而 restart 在这台机器上会额外引入一个网络故障
+
 - [ ] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步
       （合约 → Warp → P 链 → 合约确认），**每一步的失败可见、可重试、能报出停在哪一步**（FR-016）
 - [ ] T028 [US2] 新建 `scripts/devnet-member.sh` 与 `.ps1` **两份等价实现**，

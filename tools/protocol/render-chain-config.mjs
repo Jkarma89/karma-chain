@@ -52,6 +52,27 @@ export function chainConfigContent() {
     'database-type': 'leveldb',
     'log-level': 'info',
     'eth-apis': ETH_APIS,
+
+    // --- Warp API（功能 005 / T072）------------------------------------------
+    //
+    // ACP-77 的第二步要把合约发出的 Warp 消息拿去**收集 L1 验证者的 BLS 签名**，
+    // 聚合成一个可被 P 链接受的签名。这个 API 就是干这件事的
+    // （`warp.getMessageAggregateSignature`）。
+    //
+    // 实测（research V-30，2026-09-14）：不开它时 `/ext/bc/<id>/warp` 与 `/ext/warp`
+    // **都是 404** —— 而 404 看起来像"路径写错了"，不像"功能没开"。
+    //
+    // 备选是跑 icm-services 的 signature-aggregator（v0.5.3 已在 bootstrap 镜像里，
+    // 走 P2P 收签名、不必动节点）。选这条是因为：一行配置 + 一次重启，
+    // 比多养一个要配置与运维的进程简单得多。
+    //
+    // **与 `pruning-enabled` 不同，它不影响链上状态** —— 只是多暴露一个只读 API。
+    // 所以开启它不进出生证明、不重置链；链配置是**目录挂载**，内容变更不必重建容器，
+    // 但 avalanchego 只在启动时读它，所以各机器要 `docker restart` 一次。
+    //
+    // 暴露面：这个 API 只能对**已经发生过的** Warp 消息取签名，不能让别人伪造消息 ——
+    // 签名由各验证者用自己的 BLS 私钥出，而那些私钥在各自的机器上。
+    'warp-api-enabled': true,
   };
 }
 

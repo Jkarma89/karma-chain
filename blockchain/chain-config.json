@@ -15,5 +15,6 @@
     "internal-account",
     "debug",
     "debug-tracer"
-  ]
+  ],
+  "warp-api-enabled": true
 }
