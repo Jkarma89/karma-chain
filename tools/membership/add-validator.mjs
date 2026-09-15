@@ -39,7 +39,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
-import { identityOf, joinedValidators } from '../verify/lib/identity.mjs';
+import { identityOf, joinedValidators, nodeIdToBytes } from '../verify/lib/identity.mjs';
 import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, TOPICS, STATUS,
   readMemberSet, classifyDrift, nodeIdFromBytes20,
@@ -158,6 +158,112 @@ export async function precheck({ client, pchain, nodeId, config }) {
   return { ok: problems.length === 0, problems, otherDrifts: others };
 }
 
+/**
+ * 第一步的入参，**全部从声明与链上取**，不接受命令行传值。
+ *
+ * 为什么不让人传：nodeID / BLS 公钥是抄来抄去最容易出错的东西，而抄错一个字符
+ * 得到的是一个**格式合法**的标识。让它们只能来自声明（且声明本身过 schema 与
+ * CB58 校验和），就把"抄错"这类错误挡在了写链之前。
+ *
+ * `remainingBalanceOwner` / `disableOwner` 取**既有成员用的那个 P 链地址** ——
+ * 新成员的持续费用与停用权限跟既有的一致，而不是另起一个。
+ * 不一致的后果不是报错，是几个月后没人知道该去哪儿续费。
+ */
+export async function step1Inputs({ client, pchain, nodeId, config, subnetId }) {
+  const declared = joinedValidators(config.validators.nodes).find((v) => v.identity.nodeId === nodeId);
+  if (!declared) throw new Error(`声明里没有 ${nodeId}`);
+
+  // 20 字节 nodeID：cb58Decode 会验 4 字节校验和与 20 字节长度
+  const nodeIdBytes = `0x${nodeIdToBytes(nodeId).toString('hex')}`;
+  const blsPublicKey = declared.identity.blsPublicKey;
+
+  // 权重取既有成员的值，并要求它们**本来就等权** ——
+  // ⌊n/4⌋ 那套推导的前提是等权（research V-22 实测五个各 100）。
+  // 不等权时这套判据不成立，此时宁可停下来让人决定，也不要挑一个数继续。
+  const onP = await pchain('platform.getCurrentValidators', { subnetID: subnetId });
+  const existing = onP.validators ?? [];
+  if (!existing.length) throw new Error('P 链上一个成员都没有 —— 这条链还没转成 L1？');
+  const weights = new Set(existing.map((v) => String(v.weight)));
+  if (weights.size > 1) {
+    throw new Error(`既有成员权重不等（${[...weights].join(' / ')}）—— `
+      + '⌊n/4⌋ 的容错推导以等权为前提，此时不该自动挑一个权重继续。'
+      + '先决定新成员该用什么权重，以及不等权之后容错怎么算。');
+  }
+  const weight = BigInt(existing[0].weight);
+
+  // P 链侧的两个 owner：沿用既有成员的那一个
+  const owners = new Set(existing.flatMap((v) => v.remainingBalanceOwner?.addresses ?? []));
+  if (owners.size !== 1) {
+    throw new Error(`既有成员的 remainingBalanceOwner 不唯一（${[...owners].join(' / ')}）——`
+      + ' 新成员该跟谁一致需要人来定');
+  }
+  const pAddr = [...owners][0];
+  const { utils } = await import('@avalabs/avalanchejs');
+  const pOwnerBytes = `0x${Buffer.from(utils.bech32ToBytes(pAddr)).toString('hex')}`;
+  const pchainOwner = { threshold: 1, addresses: [pOwnerBytes] };
+
+  return { nodeIdBytes, blsPublicKey, weight, pchainOwner, pAddr, existingCount: existing.length };
+}
+
+/**
+ * 第一步：合约 `initiateValidatorRegistration`。
+ *
+ * **签名密钥必须就是合约的 owner** —— 先读 `owner()` 与本地密钥的地址比对，
+ * 不符就停。不比的话，交易会被合约 revert，而 revert 的原因要去读 trace 才知道。
+ */
+export async function step1({ client, pchain, nodeId, config, subnetId, ownerAccount }) {
+  const inputs = await step1Inputs({ client, pchain, nodeId, config, subnetId });
+
+  const onChainOwner = await client.readContract({
+    address: PROXY_ADDRESS, abi: VALIDATOR_MANAGER_ABI, functionName: 'owner',
+  });
+  if (onChainOwner.toLowerCase() !== ownerAccount.address.toLowerCase()) {
+    throw new Error(`本地密钥的地址是 ${ownerAccount.address}，而合约的 owner 是 ${onChainOwner}`
+      + ' —— 用它签名会被合约 revert。检查 validators.ownerAccount 指向的开发账户。');
+  }
+
+  const { createWalletClient, http } = await import('viem');
+  const wallet = createWalletClient({
+    account: ownerAccount,
+    transport: http(client.transport.url ?? client.transport.value?.url),
+  });
+
+  const hash = await wallet.writeContract({
+    address: PROXY_ADDRESS,
+    abi: VALIDATOR_MANAGER_ABI,
+    functionName: 'initiateValidatorRegistration',
+    args: [
+      inputs.nodeIdBytes,
+      inputs.blsPublicKey,
+      inputs.pchainOwner,   // remainingBalanceOwner
+      inputs.pchainOwner,   // disableOwner
+      inputs.weight,
+    ],
+    chain: null,
+  });
+  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== 'success') {
+    throw new Error(`交易被回滚（${hash}）—— 第一步未完成，可以直接重试`);
+  }
+
+  // 从**事件**读结果，不读返回值：返回值只有交易模拟能拿到，而事件是链上事实。
+  const log = receipt.logs.find((l) => l.topics[0] === TOPICS.initiated);
+  if (!log) {
+    throw new Error(`交易成功但没有 InitiatedValidatorRegistration 事件（${hash}）——`
+      + ' 合约版本与 ABI 不符？先跑 npm test 看 validator-manager-abi 那条守卫');
+  }
+  const { args } = decodeEventLog({ abi: VALIDATOR_MANAGER_ABI, data: log.data, topics: log.topics });
+  return {
+    txHash: hash,
+    blockNumber: receipt.blockNumber,
+    validationID: args.validationID,
+    registrationMessageID: args.registrationMessageID,
+    expiry: args.registrationExpiry,
+    weight: args.weight,
+    inputs,
+  };
+}
+
 /** 容错会不会变？加成员时 n 增大，⌊n/4⌋ **可能不变** —— 这一条必须说出来（FR-037 / F-5）。 */
 export function toleranceChange(before, after) {
   const f = (n) => Math.floor(n / 4);
@@ -261,8 +367,39 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     process.exit(EXIT_ABORTED);
   }
 
-  console.error(`\n第 ${progress.step + 1} 步的实现尚未落地（T027 进行中）——`
-    + '前置检查、进度观测与容错提示已可用，写链的部分还没写。');
+  if (progress.step === 0) {
+    // 第一步：合约调用。**代价最小、可直接重试** —— 失败就是交易回滚，链上没有中间态。
+    const accounts = readJson('blockchain/accounts/dev-accounts.json').accounts;
+    const label = config.validators.ownerAccount;
+    const entry = accounts.find((a) => a.label === label);
+    if (!entry) {
+      console.error(`dev-accounts.json 里没有 label = ${label} 的账户`
+        + `（validators.ownerAccount 指向它）`);
+      process.exit(EXIT_PRECHECK);
+    }
+    const ownerAccount = privateKeyToAccount(entry.privateKey);
+
+    let r;
+    try {
+      r = await step1({ client, pchain, nodeId, config, subnetId: identity.subnetId, ownerAccount });
+    } catch (err) {
+      console.error(`\n✗ 第一步失败：${err.message}`);
+      console.error('  链上没有留下中间态 —— 修好原因后直接重跑本命令即可。');
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    console.error('\n✅ 第一步完成');
+    console.error(`  交易        ${r.txHash}（区块 ${r.blockNumber}）`);
+    console.error(`  validationID        ${r.validationID}`);
+    console.error(`  Warp 消息 ID        ${r.registrationMessageID}`);
+    console.error(`  权重 ${r.weight}，与既有 ${r.inputs.existingCount} 个成员一致`);
+    console.error(`  P 链 owner  ${r.inputs.pAddr}（沿用既有成员的）`);
+    console.error('\n**停在这里。** 第二步要把那条 Warp 消息拿去收集 L1 验证者的 BLS 签名。');
+    console.error('  再跑一次本命令即可继续 —— 进度从链上读，不依赖本次运行留下的任何东西。');
+    process.exit(EXIT_OK);
+  }
+
+  console.error(`\n第 ${progress.step + 1} 步的实现尚未落地（T027 进行中）。`);
   console.error('这条路径刻意不"先跑起来再说"：写链的代码没有经过变红检查之前，'
     + '不该有机会真的发出交易。');
   process.exit(EXIT_STEP_FAILED);

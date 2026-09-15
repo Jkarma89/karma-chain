@@ -36,6 +36,56 @@ export function base58Encode(bytes) {
   return out || '1';
 }
 
+/** base58 解码（比特币字母表）。前导 '1' 还原为前导零字节。 */
+export function base58Decode(str) {
+  let n = 0n;
+  for (const c of str) {
+    const i = B58_ALPHABET.indexOf(c);
+    if (i < 0) throw new Error(`非法的 base58 字符 ${JSON.stringify(c)}`);
+    n = n * 58n + BigInt(i);
+  }
+  let hex = n.toString(16);
+  if (hex.length % 2) hex = `0${hex}`;
+  const body = n === 0n ? Buffer.alloc(0) : Buffer.from(hex, 'hex');
+  let lead = 0;
+  for (const c of str) { if (c === '1') lead += 1; else break; }
+  return Buffer.concat([Buffer.alloc(lead), body]);
+}
+
+/**
+ * CB58 解码，**并校验 4 字节 checksum**。
+ *
+ * 校验是这个函数存在的主要理由：NodeID 是人手抄来抄去的东西（从生成脚本的输出
+ * 贴进 deployment.json、再贴进注册命令），而抄错一个字符得到的是一个**格式合法**
+ * 的 NodeID。不验校验和的话，注册会成功地注册一个**不存在的节点** ——
+ * 链上多一个永远不上线的成员，而容错判据把它算成"该在线但掉了"。
+ */
+export function cb58Decode(str) {
+  const raw = base58Decode(str);
+  if (raw.length < 5) throw new Error(`CB58 太短（${raw.length} 字节），至少要 4 字节校验和加 1 字节负载`);
+  const payload = raw.subarray(0, raw.length - 4);
+  const want = raw.subarray(raw.length - 4);
+  const got = sha256(payload).subarray(28, 32);
+  if (!got.equals(want)) {
+    throw new Error(`CB58 校验和不符：期望 ${want.toString('hex')}，算出 ${got.toString('hex')}`
+      + ' —— 这个标识抄错了字符');
+  }
+  return payload;
+}
+
+/**
+ * `NodeID-<cb58>` → 20 字节。合约的 `initiateValidatorRegistration` 要的就是这 20 字节。
+ *
+ * 长度也要验：NodeID 的负载是 `ripemd160(sha256(cert))`，**恒为 20 字节**。
+ * 不验的话，一个校验和恰好对得上的短标识会被当成合法 nodeID 传进合约。
+ */
+export function nodeIdToBytes(nodeId) {
+  if (!nodeId.startsWith('NodeID-')) throw new Error(`NodeID 必须以 NodeID- 开头，得到 ${nodeId}`);
+  const bytes = cb58Decode(nodeId.slice('NodeID-'.length));
+  if (bytes.length !== 20) throw new Error(`NodeID 负载应为 20 字节，得到 ${bytes.length}`);
+  return bytes;
+}
+
 /** CB58 = base58(payload ‖ sha256(payload) 的后 4 字节)，Avalanche 的标准短标识编码。 */
 export function cb58Encode(bytes) {
   const checksum = sha256(bytes).subarray(-4);
