@@ -147,9 +147,75 @@ describe('改动的范围确实只有这两处', () => {
     assert.match(src, /export async function collect\(/);
   });
 
-  test('node-status.mjs 未引入任何新依赖', () => {
+  // 这条原本是 003 的**范围栅栏**：那次把面板抽出去时，node-status 不该被牵动，
+  // 所以断言它的 import 清单一个字都不变。
+  //
+  // 005 / T073 让它必须变：容错的 n 要收敛到**链上注册成员**，而那需要读链。
+  // 不读链的代价是 V-31 那个假警报 —— 声明 6 / 链上 5 / 在线 4 →
+  // 报「链已停止出块」，而同一次 devnet-verify 里三行之后就是
+  // `block-production 977 -> 978 -> 979`。
+  //
+  // 栅栏没有拆掉，只是移到了它真正要守的东西上：**清单是白名单**。
+  // 白名单外的 import 仍然会红 —— 尤其是任何会让 node-status 变"重"的东西
+  // （它被 devnet-verify、devnet-status 两条命令在现场调用）。
+  test('node-status.mjs 的依赖限定在白名单内（新增要经过这条）', () => {
     const src = readFileSync(resolve(REPO, 'tools/inspect/node-status.mjs'), 'utf8');
     const imports = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
-    assert.deepEqual(imports.sort(), ['../protocol/load.mjs', 'node:fs', 'node:path', 'node:url'].sort());
+    const allowed = [
+      'node:fs', 'node:path', 'node:url',
+      '../protocol/load.mjs',
+      // T073：读链上成员集合（读不到就说读不到，绝不退回声明）
+      '../membership/member-set.mjs',
+      // T073：把容错收敛到链上成员的判定只有一份，在这里引用而不是重写。
+      // snapshot.mjs **自身零 import**，所以引它不会带进任何传递依赖 ——
+      // 这是能接受这个方向的前提，别在 snapshot.mjs 里加 import。
+      '../dashboard/snapshot.mjs',
+    ];
+    const extra = imports.filter((i) => !allowed.includes(i));
+    assert.deepEqual(extra, [],
+      `node-status.mjs 引入了白名单外的依赖：${extra.join('、')}。`
+      + '它被 devnet-verify / devnet-status 在现场调用，'
+      + '每一个新依赖都是一次"排查工具自己起不来"的机会。');
+  });
+
+  // ## 这条守的是**接线**，不是判定
+  //
+  // `summarize` 的判定由 tests/unit/status-format.test.mjs 守着 —— 但那些测试
+  // 直接喂它一个**已收敛**的 faultTolerance，所以 `collect` 把未收敛的那份传进去
+  // 也照样全绿。而那正是 V-31 假警报的真实形状：判定是对的，**接错了线**。
+  //
+  // 变红检查里这一条最初没红，就是因为只有判定测试、没有接线测试。
+  // `collect` 要连真链才能跑，所以这里退到源码层面断言 —— 弱一些，
+  // 但它对这个确切的回归会红。
+  test('collect() 把**收敛后**的成员基准传给 summarize（T073 的接线）', () => {
+    const src = readFileSync(resolve(REPO, 'tools/inspect/node-status.mjs'), 'utf8');
+    assert.match(src, /summary:\s*summarize\(scoped\.rows,\s*scoped\.faultTolerance/,
+      'summarize 没有收到 scopeToChainMembers 的输出 —— 容错会按**声明数**算，'
+      + '而声明多于链上注册时（有成员正在加入）就会报出「链已停止出块」这句假话');
+    // `\b` 不可省：没有它，`scoped.faultTolerance`（**正确**的那个）里的
+    // "d.faultTolerance" 也会被匹配上 —— 第一版就是这样，让这条守卫
+    // 对着未改动的源码就报红，于是那一轮变红检查全部作废。
+    assert.doesNotMatch(src, /summarize\([^)]*\bd\.faultTolerance/,
+      '还有地方把未收敛的 d.faultTolerance 传给 summarize');
+    assert.match(src, /scopeToChainMembers\(\{\s*rows,\s*faultTolerance: d\.faultTolerance,\s*memberSet\s*\}\)/,
+      '收敛的输入应当是**声明派生**的那份（d.faultTolerance）加上链上成员集合');
+  });
+
+  test('读不到链上成员时**不退回声明**，而是如实标记', () => {
+    const src = readFileSync(resolve(REPO, 'tools/inspect/node-status.mjs'), 'utf8');
+    assert.match(src, /memberSet:\s*\{\s*source:\s*memberSet\.source/,
+      '输出里没有带上成员集合的来源 —— 调用方就分不清"按链上算"与"按声明算"，'
+      + '而这两者在有成员加入时结论相反');
+  });
+
+  test('scopeToChainMembers 的来源 snapshot.mjs 必须保持零 import', () => {
+    // 上一条允许 inspect → dashboard 这个方向，**前提**就是被引的那个模块是纯的。
+    // 哪天有人往 snapshot.mjs 里加一个 import，这个前提就没了，而后果是
+    // node-status 悄悄背上一串传递依赖。
+    const src = readFileSync(resolve(REPO, 'tools/dashboard/snapshot.mjs'), 'utf8');
+    const imports = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
+    assert.deepEqual(imports, [],
+      `snapshot.mjs 有了 import（${imports.join('、')}）—— 它是纯判定模块，`
+      + 'node-status 与面板都引它。要加依赖的话，先把那部分判定挪出去。');
   });
 });

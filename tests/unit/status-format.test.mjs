@@ -191,6 +191,115 @@ describe('在线数与容错上限的关系（契约第 3 条）', () => {
   });
 });
 
+// ── 以下三组是 2026-09-15 那次**自相矛盾的报告**逼出来的（功能 005 / T073）──────
+//
+// 当时同一次 devnet-verify 里：
+//   fault-tolerance   4/6 … EXCEEDED: l1-2, l1-6 offline, chain has stopped producing blocks
+//   block-production  977 -> 978 -> 979 (on-demand)          ← 三行之后
+//
+// 两处毛病各自独立：
+//   ① n 按**声明的 6** 算，而 l1-6 还没注册完 —— 链上成员是 5 个，掉 1 个仍在容错内
+//   ② "链已停止出块"是**推断**，却写成了观测。而 summarize 手上就有观测
+//      （两次采样之间高度涨没涨），只是没用。
+//
+// 一条自相矛盾的报告比没有报告更坏：它训练人忽略这个工具。
+describe('容错基准：链上注册数，且要说清用的是哪个', () => {
+  const rows = (states) => states.map((state, i) => ({
+    id: `l1-${i + 1}`, role: 'l1-validator', domain: `d${i + 1}`, state,
+    countsAsOffline: !['healthy', 'catching-up', 'bootstrapping'].includes(state),
+    countsTowardTolerance: true,
+  }));
+
+  test('声明 6 / 链上 5 / 在线 4 → **在容错内**（就是那个假警报的现场）', () => {
+    // 收敛已由 scopeToChainMembers 做过：l1-6 不在 rows 里（不计入容错），
+    // faultTolerance 带着链上的 5 与声明的 6。
+    const ft = { validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 6 };
+    const s = summarize(rows(['healthy', 'stopped', 'healthy', 'healthy', 'healthy']), ft,
+      { blocksAdvanced: false });
+    assert.equal(s.withinTolerance, true,
+      '按链上 5 个算，掉 1 个仍在 ⌊5/4⌋=1 之内 —— 报成越限就是 V-31 那个假警报');
+    // 只禁"已经停了"这类既成事实的说法。"再有一个离线即停摆"是条件式前瞻，
+    // 是余量为 0 时该说的话 —— 把它一起禁掉会逼实现删掉一条有用的提示。
+    assert.doesNotMatch(s.line, /已停止出块|已停摆|超出上限/,
+      `在容错内却报成了停摆/越限：${s.line}`);
+    assert.match(s.line, /链继续出块/, '在容错内应当明说链继续出块');
+  });
+
+  test('声明数与链上数不同时，必须说出用的是哪个', () => {
+    const ft = { validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 6 };
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
+    assert.match(s.line, /链上注册的 5 个/,
+      `没说基准是链上注册数 —— "6 台机器却按 5 算"看着像少算了一个：${s.line}`);
+    assert.match(s.line, /声明 6 个/, '没给出声明数，读的人无从核对差额');
+  });
+
+  test('声明数与链上数相同时不加这句噪声', () => {
+    const ft = { validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 5 };
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
+    assert.doesNotMatch(s.line, /声明 5 个/,
+      '两个数相同时还提差额 —— 恒定出现的提示等于没有提示');
+  });
+
+  test('没有 declaredValidatorCount（未收敛）时不编造差额', () => {
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']),
+      { validatorCount: 5, maxOfflineValidators: 1 }, {});
+    assert.doesNotMatch(s.line, /声明/, `凭空说出了声明数：${s.line}`);
+  });
+});
+
+describe('越限时不断言没测过的事', () => {
+  const ft = { validatorCount: 5, maxOfflineValidators: 1 };
+  const rows = (states) => states.map((state, i) => ({
+    id: `l1-${i + 1}`, role: 'l1-validator', domain: `d${i + 1}`, state,
+    countsAsOffline: !['healthy', 'catching-up', 'bootstrapping'].includes(state),
+    countsTowardTolerance: true,
+  }));
+  const exceeded = () => rows(['healthy', 'stopped', 'unreachable', 'healthy', 'healthy']);
+
+  test('**越限但高度在涨 → 报矛盾，不报停摆**', () => {
+    const s = summarize(exceeded(), ft, { blocksAdvanced: true });
+    assert.equal(s.withinTolerance, false, '算出来确实越限');
+    assert.equal(s.contradiction, true, '矛盾必须以字段形式暴露给调用方，而不是只藏在文案里');
+    assert.match(s.line, /判据与观测矛盾/, `没报出矛盾：${s.line}`);
+    assert.doesNotMatch(s.line, /已停止出块/,
+      '高度还在涨，却说"已停止出块" —— 这正是那份自相矛盾的报告。'
+      + `实际：${s.line}`);
+    assert.match(s.line, /要查的是判据/,
+      '没有把人指向真正要查的东西（成员集合算错？离线谓词判错？）');
+  });
+
+  test('越限且未观测到出块 → 说明是**推断**，并说清为什么不是证据', () => {
+    const s = summarize(exceeded(), ft, { blocksAdvanced: false });
+    assert.equal(s.contradiction, false);
+    assert.match(s.line, /推断/, `把推断写成了观测：${s.line}`);
+    assert.match(s.line, /按需出块/,
+      '没说明"高度不涨"在本网不构成停摆的证据 —— 少了这句，'
+      + '读的人会把"没涨"当成"停了"');
+  });
+
+  test('blocksAdvanced 未提供时按"没观测到"处理，不当成在出块', () => {
+    const s = summarize(exceeded(), ft, {});
+    assert.equal(s.contradiction, false, '没有观测就不该宣称矛盾');
+    assert.match(s.line, /超出上限/);
+  });
+
+  test('第三个参数整个省略也要能工作（既有调用方没有传它）', () => {
+    const s = summarize(exceeded(), ft);
+    assert.equal(s.withinTolerance, false);
+    assert.equal(s.contradiction, false);
+  });
+
+  test('在容错内时，blocksAdvanced 不影响结论', () => {
+    const ok = rows(['healthy', 'stopped', 'healthy', 'healthy', 'healthy']);
+    for (const blocksAdvanced of [true, false, null]) {
+      const s = summarize(ok, ft, { blocksAdvanced });
+      assert.equal(s.withinTolerance, true);
+      assert.equal(s.contradiction, false,
+        `blocksAdvanced=${blocksAdvanced} 时在容错内却报了矛盾`);
+    }
+  });
+});
+
 describe('输出格式', () => {
   const ft = { validatorCount: 5, maxOfflineValidators: 1 };
   const rows = [

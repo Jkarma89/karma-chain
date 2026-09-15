@@ -258,6 +258,41 @@ export async function readView(client, name, address = PROXY_ADDRESS) {
   return client.readContract({ address, abi: VALIDATOR_MANAGER_ABI, functionName: name });
 }
 
+/**
+ * 链上注册成员的 **nodeID 集合**，给容错判据用（功能 005 / T073）。
+ *
+ * 容错的 n 必须是**链上注册数**，不是声明数。research V-31 的假警报就出在这里：
+ * 声明 6 / 链上 5 / 在线 4 → 按声明算出「链已停止出块」，
+ * 而同一时刻探测交易在区块 975 里 8.7 秒确认。
+ *
+ * **读不到时返回 `source: 'unknown'`，绝不退回声明。** 退回声明就是把
+ * "不知道"说成"知道"，而那个说法恰好是错的那一个。
+ *
+ * 这里只负责取回集合与它的形状 —— 怎么用它收敛容错，在
+ * `tools/dashboard/snapshot.mjs` 的 `scopeToChainMembers` 里（只有一份，
+ * 那个模块零 import，所以 `node-status` 引它不会背上传递依赖）。
+ * 本函数存在的理由是：面板与 `node-status` 都要它，而"成员集合长什么样"
+ * 这件事不该有两份定义。
+ */
+export async function readRegisteredMembers({ rpcUrl, now = Date.now() } = {}) {
+  try {
+    const { createPublicClient, http } = await import('viem');
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const set = await readMemberSet({ client });
+    return {
+      source: 'chain',
+      registeredNodeIds: set.members.map((m) => m.nodeId).filter(Boolean),
+      readAt: now,
+      // nodeID 未知的成员（Completed 没配对 Initiated）单独计数 ——
+      // 它们确实在集合里，但认不出是谁，所以不能进 registeredNodeIds。
+      // 不说出来的话，链上注册数与这个数组的长度会静默不等。
+      unidentified: set.members.filter((m) => !m.nodeId).length,
+    };
+  } catch (err) {
+    return { source: 'unknown', error: err.message, readAt: now };
+  }
+}
+
 /** 命令行：打印链上成员与漂移分类。 */
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
   const { createPublicClient, http } = await import('viem');

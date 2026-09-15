@@ -103,27 +103,14 @@ let memberSetCache = { at: 0, value: null };
 
 export async function readMemberSetCached({ rpcUrl, now = Date.now() } = {}) {
   if (memberSetCache.value && now - memberSetCache.at < MEMBER_SET_TTL_MS) return memberSetCache.value;
-  try {
-    const { createPublicClient, http } = await import('viem');
-    const { readMemberSet } = await import('../membership/member-set.mjs');
-    const client = createPublicClient({ transport: http(rpcUrl) });
-    const set = await readMemberSet({ client });
-    const value = {
-      source: 'chain',
-      registeredNodeIds: set.members.map((m) => m.nodeId).filter(Boolean),
-      readAt: now,
-      // nodeID 未知的成员（Completed 没配对 Initiated）单独计数 ——
-      // 它们确实在集合里，但认不出是谁，所以不能进 registeredNodeIds。
-      // 不说出来的话，链上注册数与这个数组的长度会静默不等。
-      unidentified: set.members.filter((m) => !m.nodeId).length,
-    };
-    memberSetCache = { at: now, value };
-    return value;
-  } catch (err) {
-    const value = { source: 'unknown', error: err.message, readAt: now };
-    // 失败**不进缓存** —— 否则一次网络抖动会让面板在 30 秒里都说"成员集合未知"
-    return value;
-  }
+  // 取回与判形状的活都在 member-set.mjs 的 readRegisteredMembers 里 ——
+  // `node-status` 也要它，而"成员集合长什么样"不该有两份定义。
+  // 本函数只加缓存这一层。
+  const { readRegisteredMembers } = await import('../membership/member-set.mjs');
+  const value = await readRegisteredMembers({ rpcUrl, now });
+  // 失败**不进缓存** —— 否则一次网络抖动会让面板在 30 秒里都说"成员集合未知"
+  if (value.source === 'chain') memberSetCache = { at: now, value };
+  return value;
 }
 
 /**

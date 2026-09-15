@@ -295,7 +295,139 @@ export function countSigners(signedHex, unsignedHex) {
   const bitset = sig.subarray(8, 8 + bitsetLen);
   let signers = 0;
   for (const b of bitset) for (let i = 0; i < 8; i += 1) if (b & (1 << i)) signers += 1;
-  return { signers, bitsetHex: `0x${bitset.toString('hex')}`, signatureBytes: sig.length - 8 - bitsetLen };
+  return {
+    signers,
+    bitsetHex: `0x${bitset.toString('hex')}`,
+    signatureBytes: sig.length - 8 - bitsetLen,
+    aggregateSignature: `0x${sig.subarray(sig.length - 96).toString('hex')}`,
+  };
+}
+
+/**
+ * **哪些成员签了** —— 用密码学判定，不靠位序推断。
+ *
+ * ## 为什么不能从 bitset 的位序读出来
+ *
+ * 2026-09-15 聚合卡在 3/5 时，我需要知道是哪两个没签，于是去推 bitset 的位序：
+ *
+ *   第一次按 NodeID 的 CB58 字符串排序 → 算出「l1-3 与 l1-4 没签」
+ *   第二次按 BLS 公钥字节排序           → 算出「l1-2 与 l1-3 没签」
+ *
+ * **两个都是错的**，而且各自都违反一条硬不变式：发起聚合的那个节点必然会
+ * 计入自己的本地签名，可两种排序下都出现了「发起方不在自己的 bitset 里」。
+ * 我拿这两个结论中的第一个向人报过，那是一次错误的汇报。
+ *
+ * 真正的签名者由这个函数算出来（唯一命中）：**l1-1 与 l1-3 没签**。
+ *
+ * 位序是 avalanchego 的实现细节，会随版本与规范排序规则而变；而
+ * 「这条聚合签名能被哪一组公钥之和验过」是**数学事实**，不依赖任何约定。
+ * 所以这里只从 bitset 取**个数**（个数与顺序无关），身份靠验签定。
+ *
+ * ## 代价与它的界
+ *
+ * 枚举 C(n, k) 个子集，每个做一次 BLS 验签（毫秒级）。n=5 时最多 10 次。
+ * 成员多起来会爆，所以设了上界：超过就报错，**不静默跑很久**。
+ *
+ * ## 为什么用 avalanchejs 的 bls 而不是直接调 @noble/curves
+ *
+ * 仓库里 `identity.mjs` 已经直接用 `@noble/curves` 派生公钥，所以第一版也那么写了 ——
+ * 结果**验不过**，而验不过看起来和"没签"一模一样。
+ *
+ * 实测（2026-09-15）：avalanchego 的普通签名用的是
+ * `..._SSWU_RO_POP_` 那套密码组件，**不是** noble 的默认 `..._SSWU_RO_NUL_`。
+ * 与名字给人的直觉相反（POP 听着像只给 proof of possession 用的）。
+ *
+ * 把这个 DST 字符串抄进代码是个陷阱：抄错不会报错，只会让判定**永远说没签**。
+ * 所以这里用 avalanchejs 的封装 —— 它自带正确的组件，且正是第三步构造
+ * P 链交易的同一个库，两处不会漂移。
+ *
+ * @param {{signedMessage: string, unsignedMessage: string,
+ *          members: Array<{id: string, blsPublicKey: string}>, maxCombinations?: number}} args
+ * @returns {Promise<{signed: string[], missing: string[], tried: number}>}
+ */
+export async function identifySigners({
+  signedMessage, unsignedMessage, members, maxCombinations = 20_000,
+}) {
+  const { bls } = await import('@avalabs/avalanchejs');
+  const { signers, aggregateSignature } = countSigners(signedMessage, unsignedMessage);
+  const msg = Buffer.from(unsignedMessage.replace(/^0x/, ''), 'hex');
+  const sig = Buffer.from(aggregateSignature.replace(/^0x/, ''), 'hex');
+  const n = members.length;
+  if (signers > n) {
+    throw new Error(`聚合签名里有 ${signers} 个签名者，而已知成员只有 ${n} 个`
+      + ' —— 传进来的成员集合不完整，判定不了身份。');
+  }
+  const choose = (a, b) => {
+    let r = 1;
+    for (let i = 0; i < b; i += 1) r = (r * (a - i)) / (i + 1);
+    return Math.round(r);
+  };
+  const total = choose(n, signers);
+  if (total > maxCombinations) {
+    throw new Error(`${n} 个成员里选 ${signers} 个有 ${total} 种组合，超过上限 ${maxCombinations}`
+      + ' —— 逐个验签会跑很久。要用就提高 maxCombinations，但先想清楚值不值。');
+  }
+
+  const points = members.map((m) => bls
+    .publicKeyFromBytes(Buffer.from(m.blsPublicKey.replace(/^0x/, ''), 'hex')));
+  const sigPoint = bls.signatureFromBytes(sig);
+  let tried = 0;
+  let hit = null;
+  const idx = [];
+  const walk = (start) => {
+    if (hit) return;
+    if (idx.length === signers) {
+      tried += 1;
+      // 聚合公钥就是各公钥的点之和 —— BLS 聚合签名正是对着这个和验的
+      const agg = idx.slice(1).reduce((p, i) => p.add(points[i]), points[idx[0]]);
+      if (bls.verify(agg, sigPoint, msg)) hit = [...idx];
+      return;
+    }
+    for (let i = start; i < n && !hit; i += 1) {
+      idx.push(i);
+      walk(i + 1);
+      idx.pop();
+    }
+  };
+  if (signers > 0) walk(0);
+
+  if (!hit) {
+    throw new Error(`${total} 种组合都验不过这条聚合签名（成员 ${n} 个，签名者 ${signers} 个）。`
+      + ' 可能的原因：传进来的公钥与链上注册的不是同一批，'
+      + ' 或者这条消息的签名覆盖范围不是整条未签名消息。'
+      + ' **不要据此断言谁没签** —— 验不过就是判定不出来，不是"都没签"。');
+  }
+  const signed = hit.map((i) => members[i].id);
+  return { signed, missing: members.filter((_, i) => !hit.includes(i)).map((m) => m.id), tried };
+}
+
+/**
+ * 把**链上注册的成员**配上公钥与可读名字，喂给 `identifySigners`。
+ *
+ * 候选集合必须正好是链上那一批：
+ *   多了（比如把还没注册的新成员算进去）只是白试几个子集，不影响结论；
+ *   **少了一个就永远找不到匹配** —— 而那看起来和"验不过"一模一样。
+ *
+ * 所以只要有任何一个链上成员在声明里找不到，就返回 null（不报名字），
+ * 而不是拿一个残缺的集合去判定。谁多谁少由 precheck 的漂移检查去报。
+ */
+export function memberCandidates({ config, memberSet }) {
+  const d = deriveTopology(config);
+  const byNodeId = new Map();
+  for (const n of d.topologyNodes.filter((x) => x.role === 'l1-validator')) {
+    const v = config.validators.nodes.find((x) => x.keyDir === n.keyDir);
+    if (!v) continue;
+    let id;
+    try { id = identityOf(v); } catch { continue; }
+    byNodeId.set(id.nodeId, { id: `${n.id}/${n.domain}`, blsPublicKey: id.blsPublicKey });
+  }
+  const out = [];
+  for (const m of memberSet.members) {
+    const hit = m.nodeId ? byNodeId.get(m.nodeId) : null;
+    if (!hit) return null;
+    out.push(hit);
+  }
+  return out;
 }
 
 /**
@@ -334,7 +466,11 @@ export function meetsQuorum({ signers, registeredCount, quorumNum }) {
  */
 export async function step2({
   config, identity, registrationMessageID, registeredCount,
-  quorumNum = 67, timeoutMs = 45_000,
+  // 超时从 45 秒收到 12 秒：实测成功的调用是 **0.05–2 秒**，45 秒只会让
+  // 一个坏节点把整轮拖死（4 轮 × 6 节点最坏要几分钟）。
+  quorumNum = 67, timeoutMs = 12_000, rounds = 4, delayMs = 4_000,
+  // 给了就能报出**是哪几个没签**（见 identifySigners）；不给只报个数。
+  members = null,
 }) {
   if (!registeredCount) throw new Error('step2 需要 registeredCount（链上注册的成员数）来折算权重占比');
   const d = deriveTopology(config);
@@ -354,42 +490,260 @@ export async function step2({
     return j.result;
   };
 
-  for (const node of validators) {
-    try {
+  // **多轮重试。** 签名收集有截止时间，收到几个签名取决于那一刻各验证者的 P2P 响应 ——
+  // 2026-09-15 实测同一条消息在 3 与 4 个签名者之间**来回波动**（门槛要 4）。
+  // 这一步只读且便宜（单次几十毫秒到 2 秒），所以重试是对的答案：
+  // 与其让人看见一次"没到门槛"就去排查一个不存在的故障，不如多试几轮。
+  // 上一轮**超时**过的节点，后面几轮直接跳过：超时是这台机器的网络问题，
+  // 不会在几秒内自愈，而每次重试都要再赔上一个完整的超时。
+  const timedOut = new Set();
+  for (let round = 1; round <= rounds; round += 1) {
+    for (const node of validators) {
+      if (timedOut.has(node.id)) continue;
+      try {
       const unsigned = await call(node, 'warp_getMessage', [messageId]);
       const signed = await call(node, 'warp_getMessageAggregateSignature',
         [messageId, quorumNum, identity.subnetId]);
       const counted = countSigners(signed, unsigned);
       if (counted.signers < 1) throw new Error('bitset 里一个签名者都没有');
+
+      // **谁签了** —— 只在给了成员公钥时算，且算不出来不影响聚合本身的结论。
+      // 判定失败可能只是候选集合与链上注册的不是同一批（见 identifySigners）。
+      let who = null;
+      if (members?.length) {
+        try {
+          who = await identifySigners({
+            signedMessage: signed, unsignedMessage: unsigned, members,
+          });
+        } catch { who = null; }
+      }
+      const whoNote = who
+        ? ` 没签的是：${who.missing.join('、') || '无'}。`
+        : '';
+
       // **门槛要自己验** —— 实测那个 quorumNum 参数不是硬门槛（见 meetsQuorum 的注释）
       const q = meetsQuorum({ signers: counted.signers, registeredCount, quorumNum });
       if (!q.ok) {
         throw new Error(`只聚合到 ${q.signers}/${q.registeredCount} 个签名者（${q.percent}%），`
-          + `低于 quorum 门槛 ${q.quorumNum}% —— 这条消息 P 链会拒绝。`
-          + ' 常见成因：某些验证者离线，或消息还没传到它们那里（稍等再试）。');
+          + `低于 quorum 门槛 ${q.quorumNum}% —— 这条消息 P 链会拒绝。${whoNote}`
+          + ' 常见成因：某些验证者离线，或它的 P2P 签名请求不通'
+          + '（2026-09-15 实测过一次：节点自己能签、HTTP 也通，但别人经 P2P 要不到，'
+          + '而链照常出块 —— 那次是网络设备重启后自愈的）。');
       }
-      attempts.push({ node: node.id, ok: true, ...counted });
+      attempts.push({ node: node.id, round, ok: true, ...counted });
       return {
         messageId,
+        round,
         signedMessage: signed,
+        unsignedMessage: unsigned,
         unsignedBytes: (unsigned.length - 2) / 2,
         signedBytes: (signed.length - 2) / 2,
         via: node.id,
         ...counted,
         quorum: q,
+        signedBy: who?.signed ?? null,
+        missing: who?.missing ?? null,
         attempts,
       };
-    } catch (err) {
-      attempts.push({ node: node.id, ok: false, error: err.message.slice(0, 120) });
+      } catch (err) {
+        if (/timeout|aborted/i.test(err.message)) timedOut.add(node.id);
+        attempts.push({ node: node.id, round, ok: false, error: err.message.slice(0, 120) });
+      }
     }
+    if (round < rounds) await new Promise((r) => setTimeout(r, delayMs));
   }
 
-  throw new Error('没有任何验证者给出可用的聚合签名：\n'
-    + attempts.map((a) => `  ${a.node}: ${a.error}`).join('\n')
+  // 只列**最后一轮**的失败：前几轮的同类失败没有新信息，全列会把真正的原因埋掉。
+  const last = attempts.filter((a) => a.round === rounds);
+  throw new Error(`${rounds} 轮都没有拿到达标的聚合签名（下列为最后一轮）：\n`
+    + last.map((a) => `  ${a.node}: ${a.error}`).join('\n')
     + '\n  这一步不写链，修好之后直接重跑即可。'
     + '\n  常见成因：某个节点的 Warp API 没开（看它日志里 WarpAPIEnabled），'
     + '或在线权重不到 quorum 门槛。');
 }
+
+/**
+ * 新成员该跟谁一致：既有成员的**续费地址**与**余额**。
+ *
+ * 这条规则原先内联在命令行分支里 —— 也就是**只有真跑一次 CLI 才会被执行**，
+ * 测不到。而它判的是一件错了要花钱收拾的事：付款账户选错，第三步会
+ * 在构造阶段报"余额不足"，看不出根因；余额选错，新成员的续费节奏与
+ * 既有的不同，几个月后才暴露。
+ *
+ * **不唯一时不猜。** 既有成员的续费地址或余额出现分叉，说明这套成员集合
+ * 已经不是同质的了，"新成员该跟谁一致"需要人来定。
+ *
+ * @param {Array<{remainingBalanceOwner?: {addresses?: string[]}, balance?: string|number}>} validators
+ *        P 链 `platform.getCurrentValidators({subnetID})` 返回的既有成员
+ */
+export function payerExpectation(validators) {
+  const list = validators ?? [];
+  if (!list.length) {
+    throw new Error('P 链上这条 subnet 没有任何既有成员 —— 推不出新成员该用的续费地址与余额。'
+      + ' 第一个成员的这两个值要由人来定，本工具不猜。');
+  }
+  const owners = new Set(list.flatMap((v) => v.remainingBalanceOwner?.addresses ?? []));
+  const balances = new Set(list.map((v) => String(v.balance)));
+  if (owners.size !== 1 || balances.size !== 1) {
+    throw new Error(`既有成员的续费地址或余额不唯一（地址 ${owners.size} 个 / 余额 ${balances.size} 种）`
+      + ' —— 新成员该跟谁一致需要人来定，本工具不猜。');
+  }
+  return { expectedPAddress: [...owners][0], balance: BigInt([...balances][0]) };
+}
+
+/**
+ * 用来签名的密钥，必须对应**持有那笔钱**的 P 链地址。
+ *
+ * ## 为什么两个参数都是必需的
+ *
+ * 初版写成 `if (expectedPAddress && pAddress !== expectedPAddress)` ——
+ * **调用方忘了传期望值，检查就静默不做**，而调用处读起来一模一样。
+ * 那是一条不会变红的守卫，比没有守卫更坏：它让人以为核过了。
+ *
+ * 所以缺期望值本身就是错误，且与"地址不符"分开报 —— 两者的修法不同：
+ * 前者改调用方，后者换账户。
+ */
+export function assertPayerAccount({ pAddress, expectedPAddress }) {
+  if (!pAddress) throw new Error('assertPayerAccount: 没有传入本次要用的 P 链地址');
+  if (!expectedPAddress) {
+    throw new Error('assertPayerAccount: 没有传入期望的 P 链地址（既有成员的 remainingBalanceOwner）'
+      + ' —— 缺了它就无法核对付款账户，而"核不了"不等于"核过了"。');
+  }
+  if (pAddress !== expectedPAddress) {
+    throw new Error(`用这个密钥算出的 P 链地址是 ${pAddress}，`
+      + `而既有成员的 remainingBalanceOwner 是 ${expectedPAddress} —— 不是同一个账户。`
+      + ' 新成员的续费地址会与既有的分叉，而那不会报错。'
+      + ' 核对 validators.ownerAccount 指向的开发账户。');
+  }
+  return true;
+}
+
+/**
+ * 费用 = 花掉的 UTXO 总额 − 找零 − 给新成员的 balance。
+ *
+ * ## 为什么这个算式需要自己的守卫
+ *
+ * 它是**唯一**在批准之前告诉人"会花多少"的东西，而"它会花钱"和
+ * "它会花多少"是两句不同的话 —— 只有后者能让人做判断。
+ *
+ * 算式依赖 avalanchejs 的交易形状（`getInputUtxos()` 与 `baseTx.outputs`）。
+ * 形状变了，算出来的不会是报错，而是**一个看着像费用的错数**。
+ * 所以这里对结果本身设界：费用必须为正，且不得超过花掉的总额。
+ * 负费用只可能来自算式或形状理解有误 —— 那时应当停下，而不是打印出来。
+ */
+export function computeFee({ inputAmounts, outputAmounts, balance }) {
+  const spent = inputAmounts.reduce((n, a) => n + BigInt(a), 0n);
+  const change = outputAmounts.reduce((n, a) => n + BigInt(a), 0n);
+  const fee = spent - change - BigInt(balance);
+  if (fee <= 0n) {
+    throw new Error(`算出的交易费是 ${fee} nAVAX（花 ${spent}、找零 ${change}、`
+      + `给新成员 ${balance}）—— 费用不可能为零或负数。`
+      + ' 这说明算式或对交易形状的理解有误（avalanchejs 的输入/输出取法变了？），'
+      + ' 而不是这笔交易真的免费。**不要带着这个数去批准。**');
+  }
+  if (fee >= spent) {
+    throw new Error(`算出的交易费 ${fee} nAVAX 不小于花掉的总额 ${spent} —— 算式有误。`);
+  }
+  return { spent, change, fee };
+}
+
+/**
+ * 第三步：把已签名的 Warp 消息提交到 P 链（`RegisterL1ValidatorTx`）。
+ *
+ * ## 这是四步里唯一"做错要收拾"的一步
+ *
+ *   第一步  L1 合约交易，失败就是回滚，**链上不留中间态**
+ *   第二步  只读聚合，失败可无代价重做
+ *   **第三步  P 链交易，花 AVAX；成功之后若第四步失败，链上留下「P 链认了、合约没认」**
+ *   第四步  L1 合约交易，失败可用 resendRegisterValidatorMessage 重试
+ *
+ * 所以它分三段，**前两段不碰链**：
+ *
+ *   构造  向 P 链查 feeState 与 UTXO，算出交易与**费用** → 失败在这里最安全
+ *   签名  本地用 ewoq 的密钥签 → 失败也不碰链
+ *   提交  issueSignedTx → **只有这一段动链**
+ *
+ * `dryRun` 让前两段照常跑、第三段不做，于是**费用可以在批准之前算给人看**。
+ *
+ * ## 为什么要核 P 链地址
+ *
+ * 用来签名的密钥必须对应**持有那笔钱**的 P 链地址，也就是既有成员的
+ * `remainingBalanceOwner`。不核的话，UTXO 会查出空集，而报出来的是一句
+ * 「余额不足」或构造失败 —— 而真实原因是"你用错了账户"。
+ */
+export async function step3({
+  config, identity, signedMessage, blsSignature, privateKeyHex,
+  balance, pchainUri, expectedPAddress, dryRun = false,
+}) {
+  const { Context, pvm, utils, secp256k1, addTxSignatures } = await import('@avalabs/avalanchejs');
+
+  const priv = Buffer.from(privateKeyHex.replace(/^0x/, ''), 'hex');
+  const pubKey = secp256k1.getPublicKey(priv);
+  const addrBytes = secp256k1.publicKeyBytesToAddress(pubKey);
+
+  const api = new pvm.PVMApi(pchainUri);
+
+  // **顺序有依赖，不能并发。** P 链地址的 bech32 编码要用 context 里的 hrp
+  // （本网是 custom），而 UTXO 要按地址查。第一版图省一次请求把它们塞进
+  // Promise.all，于是引用了还没赋值的 context —— 拿错 hrp 会查出**空 UTXO**，
+  // 而空 UTXO 报出来的是"余额不足"，看不出根因在地址编码上。
+  const context = await Context.getContextFromURI(pchainUri);
+  const pAddress = utils.format('P', context.hrp, addrBytes);
+  const [feeState, utxoResp] = await Promise.all([
+    api.getFeeState(),
+    api.getUTXOs({ addresses: [pAddress] }),
+  ]);
+  const { utxos } = utxoResp;
+
+  // **这条断言是上面那段注释说的检查。**
+  // 第一版只写了注释没写代码 —— 文档写了而代码没做，比不写更坏：
+  // 读注释的人会以为它被检查过。
+  // 第二版写了代码但让期望值可选，于是**忘了传就静默不检查** ——
+  // 现在它在 assertPayerAccount 里，缺期望值本身就报错，并且测得到。
+  assertPayerAccount({ pAddress, expectedPAddress });
+
+  if (!utxos?.length) {
+    throw new Error(`P 链地址 ${pAddress} 上没有任何 UTXO —— 用这个密钥付不了费用。`
+      + ' 核对 validators.ownerAccount 指向的开发账户，以及既有成员的 remainingBalanceOwner。');
+  }
+
+  const unsignedTx = pvm.newRegisterL1ValidatorTx({
+    balance,
+    blsSignature: Buffer.from(blsSignature.replace(/^0x/, ''), 'hex'),
+    feeState,
+    fromAddressesBytes: [addrBytes],
+    message: Buffer.from(signedMessage.replace(/^0x/, ''), 'hex'),
+    utxos,
+  }, context);
+
+  // 费用 = 花掉的 UTXO 总额 − 找零 − 给验证者的 balance。
+  // 在批准之前必须能报出来 —— "它会花钱"和"它会花多少"是两句不同的话。
+  // 算式与它的上下界都在 computeFee 里（那里说明了为什么要设界）。
+  const { spent, change, fee } = computeFee({
+    inputAmounts: unsignedTx.getInputUtxos().map((u) => u.output.amount()),
+    outputAmounts: unsignedTx.getTx().baseTx.outputs.map((o) => o.output.amount()),
+    balance,
+  });
+
+  const plan = {
+    pAddress,
+    utxoCount: utxos.length,
+    spent,
+    change,
+    balance,
+    fee,
+    networkId: context.networkID,
+    blockchainId: context.pBlockchainID,
+  };
+
+  if (dryRun) return { ...plan, dryRun: true, txId: null };
+
+  await addTxSignatures({ unsignedTx, privateKeys: [priv] });
+  const signed = unsignedTx.getSignedTx();
+  const { txID } = await api.issueSignedTx(signed);
+  return { ...plan, dryRun: false, txId: txID };
+}
+
 
 /** 容错会不会变？加成员时 n 增大，⌊n/4⌋ **可能不变** —— 这一条必须说出来（FR-037 / F-5）。 */
 export function toleranceChange(before, after) {
@@ -526,7 +880,15 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     process.exit(EXIT_OK);
   }
 
-  if (progress.step === 1) {
+  // **第二步不写链，所以 progress 永远不会等于 2。**
+  // 初版把第三步写成 progress.step === 2 的分支 —— 那个分支永远进不去。
+  // 进度从链上读的代价就在这里：不留痕迹的步骤在进度上是不可见的。
+  //
+  // 所以第二、三步合成**一次调用、两次确认**：先把聚合结果给人看，
+  // 再把费用给人看，最后才提交。这比分成两次更贴合每步之间停下来——
+  // 批准唯一那个写链动作之前，签名者数与费用都已摆在眼前。
+  // --aggregate-only 保留只聚合、不往下走，排查时用。
+  if (progress.step === 1 && args.includes('--aggregate-only')) {
     // 第二步：收集签名并聚合。**不写链** —— 失败可无代价重做，消息还在链上。
     const messageId = progress.registrationMessageID;
     if (!messageId) {
@@ -539,6 +901,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       r = await step2({
         config, identity, registrationMessageID: messageId,
         registeredCount: set.members.length,
+        members: memberCandidates({ config, memberSet: set }),
       });
     } catch (err) {
       console.error(`\n✗ 第二步失败：${err.message}`);
@@ -548,12 +911,108 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     console.error(`  经 ${r.via} 聚合（逐个验证者试，第一个给出有效结果的就用）`);
     console.error(`  签名者 ${r.signers}/${r.quorum.registeredCount} 个`
       + `（${r.quorum.percent}%，门槛 ${r.quorum.quorumNum}%），bitset ${r.bitsetHex}`);
+    if (r.signedBy) {
+      console.error(`  签了      ${r.signedBy.join('  ')}`);
+      console.error(`  没签      ${r.missing.join('  ') || '无（全员签名）'}`);
+      console.error('  （身份由聚合签名验签定出，**不是**从 bitset 的位序推的 ——'
+        + ' 位序推过两次，两次都错）');
+    }
     console.error(`  消息 ${r.unsignedBytes} → ${r.signedBytes} 字节（多出 ${r.signedBytes - r.unsignedBytes}：bitset + 96 字节 BLS 聚合签名）`);
     for (const a of r.attempts.filter((x) => !x.ok)) console.error(`  （${a.node} 没给出结果：${a.error}）`);
     console.error('\n**停在这里。** 第三步要把这条已签名的消息提交到 P 链（RegisterL1ValidatorTx）——');
     console.error('  那一步**花钱**（持续费用），且成功之后若第四步失败，链上会留下');
     console.error('  「P 链认了、合约没认」的中间态。');
     console.error('\n  这一步不写链，所以它的产物不落盘 —— 第三步会重新聚合一次（成本是毫秒级）。');
+    process.exit(EXIT_OK);
+  }
+  if (progress.step === 1) {
+    // 第三步：P 链交易。**四步里唯一花钱、且做错要收拾的一步。**
+    //
+    // 先干跑（构造 + 算费，不提交），把费用打出来再问一次 —— 「它会花钱」
+    // 和「它会花多少」是两句不同的话，而只有后者能让人做判断。
+    const declared = joinedValidators(config.validators.nodes)
+      .find((v) => v.identity.nodeId === nodeId);
+    const accounts = readJson('blockchain/accounts/dev-accounts.json').accounts;
+    const entry = accounts.find((a) => a.label === config.validators.ownerAccount);
+    if (!entry) {
+      console.error(`dev-accounts.json 里没有 label = ${config.validators.ownerAccount} 的账户`);
+      process.exit(EXIT_PRECHECK);
+    }
+
+    const set = await readMemberSet({ client });
+    let s2;
+    try {
+      s2 = await step2({
+        config, identity, registrationMessageID: progress.registrationMessageID,
+        registeredCount: set.members.length,
+        members: memberCandidates({ config, memberSet: set }),
+      });
+    } catch (err) {
+      console.error(`\n✗ 第三步需要第二步的聚合签名，而它失败了：${err.message}`);
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    // 既有成员的续费地址 —— 新成员必须跟它一致（见 step3 里那条断言）
+    const onP = await pchain('platform.getCurrentValidators', { subnetID: identity.subnetId });
+    let expectedPAddress; let balance;
+    try {
+      ({ expectedPAddress, balance } = payerExpectation(onP.validators));
+    } catch (err) {
+      console.error(`\n✗ ${err.message}`);
+      process.exit(EXIT_PRECHECK);
+    }
+
+    const args = {
+      config, identity, signedMessage: s2.signedMessage,
+      blsSignature: declared.identity.proofOfPossession,
+      privateKeyHex: entry.privateKey,
+      balance, expectedPAddress,
+      pchainUri: `http://${primary.address}:${primary.httpPort}`,
+    };
+
+    let plan;
+    try {
+      plan = await step3({ ...args, dryRun: true });
+    } catch (err) {
+      console.error(`\n✗ 第三步的**构造**阶段失败（还没碰链）：${err.message}`);
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    console.error('\n干跑（已构造、已算费，**尚未提交**）：');
+    console.error(`  付款地址    ${plan.pAddress}（与既有成员的续费地址一致）`);
+    console.error(`  给新成员    ${plan.balance} nAVAX = ${Number(plan.balance) / 1e9} AVAX（与既有成员相同）`);
+    console.error(`  交易费      ${plan.fee} nAVAX = ${Number(plan.fee) / 1e9} AVAX`);
+    console.error(`  动用 UTXO   ${plan.utxoCount} 个，花 ${plan.spent}、找零 ${plan.change}`);
+    console.error(`  签名者      ${s2.signers}/${s2.quorum.registeredCount}（${s2.quorum.percent}%，门槛 ${s2.quorum.quorumNum}%）`);
+    if (s2.signedBy) {
+      console.error(`  签了        ${s2.signedBy.join('  ')}`);
+      console.error(`  没签        ${s2.missing.join('  ') || '无（全员签名）'}`);
+    }
+    console.error('\n**提交之后**：成员进入 P 链的权益集合。若随后第四步失败，');
+    console.error('  链上会是「P 链认了、合约没认」—— 可用 resendRegisterValidatorMessage 重试，');
+    console.error('  而本命令再跑一次会准确报出"停在第四步"。');
+
+    if (!autoYes && !(await ask('\n**提交这笔 P 链交易？**'))) {
+      console.error('已中止 —— 只做了构造与算费，链未改动。');
+      process.exit(EXIT_ABORTED);
+    }
+
+    let r;
+    try {
+      r = await step3(args);
+    } catch (err) {
+      console.error(`\n✗ 第三步失败：${err.message}`);
+      console.error('  若失败发生在**提交**阶段，去 P 链核一下这个 nodeID 有没有被收录：');
+      console.error('  再跑一次本命令，它会从链上读出真实进度。');
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    console.error('\n✅ 第三步完成');
+    console.error(`  P 链交易    ${r.txId}`);
+    console.error(`  花费        balance ${r.balance} + 手续费 ${r.fee} nAVAX`);
+    console.error('\n**停在这里。** 第四步要把 P 链发回的确认消息交给合约');
+    console.error('  （completeValidatorRegistration）—— 那条消息要由**两个 Primary**签名。');
+    console.error('  再跑一次本命令即可继续。');
     process.exit(EXIT_OK);
   }
   console.error(`\n第 ${progress.step + 1} 步的实现尚未落地（T027 进行中）。`);

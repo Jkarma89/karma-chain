@@ -32,6 +32,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProtocol, deriveTopology, REPO_ROOT } from '../protocol/load.mjs';
+import { readRegisteredMembers } from '../membership/member-set.mjs';
+// 容错收敛到链上成员的判定只有一份，在面板那边（T073）。
+// 这里引用它而不是再写一遍 —— 同一个判定有两份实现，迟早会各自漂移。
+import { scopeToChainMembers } from '../dashboard/snapshot.mjs';
 
 const CONTAINERS_PATH = resolve(REPO_ROOT, '.devnet', 'containers.json');
 const IDENTITY_DIR = resolve(REPO_ROOT, 'blockchain', 'nodes');
@@ -147,37 +151,77 @@ export function classify(node, ctx) {
   return out('stopped', `同边界的其他节点在应答，只有本节点不应答 —— 节点级故障`);
 }
 
-/** 在线数与容错上限的关系。契约第 3 条。 */
-export function summarize(rows, faultTolerance) {
+/**
+ * 在线数与容错上限的关系。契约第 3 条。
+ *
+ * ## 两处措辞是实测逼出来的
+ *
+ * **① n 必须是链上注册数。** 2026-09-15：声明 6（l1-6 已写进 descriptor 但还没注册完）
+ * / 链上 5 / 在线 4 → 按声明算出「超出上限，链已停止出块」，而同一次
+ * `devnet-verify` 里三行之后就是 `block-production 977 -> 978 -> 979`。
+ * 一条自相矛盾的报告比没有报告更坏 —— 它训练人忽略这个工具。
+ * 收敛由 `scopeToChainMembers` 做（只有一份），本函数只接受它的结果。
+ *
+ * **② 不断言没测过的事。** "链已停止出块"是**推断**，不是观测。
+ * 而本函数手上恰好有观测：两次采样之间高度有没有涨。
+ *   涨了 → 判据与现实矛盾，要报的是**矛盾本身**（成员集合或谓词错了），不是停摆
+ *   没涨 → 说不出停没停：本网按需出块，闲着时高度本来就不涨
+ *
+ * @param {object} observed `{ blocksAdvanced: boolean|null }` —— 采样窗口内高度涨没涨
+ */
+export function summarize(rows, faultTolerance, observed = {}) {
   const counted = rows.filter((r) => r.countsTowardTolerance);
   const offline = counted.filter((r) => r.countsAsOffline);
   const total = faultTolerance.validatorCount;
   const max = faultTolerance.maxOfflineValidators;
-  // 分子分母都以**声明的**验证者总数为基准（契约示例即"4/5"）：
+  // 分子分母都以**注册的**验证者总数为基准（契约示例即"4/5"）：
   // 拿观测到的行数当分母，会在少了一行时把缺失悄悄算成在线。
   const online = total - offline.length;
   const withinTolerance = offline.length <= max;
   const margin = Math.max(0, max - offline.length);
+  const declared = faultTolerance.declaredValidatorCount;
 
   let line = `${online}/${total} 验证者在线（上限：可容忍 ${max} 个离线）`;
-  // 观测行数与声明不符本身就是异常，必须说出来而不是让算式吸收掉
+  // 声明多于链上注册是正常的中间态（有成员正在加入），但必须说出来 ——
+  // 否则"6 个机器却按 5 算"看着像少算了一个。
+  if (Number.isFinite(declared) && declared !== total) {
+    line += ` [按链上注册的 ${total} 个算；声明 ${declared} 个，差额是尚未注册完的成员]`;
+  }
+  // 观测行数与基准不符本身就是异常，必须说出来而不是让算式吸收掉
   if (counted.length !== total) {
-    line += ` [注意：只观测到 ${counted.length} 个验证者节点，声明为 ${total} 个]`;
+    line += ` [注意：只观测到 ${counted.length} 个计入容错的验证者，基准为 ${total} 个]`;
   }
   if (!withinTolerance) {
-    line += ` —— **超出上限**：${offline.map((r) => r.id).join('、')} 离线，链已停止出块`
-      + '（安全停摆：不分叉、区块零回滚，恢复后自动继续）';
+    const who = offline.map((r) => r.id).join('、');
+    line += observed.blocksAdvanced === true
+      ? ` —— **判据与观测矛盾**：按参数算已超出上限（${who} 离线），`
+        + '但采样窗口内高度**还在上涨**。要查的是判据，不是链：'
+        + '成员集合是不是算错了（声明 vs 链上注册），或者离线谓词把在跑的节点判成了离线。'
+      : ` —— **超出上限**：${who} 离线，按共识参数**推断**已停止出块`
+        + '（安全停摆：不分叉、区块零回滚，恢复后自动继续）。'
+        + '本次未观测到出块，而本网按需出块 —— 闲着时高度不涨，所以这不是停摆的证据。';
   } else if (margin === 0) {
-    line += ` —— 链继续出块，但**余量为 0**：再有一个验证者离线即停摆`;
+    line += ' —— 链继续出块，但**余量为 0**：再有一个验证者离线即停摆';
   } else {
     line += ` —— 链继续出块，余量 ${margin}`;
   }
-  return { online, offline: offline.length, offlineIds: offline.map((r) => r.id), withinTolerance, margin, line };
+  return {
+    online,
+    offline: offline.length,
+    offlineIds: offline.map((r) => r.id),
+    withinTolerance,
+    margin,
+    line,
+    // 判据与观测矛盾时，调用方不该把它当成"链挂了"来报
+    contradiction: !withinTolerance && observed.blocksAdvanced === true,
+  };
 }
 
 /** 渲染人读表格。 */
 export function formatReport(rows, meta) {
-  const s = summarize(rows, meta.faultTolerance);
+  // 观测也要传给它 —— 否则人读的这份报告会在"越限但高度在涨"时
+  // 仍旧说"已停止出块"，而 JSON 那份说的是矛盾。同一次运行两种说法，更坏。
+  const s = summarize(rows, meta.faultTolerance, { blocksAdvanced: meta.blocksAdvanced ?? null });
   const dash = '—';
   const w = (v, n) => String(v).padEnd(n);
   const r = (v, n) => String(v).padStart(n);
@@ -333,17 +377,39 @@ export async function collect(opts = parseArgs()) {
     });
     return {
       id: n.id, role: n.role, domain: n.domain, address: n.address,
+      // 观测优先、声明兜底 —— 与 poll.mjs 同一条理由：容错问的是
+      // "现在跑着的这个节点算不算共识成员"，所以身份不符的节点不该被算进去。
+      // 离线节点观测不到 NodeID，但声明值仍在制品里，所以它照样能被认出来。
+      nodeId: second[i].nodeId ?? n.nodeId ?? null,
       height: second[i].height ?? null, peers: second[i].peers ?? null,
       ...c,
     };
   });
 
+  // 容错的 n 收敛到**链上注册成员**（T073）。读不到就不收敛，并在
+  // summarize 里如实说基准是哪一个 —— 退回声明是 V-31 那个假警报的成因。
+  const memberSet = await readRegisteredMembers({
+    rpcUrl: process.env.KARMACHAIN_RPC_URL
+      ?? `http://127.0.0.1:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`,
+  });
+  const scoped = scopeToChainMembers({ rows, faultTolerance: d.faultTolerance, memberSet });
+
+  // 采样窗口内高度涨没涨 —— summarize 用它避免断言"链已停止出块"。
+  // 只看**可达节点的最大高度**：单个节点落后是它自己的事，链在不在出块看全网。
+  const firstHeights = first.map((x) => x.height).filter((h) => Number.isFinite(h));
+  const prevNetworkHeight = firstHeights.length ? Math.max(...firstHeights) : null;
+  const blocksAdvanced = (networkHeight === null || prevNetworkHeight === null)
+    ? null
+    : networkHeight > prevNetworkHeight;
+
   return {
     deployment: name,
     height: networkHeight,
-    faultTolerance: d.faultTolerance,
-    nodes: rows,
-    summary: summarize(rows, d.faultTolerance),
+    memberSet: { source: memberSet.source, scoped: scoped.scoped, error: memberSet.error ?? null },
+    blocksAdvanced,
+    faultTolerance: scoped.faultTolerance,
+    nodes: scoped.rows,
+    summary: summarize(scoped.rows, scoped.faultTolerance, { blocksAdvanced }),
   };
 }
 
