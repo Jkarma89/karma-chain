@@ -3,7 +3,7 @@
 // 本组测试保证：ARG 默认值不偏离 binaries.env，版本号不偏离 protocol.json。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, globSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProtocol, REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -17,8 +17,21 @@ const ENV = Object.fromEntries(
     .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)]),
 );
 
-/** 仓库中会下载二进制的 Dockerfile。001 的 docker/devnet 已于 T080 退役。 */
-const DOCKERFILES = ['docker/bootstrap/Dockerfile', 'docker/node/Dockerfile'];
+/**
+ * 仓库中会下载二进制的 Dockerfile —— **扫出来的，不是写死的**。
+ *
+ * 原先是一份手写清单 `['docker/bootstrap/Dockerfile', 'docker/node/Dockerfile']`。
+ * 2026-09-16 加 docker/aggregator/Dockerfile 时发现：新文件从这份清单眼皮底下
+ * 溜过去了，一条校验值都没被比对 —— 而它恰恰也在下载并校验二进制。
+ * **一份要靠人记得更新的清单，不算守卫。**
+ *
+ * 判据改成「含有 SHA_ 开头的 ARG」：那正是"这个 Dockerfile 要下载并校验二进制"的
+ * 客观标志。001 的 docker/devnet 已于 T080 退役，自然不在扫描结果里。
+ */
+const DOCKERFILES = globSync('docker/*/Dockerfile', { cwd: REPO_ROOT })
+  .map((p) => p.replace(/\\/g, '/'))
+  .filter((p) => /^ARG SHA_/m.test(readFileSync(resolve(REPO_ROOT, p), 'utf8')))
+  .sort();
 
 const argsOf = (path) => Object.fromEntries(
   [...readFileSync(resolve(REPO_ROOT, path), 'utf8').matchAll(/^ARG ([A-Z][A-Z0-9_]*)=(\S+)$/gm)]
