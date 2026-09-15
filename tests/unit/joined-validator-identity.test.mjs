@@ -44,6 +44,7 @@ const JOINED = Object.freeze({
   origin: 'joined',
   nodeId: `NodeID-${cb58Encode(Buffer.from(h('probe-node-6-cert').slice(0, 40), 'hex'))}`,
   blsPublicKey: `0x${(h('probe-bls-a') + h('probe-bls-b')).slice(0, 96)}`,
+  proofOfPossession: `0x${(h('probe-pop-a') + h('probe-pop-b') + h('probe-pop-c')).slice(0, 192)}`,
   certSha256: h('probe-cert'),
   keySha256: h('probe-key'),
   signerSha256: h('probe-signer'),

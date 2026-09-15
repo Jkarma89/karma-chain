@@ -157,7 +157,7 @@ cat > "${KEYDIR}/README.md" <<EOF
 
 **本目录的私钥不进版本库。** 与 node-1…node-5 不同：那几个按宪法第四条 v1.1.0 例外条款
 提交入库；而功能 005 起，**创世之后加入**的验证者，私钥必须在目标机器上生成并留在本机。
-只有公开材料（NodeID / BLS 公钥 / 三个 sha256 指纹）进 blockchain/deployment.json。
+只有公开材料进 blockchain/deployment.json：NodeID、BLS 公钥、**proof of possession**、三个 sha256 指纹。
 
 | 项 | 值 |
 |---|---|
@@ -191,14 +191,16 @@ jq -n \
        certSha256: $cert,
        keySha256: $key,
        signerSha256: $signer,
+       proofOfPossession: $pop,
        reportedBy: $by,
        reportedAt: $at
-     },
-     proofOfPossession: $pop
+     }
    }'
 echo "" >&2
 echo "说明：" >&2
 echo "  - identity 那一块直接进 blockchain/deployment.json 的 validators.nodes[] 对应项" >&2
-echo "  - proofOfPossession 不进 descriptor —— 合约的 initiateValidatorRegistration 只收" >&2
-echo "    nodeID 与 blsPublicKey。它在这里只为留档：若 P 链那一步需要 PoP，材料现成" >&2
+echo "  - proofOfPossession **在 identity 块里，必须一起贴** —— P 链的" >&2
+echo "    RegisterL1ValidatorTx 要它来验证这个 BLS 公钥确实由持有私钥的人声明。" >&2
+echo "    （初版把它列在 identity 之外并注明\"只为留档\"，那是个失误：" >&2
+echo "     写注册第三步时才发现它是必需的。少了它，流程会走到花钱那一步才失败。）" >&2
 echo "  - 三个 sha256 是**文件指纹**，容器启动时用它们确认挂进去的是同一份材料" >&2

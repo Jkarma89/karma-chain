@@ -74,6 +74,7 @@ const declaredOf = (seeds) => seeds.map((seed, i) => ({
     origin: 'joined',
     nodeId: nodeIdOf(seed),
     blsPublicKey: `0x${(keccak256(toHex(`bls-a:${seed}`)) + keccak256(toHex(`bls-b:${seed}`))).replace(/0x/g, '').slice(0, 96)}`,
+    proofOfPossession: `0x${[1, 2, 3].map((i) => keccak256(toHex(`pop-${i}:${seed}`))).join('').replace(/0x/g, '').slice(0, 192)}`,
     certSha256: keccak256(toHex(`cert:${seed}`)).slice(2),
     keySha256: keccak256(toHex(`key:${seed}`)).slice(2),
     signerSha256: keccak256(toHex(`signer:${seed}`)).slice(2),

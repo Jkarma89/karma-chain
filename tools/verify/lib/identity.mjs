@@ -174,7 +174,11 @@ export function identityFromKeyDir(keyDir) {
  */
 export function identityOf(v) {
   if (v.identity) {
-    const missing = ['nodeId', 'blsPublicKey', 'certSha256', 'keySha256', 'signerSha256']
+    // `proofOfPossession` 也在必需之列：P 链的 `RegisterL1ValidatorTx` 要它
+    // （avalanchejs 的 `newRegisterL1ValidatorTx` 有一个 `blsSignature` 参数）。
+    // 当初把它列为"只为留档"是个失误 —— 少了它会通过这里，而在注册第三步才炸，
+    // 那时已经走到花钱的那一步了。
+    const missing = ['nodeId', 'blsPublicKey', 'proofOfPossession', 'certSha256', 'keySha256', 'signerSha256']
       .filter((k) => !v.identity[k]);
     if (missing.length) {
       throw new Error(`validators.nodes[${v.index}].identity 缺字段：${missing.join(', ')} —— `
