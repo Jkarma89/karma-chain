@@ -108,7 +108,12 @@ export function memberSetFromLogs(logs) {
         origin: eventName === 'RegisteredInitialValidator' ? 'genesis' : 'joined',
         at,
       });
-      history.push({ eventName, validationID: args.validationID, nodeId, at });
+      // registrationMessageID 只有 Initiated 事件带 —— 第二步要用它去聚合签名，
+      // 而进度是从链上读的，所以它必须能从事件里恢复，不能靠上一次运行传下来。
+      history.push({
+        eventName, validationID: args.validationID, nodeId, at,
+        registrationMessageID: args.registrationMessageID ?? null,
+      });
       continue;
     }
 

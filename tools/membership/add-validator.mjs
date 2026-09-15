@@ -39,7 +39,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
-import { identityOf, joinedValidators, nodeIdToBytes } from '../verify/lib/identity.mjs';
+import {
+  identityOf, joinedValidators, nodeIdToBytes, cb58Encode,
+} from '../verify/lib/identity.mjs';
 import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, TOPICS, STATUS,
   readMemberSet, classifyDrift, nodeIdFromBytes20,
@@ -70,7 +72,7 @@ export async function assessProgress({ client, pchain, nodeId, subnetId }) {
   if (!initiated) {
     return { step: 0, nodeId, validationID: null, notes: ['合约上没有这个 nodeID 的注册记录'] };
   }
-  const { validationID } = initiated;
+  const { validationID, registrationMessageID } = initiated;
   notes.push(`① 已发起：validationID = ${validationID}`);
 
   // ④ 合约侧是否已确认（放在 ③ 之前查：④ 成立必然蕴含 ③ 成立）
@@ -80,7 +82,7 @@ export async function assessProgress({ client, pchain, nodeId, subnetId }) {
   });
   if (Number(v.status) === STATUS_ACTIVE) {
     notes.push(`④ 合约侧已确认：status = ${Number(v.status)}（${STATUS[Number(v.status)]}），weight = ${v.weight}`);
-    return { step: 4, nodeId, validationID, notes };
+    return { step: 4, nodeId, validationID, registrationMessageID, notes };
   }
   notes.push(`④ 合约侧**未**确认：status = ${Number(v.status)}（${STATUS[Number(v.status)] ?? '未知'}）`);
 
@@ -89,10 +91,10 @@ export async function assessProgress({ client, pchain, nodeId, subnetId }) {
   const inP = (onP.validators ?? []).some((x) => x.nodeID === nodeId);
   if (inP) {
     notes.push('③ P 链已收录 —— **停在第四步**：P 链认了、合约还没认');
-    return { step: 3, nodeId, validationID, notes };
+    return { step: 3, nodeId, validationID, registrationMessageID, notes };
   }
   notes.push('③ P 链**未**收录');
-  return { step: 1, nodeId, validationID, notes };
+  return { step: 1, nodeId, validationID, registrationMessageID, notes };
 }
 
 /**
@@ -264,6 +266,131 @@ export async function step1({ client, pchain, nodeId, config, subnetId, ownerAcc
   };
 }
 
+/** Warp 消息 ID：合约事件给的是 32 字节 hex，而 Warp API 要的是 **CB58**。 */
+export const messageIdToCb58 = (hex) => cb58Encode(Buffer.from(hex.replace(/^0x/, ''), 'hex'));
+
+/**
+ * 从一条已签名的 Warp 消息里数出**有多少个验证者签了名**。
+ *
+ * 结构（avalanchego 的 warp 包）：未签名消息 ‖ 签名类型(4) ‖ bitset 长度(4) ‖ bitset ‖ BLS 聚合签名(96)。
+ * bitset 里置位的个数就是签名者数。
+ *
+ * 为什么要数：**"返回了一条消息"不等于"聚合到了签名"**。若 API 因为某种原因
+ * 把未签名消息原样返回，我们会带着一条 P 链必然拒绝的消息走到第三步 ——
+ * 而第三步是花钱且会留下中间态的那一步。
+ */
+export function countSigners(signedHex, unsignedHex) {
+  const signed = Buffer.from(signedHex.replace(/^0x/, ''), 'hex');
+  const unsigned = Buffer.from(unsignedHex.replace(/^0x/, ''), 'hex');
+  if (signed.length <= unsigned.length) {
+    throw new Error(`聚合后的消息（${signed.length} 字节）不比未签名的（${unsigned.length} 字节）长`
+      + ' —— 没有附上任何签名。带着它走到第三步，P 链会拒绝，而那一步是花钱的。');
+  }
+  const sig = signed.subarray(unsigned.length);
+  // 4 字节类型 + 4 字节 bitset 长度 + bitset + 96 字节签名
+  if (sig.length < 4 + 4 + 1 + 96) {
+    throw new Error(`签名段只有 ${sig.length} 字节，装不下 bitset 加 96 字节 BLS 签名`);
+  }
+  const bitsetLen = sig.readUInt32BE(4);
+  const bitset = sig.subarray(8, 8 + bitsetLen);
+  let signers = 0;
+  for (const b of bitset) for (let i = 0; i < 8; i += 1) if (b & (1 << i)) signers += 1;
+  return { signers, bitsetHex: `0x${bitset.toString('hex')}`, signatureBytes: sig.length - 8 - bitsetLen };
+}
+
+/**
+ * 聚合到的签名权重够不够 quorum 门槛。
+ *
+ * ## 这条是实测逼出来的（2026-09-15）
+ *
+ * `warp_getMessageAggregateSignature` 传了 `quorumNum = 67`，**它照样返回了一条
+ * 只有 3 个签名者的消息** —— 五个等权验证者，3/5 = 60% < 67%。
+ * 也就是说那个参数不是它的硬门槛，**返回成功不代表达到了门槛**。
+ *
+ * 带着一条不够门槛的消息走到第三步，P 链会拒绝 —— 而第三步是四步里唯一花钱、
+ * 且成功之后若第四步失败会留下中间态的那一步。所以门槛必须在这边自己验。
+ *
+ * 按**个数**折算权重成立的前提是**等权**（research V-22 实测五个各 100，
+ * 且 step1Inputs 在权重不等时就已经拦下了）。
+ */
+export function meetsQuorum({ signers, registeredCount, quorumNum }) {
+  if (!registeredCount) throw new Error('registeredCount 为 0 —— 算不出权重占比');
+  const percent = Math.floor((signers * 100) / registeredCount);
+  return { ok: percent >= quorumNum, percent, signers, registeredCount, quorumNum };
+}
+
+/**
+ * 第二步：把第一步发出的 Warp 消息拿去**收集 L1 验证者的 BLS 签名并聚合**。
+ *
+ * **这一步不写链。** 聚合签名是临时产物 —— 消息还在链上，失败可以无代价重做。
+ * 所以它既不需要记账，也不会留下中间态。
+ *
+ * 逐个验证者试，**第一个给出有效结果的就用**。不是冗余设计过度：
+ * 2026-09-15 实测 win-1 上的节点在这个调用上**挂住 45 秒**（同一台机器的第四次
+ * 网络故障，前三次分别是入站端口空回复两次、出站连不上一次），
+ * 而 ubuntu-1 / ubuntu-2 在 50 毫秒内返回。钉在单个节点上就会被这台机器拖死。
+ *
+ * @param {number} quorumNum 权重门槛的分子，取自链配置的 `quorumNumerator`（实测 67）
+ */
+export async function step2({
+  config, identity, registrationMessageID, registeredCount,
+  quorumNum = 67, timeoutMs = 45_000,
+}) {
+  if (!registeredCount) throw new Error('step2 需要 registeredCount（链上注册的成员数）来折算权重占比');
+  const d = deriveTopology(config);
+  const validators = d.topologyNodes.filter((n) => n.role === 'l1-validator');
+  const messageId = messageIdToCb58(registrationMessageID);
+  const attempts = [];
+
+  const call = async (node, method, params) => {
+    const r = await fetch(`http://${node.address}:${node.httpPort}/ext/bc/${identity.blockchainId}/rpc`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message);
+    return j.result;
+  };
+
+  for (const node of validators) {
+    try {
+      const unsigned = await call(node, 'warp_getMessage', [messageId]);
+      const signed = await call(node, 'warp_getMessageAggregateSignature',
+        [messageId, quorumNum, identity.subnetId]);
+      const counted = countSigners(signed, unsigned);
+      if (counted.signers < 1) throw new Error('bitset 里一个签名者都没有');
+      // **门槛要自己验** —— 实测那个 quorumNum 参数不是硬门槛（见 meetsQuorum 的注释）
+      const q = meetsQuorum({ signers: counted.signers, registeredCount, quorumNum });
+      if (!q.ok) {
+        throw new Error(`只聚合到 ${q.signers}/${q.registeredCount} 个签名者（${q.percent}%），`
+          + `低于 quorum 门槛 ${q.quorumNum}% —— 这条消息 P 链会拒绝。`
+          + ' 常见成因：某些验证者离线，或消息还没传到它们那里（稍等再试）。');
+      }
+      attempts.push({ node: node.id, ok: true, ...counted });
+      return {
+        messageId,
+        signedMessage: signed,
+        unsignedBytes: (unsigned.length - 2) / 2,
+        signedBytes: (signed.length - 2) / 2,
+        via: node.id,
+        ...counted,
+        quorum: q,
+        attempts,
+      };
+    } catch (err) {
+      attempts.push({ node: node.id, ok: false, error: err.message.slice(0, 120) });
+    }
+  }
+
+  throw new Error('没有任何验证者给出可用的聚合签名：\n'
+    + attempts.map((a) => `  ${a.node}: ${a.error}`).join('\n')
+    + '\n  这一步不写链，修好之后直接重跑即可。'
+    + '\n  常见成因：某个节点的 Warp API 没开（看它日志里 WarpAPIEnabled），'
+    + '或在线权重不到 quorum 门槛。');
+}
+
 /** 容错会不会变？加成员时 n 增大，⌊n/4⌋ **可能不变** —— 这一条必须说出来（FR-037 / F-5）。 */
 export function toleranceChange(before, after) {
   const f = (n) => Math.floor(n / 4);
@@ -399,6 +526,36 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     process.exit(EXIT_OK);
   }
 
+  if (progress.step === 1) {
+    // 第二步：收集签名并聚合。**不写链** —— 失败可无代价重做，消息还在链上。
+    const messageId = progress.registrationMessageID;
+    if (!messageId) {
+      console.error('\n✗ 第一步的事件里没有 registrationMessageID —— 无法进行第二步。');
+      process.exit(EXIT_STEP_FAILED);
+    }
+    let r;
+    try {
+      const set = await readMemberSet({ client });
+      r = await step2({
+        config, identity, registrationMessageID: messageId,
+        registeredCount: set.members.length,
+      });
+    } catch (err) {
+      console.error(`\n✗ 第二步失败：${err.message}`);
+      process.exit(EXIT_STEP_FAILED);
+    }
+    console.error('\n✅ 第二步完成');
+    console.error(`  经 ${r.via} 聚合（逐个验证者试，第一个给出有效结果的就用）`);
+    console.error(`  签名者 ${r.signers}/${r.quorum.registeredCount} 个`
+      + `（${r.quorum.percent}%，门槛 ${r.quorum.quorumNum}%），bitset ${r.bitsetHex}`);
+    console.error(`  消息 ${r.unsignedBytes} → ${r.signedBytes} 字节（多出 ${r.signedBytes - r.unsignedBytes}：bitset + 96 字节 BLS 聚合签名）`);
+    for (const a of r.attempts.filter((x) => !x.ok)) console.error(`  （${a.node} 没给出结果：${a.error}）`);
+    console.error('\n**停在这里。** 第三步要把这条已签名的消息提交到 P 链（RegisterL1ValidatorTx）——');
+    console.error('  那一步**花钱**（持续费用），且成功之后若第四步失败，链上会留下');
+    console.error('  「P 链认了、合约没认」的中间态。');
+    console.error('\n  这一步不写链，所以它的产物不落盘 —— 第三步会重新聚合一次（成本是毫秒级）。');
+    process.exit(EXIT_OK);
+  }
   console.error(`\n第 ${progress.step + 1} 步的实现尚未落地（T027 进行中）。`);
   console.error('这条路径刻意不"先跑起来再说"：写链的代码没有经过变红检查之前，'
     + '不该有机会真的发出交易。');
