@@ -14,6 +14,11 @@
 /** 档位取值。三个健康度档位 + 两个"此刻不该用健康度回答"的状态（FR-007）。 */
 export const TIERS = Object.freeze({
   OBSERVER_BLIND: 'observer-blind',
+  // 功能 005 / T073：读不到链上成员集合时的档位。
+  // **不退回声明去凑一个结论** —— 那正是 research V-31 那次假警报的成因
+  // （声明 6 / 链上 5 / 在线 4 → 按声明算出「链已停止」，而链在正常出块）。
+  // 宁可承认不知道，也不要给出一个看起来确定的错结论。
+  MEMBERS_UNKNOWN: 'members-unknown',
   STARTING: 'starting',
   STOPPED: 'stopped',
   ZERO_MARGIN: 'zero-margin',
@@ -166,6 +171,94 @@ function deriveDomainMargin(faultTolerance, alreadyDown) {
 }
 
 /**
+ * 把容错判据**收敛到链上注册的成员**（功能 005 / T073）。
+ *
+ * ## 为什么必须这么做：实测到的假警报
+ *
+ * 2026-09-15 的状态：声明 6 个验证者（l1-6 已声明、未注册、未启动）、
+ * 链上注册 5 个、win-2 整机离线导致 l1-2 缺席。面板按**声明的 6 个**算：
+ *
+ *   threshold = 6 - ⌊6/4⌋ = 5，participating = 4 < 5 → 判定「链已停止出块」
+ *
+ * **而链一直在出块** —— 一笔探测交易在区块 975 确认，耗时 8.7 秒。
+ * 真实账是 5 个注册成员掉 1 个 = 80% ≥ 75%，仍在门槛之上（research V-31）。
+ *
+ * 这不是"数字不准"，是**结论方向错了**。假警报会让人去排查一个不存在的故障，
+ * 而反复的假警报会训练人忽略面板 —— 那比少一个告警更坏。
+ *
+ * ## 谁是共识集合：链上，不是声明
+ *
+ * 功能 005 之后成员运行期可变，**声明只是"我们打算有几个"**（data-model 第 2 节）。
+ * 容错判据问的是"再掉几个就停摆"，那只能按**链上真正带权重的成员**算。
+ * 声明与链上的差额是**漂移**，单独呈现（FR-030），不该混进容错结论。
+ *
+ * ## 读不到链上成员时：说"不知道"，不要拿声明凑
+ *
+ * 退回声明正是上面那个假警报的成因。`source !== 'chain'` 时本函数**原样返回**，
+ * 并让调用方据此把档位判成"成员集合未知" —— 宁可承认不知道，
+ * 也不要给出一个看起来确定的错结论。
+ *
+ * @param {object[]} rows                    已 enrich 的节点行（带 nodeId 与 domain）
+ * @param {object}   faultTolerance          按**声明**派生的容错（deriveTopology 的输出）
+ * @param {{source:'chain', registeredNodeIds:string[]}|{source:'unknown', error?:string}} memberSet
+ */
+export function scopeToChainMembers({ rows, faultTolerance, memberSet }) {
+  if (memberSet?.source !== 'chain') {
+    return {
+      rows: rows.map((r) => ({ ...r, registeredOnChain: null })),
+      faultTolerance,
+      scoped: false,
+    };
+  }
+
+  const registered = new Set(memberSet.registeredNodeIds);
+
+  // 逐行判"这一行对应的节点在链上注册了吗"。
+  // 用的是 `row.nodeId` —— poll.mjs 里它是**观测到的** NodeID，取不到时回落到声明值。
+  // 观测优先是对的：容错问的是"现在跑着的这个节点算不算共识成员"，
+  // 所以身份不符的节点应当**不**计入（它跑的不是我们注册的那个身份），
+  // 而那种情形本来就另有 identity-mismatch 报出来。
+  const scopedRows = rows.map((r) => {
+    if (!r.countsTowardTolerance) return { ...r, registeredOnChain: null };  // Primary 本就不计
+    const isRegistered = r.nodeId ? registered.has(r.nodeId) : null;
+    return {
+      ...r,
+      registeredOnChain: isRegistered,
+      // **未注册的声明成员不参与容错判据**。它照旧显示（见 view-nodes 的分组），
+      // 但不进分子也不进分母 —— 它还不是共识成员，把它算进去就是上面那个假警报。
+      countsTowardTolerance: isRegistered === true,
+    };
+  });
+
+  // n 取**链上注册数**，不是声明数，也不是行数。
+  //
+  // 不用行数的理由沿用 deriveTier 里那条：拿观测行数当分母，会在少了一行时
+  // 把缺失悄悄算成在线。链上注册了 5 个而只看见 4 行时，第 5 个应当算**不参与**。
+  const n = registered.size;
+  const maxOfflineValidators = Math.floor(n / 4);
+
+  // 有效边界的验证者数也要收敛 —— 否则某个只有"已声明未注册"验证者的边界
+  // 会贡献一个不存在的余量。按 scopedRows 的 domain 重新数。
+  const effectiveDomains = (faultTolerance.effectiveDomains ?? []).map((g) => ({
+    ...g,
+    validators: scopedRows.filter((r) => r.countsTowardTolerance && g.ids.includes(r.domain)).length,
+  }));
+
+  return {
+    rows: scopedRows,
+    faultTolerance: {
+      ...faultTolerance,
+      validatorCount: n,
+      maxOfflineValidators,
+      effectiveDomains,
+      // 保留声明侧的数字，供呈现"声明 6 / 链上 5"这种差额用
+      declaredValidatorCount: faultTolerance.validatorCount,
+    },
+    scoped: true,
+  };
+}
+
+/**
  * 档位、百分比与两个余量。
  *
  * **判定顺序是严格优先级，不得调换**（契约第 3 节）。每一条调换的后果都写在下面，
@@ -181,7 +274,7 @@ function deriveDomainMargin(faultTolerance, alreadyDown) {
  * maxOfflineValidators 算出。80% / 60% 是 n=5,f=1 时的**结果**，不是输入 ——
  * n=9,f=2 时同一判定式给出 78% / 67%（契约第 4b 节）。
  */
-export function deriveTier({ rows, faultTolerance, observer }) {
+export function deriveTier({ rows, faultTolerance, observer, memberSet }) {
   const { validatorCount, maxOfflineValidators } = faultTolerance;
   const counted = rows.filter((r) => r.countsTowardTolerance);
   const notParticipating = counted.filter((r) => !participatesInConsensus(r));
@@ -201,6 +294,11 @@ export function deriveTier({ rows, faultTolerance, observer }) {
     // seenByPeers 为空、每边界 domainAllUnreachable → 验证者全判离线 → 落进 P3
     // 报「链已停止」。**这正是 FR-020 明令禁止的假报警，也是既有代码孤立使用时的默认行为。**
     if (observer?.blind ?? (observer?.reachableNodes === 0)) return TIERS.OBSERVER_BLIND;
+
+    // P1b —— 紧随观察者失明之后，且必须**先于**所有数值判据。
+    // 两者同类：都是"我们看不见"，不是"链坏了"。读不到链上成员集合时，
+    // 下面每一条数值判据的 n 都只能取自声明，而那会算出 V-31 那个假警报。
+    if (memberSet && memberSet.source !== 'chain') return TIERS.MEMBERS_UNKNOWN;
 
     if (participating < threshold) {
       // P2 —— 必须先于 P3。若放到 P3 之后：跨机分批启动期间报「链已停止」，
@@ -379,11 +477,17 @@ export function enrichRows({ rows, networkHeight, baselineGenesisHash }) {
 export function buildSnapshot({
   collectedAt, pollIntervalMs, deployment, networkHeight,
   rows, faultTolerance, observer, chain, baselineGenesisHash,
-  containerFacts, summaryLine,
+  containerFacts, summaryLine, memberSet,
 }) {
-  const enriched = enrichRows({ rows, networkHeight, baselineGenesisHash });
+  const enrichedAll = enrichRows({ rows, networkHeight, baselineGenesisHash });
+  // **容错判据必须先收敛到链上注册的成员**（T073 / research V-31）。
+  // 放在 deriveTier 之前，是因为 tier 的每一条数值判据都要用收敛后的 n。
+  const scope = scopeToChainMembers({ rows: enrichedAll, faultTolerance, memberSet });
+  const enriched = scope.rows;
   const chainIdentity = buildChainIdentity({ chain, baselineGenesisHash, rows: enriched });
-  const tierInfo = deriveTier({ rows: enriched, faultTolerance, observer });
+  const tierInfo = deriveTier({
+    rows: enriched, faultTolerance: scope.faultTolerance, observer, memberSet,
+  });
   // 恢复能力在档位**之后**算，且 deriveTier 不读它 —— 单向依赖，档位不受影响（FR-013）
   const recoveryCapability = deriveRecoveryCapability({ rows: enriched, tier: tierInfo.tier });
   const incidents = buildIncidents({

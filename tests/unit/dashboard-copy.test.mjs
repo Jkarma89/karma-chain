@@ -14,6 +14,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { TIER_COPY, tierCopy, INCIDENT_COPY } from '../../tools/dashboard/public/copy.mjs';
+import { TIERS } from '../../tools/dashboard/snapshot.mjs';
 
 /** "链已停止"及其同义表述 —— 只在 stopped 档允许出现。 */
 const CHAIN_STOPPED = /链已停止|链停止|停止出块|链已停|无法出块/;
@@ -49,17 +50,33 @@ const RULES = [
     mustNot: [CHAIN_STOPPED],
     why: '面板自己瞎了就喊"链停了"，会摧毁报警的可信度（FR-020 / SC-006）',
   },
+  {
+    tier: 'members-unknown',
+    // 这一档的全部意思是「我们看不见」。必须说清链本身可能完全正常 ——
+    // 否则读到"未知"的人会默认最坏情况，而那与 observer-blind 犯的是同一个错。
+    must: [/成员集合/, /看不见|无法判断/],
+    // **绝不能声称链停了。** research V-31 就是这个假警报：
+    // 声明 6 / 链上 5 / 在线 4 → 按声明算出"链已停止出块"，而链在正常出块。
+    mustNot: [CHAIN_STOPPED, /停摆/],
+    why: '读不到成员集合时若暗示链停了，就是 V-31 那个假警报的翻版（FR-020 / SC-006）',
+  },
 ];
 
 describe('档位文案的必含与禁止短语', () => {
-  test('五个档位都有文案 —— 缺一个就会在界面上显示空白', () => {
+  test('每个档位都有文案 —— 缺一个就会在界面上显示空白', () => {
     for (const { tier } of RULES) {
       assert.ok(TIER_COPY[tier], `缺 ${tier} 的文案`);
       assert.ok(TIER_COPY[tier].label, `${tier} 缺 label`);
       assert.ok(TIER_COPY[tier].body, `${tier} 缺 body`);
     }
     assert.deepEqual(Object.keys(TIER_COPY).sort(), RULES.map((r) => r.tier).sort(),
-      '文案表的键必须与档位枚举一一对应，不多不少');
+      '文案表的键必须与本文件的 RULES 一一对应，不多不少');
+    // **也要与 TIERS 枚举对齐。** 本条此前只比 TIER_COPY 与 RULES ——
+    // 于是往 TIERS 加一个档位而不加文案与规则时，这里不会红，
+    // 而页面会走 FALLBACK 显示本页面还不认识的档位。2026-09-15 加
+    // members-unknown 时正是这么漏的（TIER_COPY 加了、TIERS 加了、RULES 没加）。
+    assert.deepEqual(Object.values(TIERS).sort(), RULES.map((r) => r.tier).sort(),
+      'TIERS 枚举必须与 RULES 一一对应 —— 新增档位时文案与禁止短语都要一并给出');
   });
 
   for (const { tier, must, mustNot, why } of RULES) {

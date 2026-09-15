@@ -91,11 +91,32 @@ export function render(snapshot, root) {
   root.replaceChildren();
 
   const validators = snapshot.nodes.filter((n) => n.countsTowardTolerance);
-  const others = snapshot.nodes.filter((n) => !n.countsTowardTolerance);
+  // **已声明、未注册**的验证者单独一组（功能 005 / T073）。
+  //
+  // 它们的 countsTowardTolerance 是 false（还不是共识成员），但按 false 一刀切会把它们
+  // 归进"Primary Network 节点"那一组 —— **把一个 L1 验证者叫成 Primary 节点**，
+  // 那是用一句假话换掉另一句假话。分组判据必须是"角色 + 注册状态"，不是单看一个布尔值。
+  const pending = snapshot.nodes.filter(
+    (n) => !n.countsTowardTolerance && n.role === 'l1-validator' && n.registeredOnChain === false,
+  );
+  const others = snapshot.nodes.filter(
+    (n) => !n.countsTowardTolerance && !pending.includes(n),
+  );
 
   root.append(el('h3', 'group-title',
     `L1 验证者（${validators.length}）—— 计入健康度`));
   root.append(table(validators, { showParticipation: true }));
+
+  if (pending.length > 0) {
+    root.append(el('h3', 'group-title',
+      `已声明、未注册的验证者（${pending.length}）—— 不计入健康度`));
+    root.append(el('p', 'note',
+      '这些节点写在部署描述里，但**链上的验证者集合里还没有它们** —— '
+      + '注册流程没走或没走完。它们不进容错判据：算进去会在链完全可用时报出假警报'
+      + '（research V-31）。用 npm run membership:status 看漂移，'
+      + '用 tools/membership/add-validator.mjs 看注册停在哪一步。'));
+    root.append(table(pending, { showParticipation: false }));
+  }
 
   if (others.length > 0) {
     root.append(el('h3', 'group-title',

@@ -13,7 +13,7 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { loadContext, pollOnce, observerViewpoint } from './poll.mjs';
+import { loadContext, pollOnce, observerViewpoint, readMemberSetCached } from './poll.mjs';
 import { buildSnapshot } from './snapshot.mjs';
 // 公开投影（US6）：显式字段白名单，方向刻意是挑出允许的而非删掉不允许的。
 import { toPublicView } from './public-view.mjs';
@@ -125,6 +125,10 @@ export function createPoller({ ctx, intervalSeconds }) {
       domains: ctx.domains,
       publishedRpcPort: ctx.publishedRpcPort,
     });
+    // 容错判据要用**链上**注册的成员数，不是声明数（T073 / research V-31）。
+    // 读不到时它返回 source: unknown，面板据此判成「成员集合未知」——
+    // 而不是退回声明去凑一个看起来确定的结论。
+    const memberSet = await readMemberSetCached({ rpcUrl: ctx.rpcUrl });
     state.snapshot = buildSnapshot({
       // 在**探测完成时**打戳，不是请求到达时 —— 页面的新鲜度判定依赖它反映数据年龄
       collectedAt: Date.now(),
@@ -141,6 +145,7 @@ export function createPoller({ ctx, intervalSeconds }) {
         reason: polled.containerFactsAvailable ? null : '缺失、旧格式或已过期（120 秒 TTL）',
       },
       summaryLine: polled.summaryLine,
+      memberSet,
     });
     state.prevHeights = polled.heights;
     state.rounds += 1;

@@ -70,6 +70,11 @@ export function loadContext({ deployment } = {}) {
     domains: [...domains].map(([id, address]) => ({ id, address })),
     // 对外公布的 RPC 端口 —— pathAlive 用它探"到那台机器的路径是否通"
     publishedRpcPort: protocol.endpoints.hostRpcPort,
+    // 读链上成员集合用（T073）。与面板直连各节点不同，这里要经**入口代理** ——
+    // 合约调用要打到链上，而单个节点的 /ext/bc/<id>/rpc 也行，但经代理能享受
+    // 004 那套故障转移：某个节点不应答时不会让成员集合变成"未知"。
+    rpcUrl: process.env.KARMACHAIN_RPC_URL
+      ?? `http://127.0.0.1:${protocol.endpoints.hostRpcPort}${protocol.endpoints.rpcPath}`,
     blockchainId,
     chain: {
       chainId: protocol.chain.chainId,
@@ -81,6 +86,44 @@ export function loadContext({ deployment } = {}) {
     },
     baselineGenesisHash,
   };
+}
+
+/**
+ * 读一次链上注册的成员集合，给容错判据用（功能 005 / T073）。
+ *
+ * **缓存 30 秒。** 成员变化是稀有事件（一次人工操作），而面板每几秒轮询一次 ——
+ * 每轮都从创世扫一遍日志是白花的成本。30 秒足够让一次注册在下一两轮里显形。
+ *
+ * **读不到时返回 `source: 'unknown'`，绝不退回声明。** 退回声明正是
+ * research V-31 那个假警报的成因：声明 6 / 链上 5 / 在线 4 →
+ * 按声明算出「链已停止出块」，而链在正常出块（探测交易区块 975 确认）。
+ */
+const MEMBER_SET_TTL_MS = 30_000;
+let memberSetCache = { at: 0, value: null };
+
+export async function readMemberSetCached({ rpcUrl, now = Date.now() } = {}) {
+  if (memberSetCache.value && now - memberSetCache.at < MEMBER_SET_TTL_MS) return memberSetCache.value;
+  try {
+    const { createPublicClient, http } = await import('viem');
+    const { readMemberSet } = await import('../membership/member-set.mjs');
+    const client = createPublicClient({ transport: http(rpcUrl) });
+    const set = await readMemberSet({ client });
+    const value = {
+      source: 'chain',
+      registeredNodeIds: set.members.map((m) => m.nodeId).filter(Boolean),
+      readAt: now,
+      // nodeID 未知的成员（Completed 没配对 Initiated）单独计数 ——
+      // 它们确实在集合里，但认不出是谁，所以不能进 registeredNodeIds。
+      // 不说出来的话，链上注册数与这个数组的长度会静默不等。
+      unidentified: set.members.filter((m) => !m.nodeId).length,
+    };
+    memberSetCache = { at: now, value };
+    return value;
+  } catch (err) {
+    const value = { source: 'unknown', error: err.message, readAt: now };
+    // 失败**不进缓存** —— 否则一次网络抖动会让面板在 30 秒里都说"成员集合未知"
+    return value;
+  }
 }
 
 /**

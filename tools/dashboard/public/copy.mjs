@@ -17,6 +17,16 @@
 
 /** 静态骨架 —— 不含具体数字，供测试断言必含/禁止短语。 */
 export const TIER_COPY = Object.freeze({
+  'members-unknown': {
+    label: '成员集合未知',
+    body: '读不到链上的验证者成员集合，因此**无法判断容错余量** —— '
+        + '本页面不会拿声明里的成员数去凑一个结论。'
+        + '链本身可能完全正常：这一档说的是"我们看不见"，不是"链坏了"。',
+    action: '先看 RPC 入口是否可达（npm run membership:status 会给出同样的读取）。'
+          + '成员集合读通之后，余量判定会自动恢复。',
+    severity: 'attention',
+    symbol: '◆',
+  },
   normal: {
     label: '正常',
     body: '链正在正常出块，容错余量充足 —— 还可容忍若干个验证者离线。',
@@ -115,6 +125,12 @@ export function tierCopy(snapshot) {
       body: `部分验证者尚未完成引导，还在等其余故障边界就位 —— 链还没开始出块。`
           + `当前参与共识 ${participating} 个，还差 ${plural(waiting)}到达门槛 ${threshold} 个。`,
     };
+  }
+
+  if (tier === 'members-unknown') {
+    // 刻意**不给数值** —— 这一档的全部意思就是算不出来。
+    // 拿声明的成员数去填一个余量，正是 research V-31 那个假警报的成因。
+    return { ...base, detail: null };
   }
 
   if (tier === 'observer-blind') {
