@@ -299,7 +299,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       **少了这条守卫，FR-035 的那个例外会慢慢渗进运行时路径**，
       而 ADR-0008 的结构性保证靠的正是"边界写下来并被机械检查"
 
-- [ ] T072 开启 Warp API（research V-30）：`render-chain-config.mjs` 加
+- [X] T072 开启 Warp API（research V-30）：`render-chain-config.mjs` 加
       `warp-api-enabled`，重新渲染，各机器 `docker restart` 节点。
       链配置是**目录挂载**，内容变更不需要重建容器；但 avalanchego 在启动时读它，
       所以要重启。**不进 stamp，不重置链。**
