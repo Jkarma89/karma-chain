@@ -435,11 +435,11 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       `git diff --exit-code package.json package-lock.json`（**FR-035** 零新增依赖）；
       并确认 `tests/integration/no-cli-in-runtime.test.mjs` **保持通过**
       （**FR-034** 不请回 Avalanche CLI —— 既有守卫已覆盖，本期只需不打破它）
-- [ ] T065 改 `tools/protocol/render-docs.mjs` 生成出的**出处声明与权威定义那两句**：
+- [X] T065 改 `tools/protocol/render-docs.mjs` 生成出的**出处声明与权威定义那两句**：
       现在只提 `protocol.json`，而一半字段已在 `deployment.json`（来自 T063 的实施记录）。
       **这是本期唯一一处刻意让生成物变字节的改动** —— 必须在 SC-003 的比对
       **通过之后**再做，并在提交信息里写明"此次生成物差异是有意的，且只差这两句"
-- [ ] T066 `docker/lib/` 的三个死文件：`runtime.sh` / `nodes.sh` / `health.sh`
+- [X] T066 `docker/lib/` 的三个死文件：`runtime.sh` / `nodes.sh` / `health.sh`
       **没有进任何镜像、也没有被任何脚本 source**（001 单容器时代的遗留，
       T012 枚举时查实）。`nodes.sh:72` 当时还在用 `proto_get` 取部署字段，
       已随手改成 `deploy_get` —— 但**一个没人执行的文件里的正确调用毫无价值**。

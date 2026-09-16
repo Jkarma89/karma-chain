@@ -318,7 +318,12 @@ while :; do
     echo "  Chain ID  : ${KARMACHAIN_CHAIN_ID_HEX}"
     echo "  Height    : ${height}"
     echo "  Nodes     : ${KARMACHAIN_NODE_IDS}"
-    echo "  容错      : ${KARMACHAIN_MAX_OFFLINE_VALIDATORS} 个验证者可离线（共 $(echo "$KARMACHAIN_VALIDATOR_IDS" | wc -w) 个）"
+    # **按声明算，并且说出来。** 本脚本只拿得到生成物里的数（目标机器上没有 node，
+    # 这是 gen-node-keys.sh 那条设计约束的延续），而容错的真实分母是
+    # **P 链上带权重的成员数** —— 有成员正在加入时两者会不同，且方向偏乐观。
+    # 与其查链（给启动路径加一个网络依赖与失败模式），不如把口径说清楚。
+    echo "  容错      : ${KARMACHAIN_MAX_OFFLINE_VALIDATORS} 个验证者可离线（按声明的 $(echo "$KARMACHAIN_VALIDATOR_IDS" | wc -w) 个算）"
+    echo "              链上成员数以 npm run membership:status 为准 —— 有成员正在加入时两者不同"
     echo
     echo "  Next: scripts/devnet-status  |  scripts/devnet-logs <node>  |  scripts/devnet-stop"
     exit 0
@@ -364,8 +369,10 @@ while :; do
       _n_val="$(echo "$KARMACHAIN_VALIDATOR_IDS" | wc -w | tr -d ' ')"
       _min_online=$(( _n_val - KARMACHAIN_MAX_OFFLINE_VALIDATORS ))
       echo "" >&2
-      echo "  跨机形态：L1 有 ${_n_val} 个等权验证者，发起查询需已连接权重 >= 75%，" >&2
-      echo "  因此至少 ${_min_online} 个验证者在线，链才推得动、RPC 才会应答。" >&2
+      echo "  跨机形态：声明了 ${_n_val} 个等权验证者，发起查询需已连接权重 >= 75%，" >&2
+      echo "  因此至少 ${_min_online} 个在线，链才推得动、RPC 才会应答。" >&2
+      echo "  （这个数按**声明**算。真实分母是 P 链上带权重的成员数 ——" >&2
+      echo "   有成员正在加入时它更小，届时这里给出的门槛偏高。）" >&2
       echo "  分批启动时先起来的机器必然走到这里 —— 把其余边界起完，再对本机重跑一次" >&2
       echo "  scripts/devnet-start 即可（它是幂等的，容器还在就只接着轮询）。" >&2
       echo "  各边界：${KARMACHAIN_DOMAIN_ADDRESSES}" >&2

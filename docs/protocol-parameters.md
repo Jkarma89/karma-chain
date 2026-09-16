@@ -1,9 +1,23 @@
-<!-- GENERATED FROM blockchain/protocol.json + blockchain/protocol-rationale.json by tools/protocol/render-docs.mjs — DO NOT EDIT.
-     修改参数：编辑 protocol.json（走宪法第十五条流程）→ npm run protocol:render → 提交。 -->
+<!-- GENERATED FROM blockchain/protocol.json + blockchain/deployment.json + blockchain/protocol-rationale.json
+     by tools/protocol/render-docs.mjs — DO NOT EDIT.
+     **本文档跨两份声明**，改哪一份取决于改的是什么（见下方"两个来源"）。 -->
 
-# KarmaChain 协议参数（dev · configVersion 1.4.0）
+# KarmaChain 协议参数（dev · configVersion 1.4.0 · deploymentVersion 1.0.0）
 
-宪法第十四条要求记录的全部区块链参数及其取值理由。唯一权威定义：[`blockchain/protocol.json`](../blockchain/protocol.json)。
+宪法第十四条要求记录的全部区块链参数及其取值理由。
+
+**两个来源，改错文件会找不到字段：**
+
+| 来源 | 本文档中的字段 | 改它要走什么流程 |
+|---|---|---|
+| [`blockchain/protocol.json`](../blockchain/protocol.json) | `chain.*`、`avalanche.*`、`nativeToken.*`、`feeConfig.*`、`blockProduction.*`、`devAccounts`、`validators.management`、`validators.ownerAccount`、`configVersion` | **协议变更**：递增 `configVersion`，走宪法第十五条，**要重置链** |
+| [`blockchain/deployment.json`](../blockchain/deployment.json) | `topology.*`、`endpoints.*`、`primaryNetwork.*`、`validators.count`、`validators.nodes`、下方的故障边界表 | **部署变更**：递增 `deploymentVersion`，**不进出生证明、不重置** |
+
+分界是一个问题而不是一张清单：改的是"这条链是什么"，还是"它跑在哪儿"？
+两条流程的完整说明见 [`docs/devnet.md`](./devnet.md) §12。
+
+> `validators.count` 与 `validators.nodes` 在部署侧，但**成员集合的事实来源在链上** ——
+> 声明只是"我们打算有几个"。当前成员用 `npm run membership:status` 看。
 
 ### 链身份
 
