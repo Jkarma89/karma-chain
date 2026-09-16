@@ -21,17 +21,22 @@
 # 报 `failed to connect to a threshold of stake`（门槛 67%）。
 # 两个各握 50%，少一个就永远不够 —— 这与研究 V-32 说的是同一件事。
 #
-# ## 它必须跑在 Primary 所在的那台机器上，并且用 host 网络
+# ## 跑在哪台机器都行 —— 我一度以为不行，那是误判
 #
-# 实测（2026-09-16，win-1）：在 Docker Desktop 的 NAT 后面，这个容器能连通
-# Primary 的 staking 端口（TCP 可达），但 avalanchego 的**握手建不起来** ——
-# 两个 Primary 的 peer 列表里都看不到它。而同一台机器上的 l1-1 容器 P2P 正常，
-# 区别是 l1-1 发布了 staking 端口、有可回拨的地址，而聚合器只向外拨。
-# 结论：用 `--network host` 跑在 ubuntu-1 或 ubuntu-2 上（Primary 就在那儿），
-# P2P 形态与普通节点一致，省掉整类问题。
+# 实测（2026-09-16，win-1）：容器能连通 Primary 的 staking 端口（TCP 可达），
+# 但 avalanchego 的握手一个都建不起来，两个 Primary 的 peer 列表里都看不到它，
+# 日志是 `connectedWeight: 0`，而且**不报任何拨号错误**。
 #
-# 用法（在承载 Primary 的机器上）：
-#   docker run --rm --network host \
+# 我当时归因于 Docker Desktop 的 NAT，让人把它搬到 Primary 所在的 Linux 机器上
+# 用 `--network host` 跑 —— **结果一模一样**。真正的原因是配置少了
+# `allow-private-ips`（下面从节点 flags 推导的那一项）。补上之后，
+# 在 win-1 的 NAT 后面照样两个 Primary 秒连、health 变 up。
+#
+# 留下这段是因为那次误判的形状值得记：TCP 通、无错误日志、换机器无改善 ——
+# 三个现象都指向网络，而真凶是一个布尔配置项。
+#
+# 用法（任意一台能连到 Primary staking 端口的机器）：
+#   docker run --rm -p 8646:8646 \
 #     -v "$PWD/blockchain:/repo/blockchain:ro" \
 #     karmachain/aggregator:local
 #
@@ -74,6 +79,7 @@ PRIMARIES="$(jq -er --arg dep "${DEPLOYMENT}" '
 
 PEERS=""
 PCHAIN_URL=""
+PRIVATE_IPS=""
 COUNT=0
 # 每行一个 Primary、字段以空格分隔；把空格换成冒号后按行取值，
 # 于是循环体在**当前 shell** 里跑（管道会开子 shell，累加的变量就丢了）。
@@ -92,6 +98,30 @@ for line in $(echo "${PRIMARIES}" | tr ' ' ':'); do
     echo "aggregator: ${identity} 里没有 nodeId" >&2; exit ${EXIT_DEPS}; }
   PEERS="${PEERS}${PEERS:+,}{\"id\":\"${nodeId}\",\"ip\":\"${address}:${stakingPort}\"}"
   [ -n "${PCHAIN_URL}" ] || PCHAIN_URL="http://${address}:${httpPort}"
+
+  # 允不允许拨私网地址，**取自这个 Primary 自己的启动参数**，不另做判断。
+  #
+  # 实测（2026-09-16）：少了这一项，聚合器能连通 Primary 的 staking 端口（TCP 可达），
+  # 但 avalanchego 的握手一个都建不起来 —— 日志里 `connectedWeight: 0`，
+  # 而**不报任何拨号错误**。当时我据此以为是 Docker Desktop 的 NAT，
+  # 让人把容器搬到 Primary 所在的机器上用 host 网络跑，结果一模一样。
+  # 真正的原因是这一个字段。
+  #
+  # 为什么读节点的 flags 而不是自己判 RFC1918：节点与聚合器必须对"私网地址能不能用"
+  # 有**同一个**答案。自己判就是第二份判断，两份迟早分叉。
+  flags="${NODES_DIR}/${DEPLOYMENT}/${id}.flags.json"
+  [ -f "${flags}" ] || {
+    echo "aggregator: 找不到 ${flags} —— 那里有 network-allow-private-ips，" >&2
+    echo "  少了它就不知道这张网允不允许私网地址，而猜错的表现是**静默连不上**。" >&2
+    exit ${EXIT_DEPS}
+  }
+  thisPrivate="$(jq -r '.["network-allow-private-ips"] // "false"' "${flags}")"
+  if [ -n "${PRIVATE_IPS}" ] && [ "${PRIVATE_IPS}" != "${thisPrivate}" ]; then
+    echo "aggregator: 两个 Primary 的 network-allow-private-ips 不一致" >&2
+    echo "  （${PRIVATE_IPS} vs ${thisPrivate}）—— 聚合器只能取一个值，该取哪个要人来定。" >&2
+    exit ${EXIT_DEPS}
+  fi
+  PRIVATE_IPS="${thisPrivate}"
   COUNT=$((COUNT + 1))
 done
 
@@ -108,16 +138,22 @@ jq -n \
   --arg logLevel "${LOG_LEVEL}" \
   --arg pchain "${PCHAIN_URL}" \
   --argjson peers "[${PEERS}]" \
+  --argjson allowPrivate "${PRIVATE_IPS}" \
   '{
      "log-level": $logLevel,
      "api-port": $apiPort,
      "metrics-port": $metricsPort,
+     "allow-private-ips": $allowPrivate,
      "p-chain-api": { "base-url": $pchain },
      "info-api": { "base-url": $pchain },
      "manually-tracked-peers": $peers
    }' > "${CONFIG_OUT}"
 
 echo "aggregator: 形态 ${DEPLOYMENT}，${COUNT} 个 Primary，API 端口 ${API_PORT}" >&2
-jq -c '{ "p-chain-api": ."p-chain-api"."base-url", peers: [."manually-tracked-peers"[].ip] }' "${CONFIG_OUT}" >&2
+jq -c '{
+  "p-chain-api": ."p-chain-api"."base-url",
+  "allow-private-ips": ."allow-private-ips",
+  peers: [."manually-tracked-peers"[].ip],
+}' "${CONFIG_OUT}" >&2
 
 exec /usr/local/bin/signature-aggregator --config-file "${CONFIG_OUT}"
