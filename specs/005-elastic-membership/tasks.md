@@ -276,7 +276,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ### 守卫先行
 
-- [ ] T023 [P] [US2] `tests/unit/membership-preflight.test.mjs`：三条前置检查各一组用例 ——
+- [X] T023 [P] [US2] `tests/unit/membership-preflight.test.mjs`：三条前置检查各一组用例 ——
       创世哈希不一致（FR-014）、T-5 越界（FR-013）、恢复能力不可用（FR-015）**都要拦下**
 - [X] T024 [P] [US2] `tests/unit/member-set.test.mjs`：读"链上实际成员"的解析，
       以及**三种漂移**各自的分类（[data-model 第 2 节](./data-model.md)）

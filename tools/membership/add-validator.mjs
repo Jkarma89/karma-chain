@@ -100,18 +100,58 @@ export async function assessProgress({ client, pchain, nodeId, subnetId }) {
 }
 
 /**
+ * 问**某个节点自己**要它那条链的创世区块哈希与 chainId（FR-014 用）。
+ *
+ * 走那台机器的 `/ext/bc/<blockchainId>/rpc`，不经集群入口 —— 经入口问到的是
+ * 集群的答案，而这里要判断的恰恰是"这一台是不是跑在同一条链上"。
+ *
+ * 失败一律归到 `error`，由调用方决定怎么处置；本函数不抛。
+ */
+export async function readNodeGenesis({ node, blockchainId, fetchImpl = fetch, timeoutMs = 8000 }) {
+  const url = `http://${node.address}:${node.httpPort}/ext/bc/${blockchainId}/rpc`;
+  const call = async (method, params) => {
+    const r = await fetchImpl(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message ?? String(j.error));
+    return j.result;
+  };
+  try {
+    const block0 = await call('eth_getBlockByNumber', ['0x0', false]);
+    const chainId = await call('eth_chainId', []);
+    if (!block0?.hash) throw new Error('eth_getBlockByNumber(0) 没有返回区块哈希');
+    return { genesisHash: block0.hash, chainId: Number(chainId), error: null };
+  } catch (err) {
+    return { genesisHash: null, chainId: null, error: err.message };
+  }
+}
+
+/**
  * 前置检查（FR-013 / FR-014 / FR-015）。任一不过则**拦下且不动链**。
  *
  * 刻意在动链之前全部查完，而不是边做边查 —— 走到一半才发现拦不住的问题，
  * 留下的是一个需要人工收拾的中间态。
  */
-export async function precheck({ client, pchain, nodeId, config, subnetId }) {
+export async function precheck({
+  client, pchain, nodeId, config, subnetId, blockchainId, genesisHash, fetchImpl = fetch,
+}) {
   // **subnetId 必填。** 第一版漏了它：函数体里引用 `subnetId` 抛 ReferenceError，
   // 而那句话在 try 里，被当成"读不到 P 链"吞掉 —— 第二个事实来源**静默消失**，
   // 前置检查照样报"全部通过"。漏参数的代价不该是少一整个来源。
   if (!subnetId) {
     throw new Error('precheck 需要 subnetId —— 少了它读不到 P 链侧那个事实来源，'
       + '而「别的成员卡在第四步」只有那一侧看得见');
+  }
+  // blockchainId / genesisHash 同样必填 —— 少了它们 FR-014 那条检查会**静默消失**，
+  // 而前置检查照样报"全部通过"。这正是 subnetId 那次的教训，不重犯第二遍。
+  if (!blockchainId || !genesisHash) {
+    throw new Error('precheck 需要 blockchainId 与 genesisHash —— 少了它们就核对不了'
+      + '新节点跑的是不是同一条链（FR-014），而"没核对"不该长得像"核对通过"');
   }
   const problems = [];
   const d = deriveTopology(config);
@@ -142,7 +182,7 @@ export async function precheck({ client, pchain, nodeId, config, subnetId }) {
   // 而它们各握 50% —— 少一个，新成员就引导不起来，第三步的 P 链交易也没人处理。
   const reachable = async (n) => {
     try {
-      const r = await fetch(`http://${n.address}:${n.httpPort}/ext/info`, {
+      const r = await fetchImpl(`http://${n.address}:${n.httpPort}/ext/info`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{"jsonrpc":"2.0","id":1,"method":"info.getNodeID","params":[]}',
@@ -214,6 +254,33 @@ export async function precheck({ client, pchain, nodeId, config, subnetId }) {
       + '**不应答** —— 先把那台机器和它的容器起来。'
       + '注册一个没起来的成员，它从注册的那一刻就是个缺席成员：'
       + '既拖低在线权重，又没法引导（引导要连上 ≥ 75% 的权重）。');
+  }
+
+  // ── FR-014：新节点跑的必须是**同一条链** ──────────────────────────────────
+  //
+  // 这条此前只写在函数头的注释里（"FR-013 / FR-014 / FR-015"），而实现里根本没有 ——
+  // 一条声称存在的判定不存在，比没有声称更坏：读注释的人以为已经守住了。
+  //
+  // 问的是新节点**自己**，不是集群入口：集群入口一定答得对，那证明不了任何事。
+  // 比两样东西，都来自那台机器上真正初始化出来的链：
+  //   ① 创世区块哈希 —— 创世文件差一个字节就变，对应 stamp 六项里的 genesisBlockHash
+  //   ② eth_chainId —— 哈希相同而 chainId 不同在理论上不可能，但两个都读一次近乎免费
+  //
+  // 读不到也拦。"没核对"不是"核对通过"：读不到的常见成因恰恰是那台机器根本没在
+  // track 这个 subnet，或者链还没初始化 —— 两种都不该让它进集合。
+  if (newMemberNode && !tol.newMemberOffline) {
+    const g = await readNodeGenesis({ node: newMemberNode, blockchainId, fetchImpl });
+    if (g.error) {
+      problems.push(`读不到 ${newMemberNode.id} 上那条链的创世信息（${g.error}）——`
+        + ' **不核对就不注册**（FR-014）。常见成因：那台机器没有 track 这个 subnet，'
+        + ' 或者链还没在它上面初始化完。先确认它的 flags 里有本链的 track-subnets 与链配置。');
+    } else if (g.genesisHash !== genesisHash) {
+      problems.push(`${newMemberNode.id} 的创世区块哈希是 ${g.genesisHash}，基准是 ${genesisHash}`
+        + ' —— **它跑的是另一条链**，不得进入集合（FR-014）。');
+    } else if (g.chainId !== config.chain.chainId) {
+      problems.push(`${newMemberNode.id} 报的 chainId 是 ${g.chainId}，本链是 ${config.chain.chainId}`
+        + ' —— 创世哈希相同而 chainId 不同，说明读到的不是本链（FR-014）。');
+    }
   }
 
   if (tol.wouldStopChain) {
@@ -1159,7 +1226,15 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
   // ── 前置检查 ──────────────────────────────────────────────────────────────
   console.error('前置检查…');
-  const pre = await precheck({ client, pchain, nodeId, config, subnetId: identity.subnetId });
+  const genesisHash = readFileSync(
+    resolve(REPO_ROOT, 'blockchain', 'genesis', 'karmachain.genesis.hash'), 'utf8',
+  ).trim();
+  const pre = await precheck({
+    client, pchain, nodeId, config,
+    subnetId: identity.subnetId,
+    blockchainId: identity.blockchainId,
+    genesisHash,
+  });
   for (const p of pre.problems) console.error(`  ✗ ${p}`);
   for (const dr of pre.otherDrifts) console.error(`  ⚠ 另有漂移 [${dr.kind}] ${dr.nodeId ?? ''}`);
   if (pre.splitError) {
