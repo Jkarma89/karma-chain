@@ -44,7 +44,7 @@ description: "任务清单：弹性成员管理 —— 在线增删节点，不�
 
 ## Phase 1: Setup
 
-- [ ] T001 建 `specs/005-elastic-membership/checklists/dod.md`：宪法第十七条八项、
+- [X] T001 建 `specs/005-elastic-membership/checklists/dod.md`：宪法第十七条八项、
       16 条 SC 逐条、38 条 FR 的判据映射（004 的 analyze 教训：编号断链会让回填漏项）、
       两份契约的「会变红吗」核对表、V-01…V-18、实施期缺陷一节
 - [X] T002 建 `specs/005-elastic-membership/baseline.md`，记下**分家之前**的：
