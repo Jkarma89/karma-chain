@@ -2,19 +2,20 @@
 //
 // ## 本文件的要点：面板所报必须与链的**真实**出块能力一致
 //
-// 光断言"面板显示 80%"是不够的 —— 一个恒返回 80% 的实现也能过。所以每个档位都
+// 光断言"面板显示某个百分比"是不够的 —— 一个恒返回那个数的实现也能过。所以每个档位都
 // **同时**用一笔真实交易验证链的实际行为：
 //
-//   - `zero-margin`（80%）→ 交易**能**确认。这是 FR-008 的判据：链仍在正常出块
+//   - `zero-margin`（(n-1)/n）→ 交易**能**确认。这是 FR-008 的判据：链仍在正常出块
 //   - 恢复过程中的 `catching-up` → 档位**不变**（FR-011 / SC-010）
 //
-// 60% 的 `stopped` 档需要停 2 个验证者，而 T-5 保证每台机器至多 1 个 ——
+// `stopped` 档需要停 ⌊n/4⌋+1 个验证者，而 T-5 保证每台机器至多 ⌊n/4⌋ 个 ——
 // 那一条在 `dashboard-stopped-tier.test.mjs`（跨机形态下带说明跳过）。
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  pub, sendTx, sh, devnetAvailable, pickLocalVictims, localVictimSkip,
+  pub, sendTx, sh, devnetAvailable, pickLocalVictims, localVictimSkip, validatorsServing,
 } from './lib/devnet.mjs';
+import { maxOffline } from '../../tools/membership/tolerance.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
 
 const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
@@ -28,6 +29,8 @@ const SKIP = !(await devnetAvailable())
 describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP, concurrency: 1 }, () => {
   let dash;
   let victim;
+  /** 在服务的验证者数 —— 第一条用例测出来，后面几条按它算期望值 */
+  let served;
 
   before(async () => {
     dash = await startDashboard();
@@ -41,17 +44,33 @@ describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP, concurren
     await dash?.stop();
   });
 
-  test('前置：满员时 100% / normal / 余量 1（SC-001）', async () => {
+  test('前置：满员时 100% / normal / 余量 = ⌊n/4⌋（SC-001）', async (t) => {
+    // n 由**独立探测**得到，不取面板自己的数字 —— 否则这是在用面板验证面板。
+    // 2026-09-16 加了第六个验证者之后，写死的 80% 当场失效（5/6 = 83%）；
+    // 那正是本特性预言的「成员变化后 003/004 的判据要跟着动」。
+    served = (await validatorsServing()).length;
+    assert.ok(served >= 2, `只探到 ${served} 个在服务的验证者，构造不出"停一个"的场景`);
+    const f = maxOffline(served);
+    t.diagnostic(`在服务的验证者 ${served} 个，⌊n/4⌋ = ${f}`);
+
     const { snapshot: s } = await waitForSnapshot(dash, (x) => x.tier === 'normal', { label: '满员 normal' });
     assert.equal(s.healthPercent, 100);
     assert.equal(s.tier, 'normal');
-    assert.equal(s.validatorMargin, 1, '还可容忍 1 个离线');
-    assert.equal(s.domainMargin, 1, '边界级余量同为 1');
+    assert.equal(s.validatorMargin, f, `还可容忍 ${f} 个离线`);
+    assert.equal(s.domainMargin, f, '边界级余量同为 ⌊n/4⌋');
     assert.equal(s.observer.blind, false);
     assert.equal(s.chainIdentity.forkDetected, false, '五台创世应当一致');
   });
 
-  test('停 1 个验证者 → ≤10 秒内 80% / zero-margin，且链仍能确认交易（SC-002）', async (t) => {
+  test('停 1 个验证者 → ≤10 秒内 (n-1)/n / zero-margin，且链仍能确认交易（SC-002）', async (t) => {
+    // 停**一个**能落到 zero-margin，前提是 ⌊n/4⌋ = 1。n 到 8 时上限变 2，
+    // 停一个只会把余量从 2 降到 1，档位仍是 normal —— 下面的 waitForSnapshot
+    // 会一直等不到而超时，那种失败读起来像面板坏了，其实是用例的前提不再成立。
+    // 所以先把前提说出来。
+    assert.equal(maxOffline(served), 1,
+      `现在 n = ${served}，⌊n/4⌋ = ${maxOffline(served)} —— 停 1 个不再是"用尽余量"。`
+      + ' 本用例要改成停 ⌊n/4⌋ 个，或把这一档交给 dashboard-stopped-tier 那套跨机构造。');
+
     const before = Number(await pub.getBlockNumber());
     node('kill', victim);
 
@@ -63,7 +82,11 @@ describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP, concurren
 
     assert.ok(elapsedMs <= 10_000,
       `发现时延 ${elapsedMs} ms 超过 10 秒（FR-018 / SC-002）`);
-    assert.equal(s.healthPercent, 80);
+    // 期望值当场算出来，而不是抄一个 n=5 时代的常数。
+    // 面板那边也是算的（deriveTier 的"零字面阈值"），两边各算一次才有交叉验证的意义。
+    const expected = Math.round(((served - 1) / served) * 100);
+    assert.equal(s.healthPercent, expected,
+      `停 1 个之后应为 ${served - 1}/${served} = ${expected}%`);
     assert.equal(s.validatorMargin, 0, '余量已用尽');
     assert.equal(s.participating, s.threshold, '参与数恰好等于查询门槛');
 

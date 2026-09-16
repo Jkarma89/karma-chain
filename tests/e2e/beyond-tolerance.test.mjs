@@ -1,10 +1,15 @@
 // T042 / quickstart 场景 D（V-05）：离线验证者超过容错上限时的行为（FR-009）。
 //
 // 这一场景验证的是**安全性**，不是可用性：停摆是正确行为，分叉才是事故。
-// 5 个等权验证者、发起查询需已连接权重 ≥ 75%（001 研究 R-05）：
-//   4/5 = 80% ≥ 75% → 继续出块
-//   3/5 = 60% < 75% → 停止出块
+// 等权验证者、发起查询需已连接权重 ≥ 75%（001 研究 R-05），于是可离线数 f = ⌊n/4⌋：
+//   (n-f)/n   ≥ 75% → 继续出块
+//   (n-f-1)/n < 75% → 停止出块
 // 恢复到上限内后必须自动继续，且**此前已确认的区块一个都不许回滚**。
+//
+// **n 会变**（005 弹性成员管理）。原先这里写着 4/5 = 80% 与 3/5 = 60%，
+// 那是 n=5 时代的两个**结果**。n=5..7 时 f 都是 1，杀 2 个仍然越界，所以那两行
+// 一直没露出问题；而 n 到 8 时 f=2，**杀 2 个不再越界** —— 本用例会开始断言
+// 一件不成立的事，并把"链正常出块"报成失败。下面第一条用例因此先核对前提。
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -12,8 +17,10 @@ import {
   pickLocalVictims, localVictimSkip,
 } from './lib/devnet.mjs';
 import { parseEther } from 'viem';
+import { maxOffline } from '../../tools/membership/tolerance.mjs';
 
-// 需要**两个**靶子才能超出容错上限（f=1），而且两个都得在本机 —— docker 只能操作本机容器。
+// 需要 f+1 个靶子才能超出容错上限（n=5..7 时 f=1，即两个），而且都得在本机
+// —— docker 只能操作本机容器。
 // 原先按下标取 VALIDATOR_IDS[3]、[4]，单机形态下都在本机；跨机形态下每个边界至多 1 个
 // 验证者（T-5 守卫保证），因此**任何一台机器都凑不出 2 个** —— 本场景在跨机形态下
 // 只能靠人工（在两台机器上各执行一次 devnet-stop），或在单机形态下跑。
@@ -35,6 +42,16 @@ describe('场景 D —— 超出容错上限后停摆而非分叉',
     for (const v of VICTIMS) { try { node('start', v); } catch { /* ignore */ } }
   });
 
+  test('前提：杀这些靶子真的会越界（n 变了就未必）', (t) => {
+    const n = VALIDATOR_IDS.length;
+    const f = maxOffline(n);
+    t.diagnostic(`声明的验证者 ${n} 个，f = ⌊n/4⌋ = ${f}，本用例杀 ${VICTIMS.length} 个`);
+    assert.ok(VICTIMS.length > f,
+      `杀 ${VICTIMS.length} 个不足以越界：现在 n = ${n}、f = ${f}。`
+      + ' 本用例的结论（停摆）因此不成立 —— 要改成杀 f+1 个，'
+      + ' 或者承认跨机形态下一台机器凑不出那么多靶子（T-5 限每边界至多 ⌊n/4⌋ 个）。');
+  });
+
   test('越界前先立一个检查点：记录已确认区块的哈希', async () => {
     const height = await sendTx();
     const block = await pub.getBlock({ blockNumber: BigInt(height) });
@@ -42,9 +59,9 @@ describe('场景 D —— 超出容错上限后停摆而非分叉',
     assert.match(checkpoint.hash, /^0x[0-9a-f]{64}$/);
   });
 
-  test(`杀死 ${VICTIMS.join(' 与 ')}（3/5 在线 = 60% < 75%）后停止出块`, async (t) => {
+  test(`杀死 ${VICTIMS.join(' 与 ')}（剩 ${VALIDATOR_IDS.length - VICTIMS.length}/${VALIDATOR_IDS.length} 在线 < 75%）后停止出块`, async (t) => {
     for (const v of VICTIMS) node('kill', v);
-    t.diagnostic(`已强制终止 ${VICTIMS.length} 个验证者，剩余 ${VALIDATOR_IDS.length - VICTIMS.length}/5`);
+    t.diagnostic(`已强制终止 ${VICTIMS.length} 个验证者，剩余 ${VALIDATOR_IDS.length - VICTIMS.length}/${VALIDATOR_IDS.length}`);
     await sleep(5000);
 
     const before = Number(await pub.getBlockNumber());
@@ -69,7 +86,7 @@ describe('场景 D —— 超出容错上限后停摆而非分叉',
   });
 
   test('恢复到上限内后自动继续出块，无需人工干预', async (t) => {
-    node('start', VICTIMS[0]);   // 只恢复一个 → 4/5 在线 = 80% ≥ 75%
+    node('start', VICTIMS[0]);   // 恢复一个 → 回到 f 以内（n=5..7 时即 4/5、5/6、6/7，都 ≥ 75%）
     t.diagnostic(`已恢复 ${VICTIMS[0]}，剩余离线 ${VICTIMS.length - 1} 个（在上限内）`);
 
     const before = Number(await pub.getBlockNumber());
