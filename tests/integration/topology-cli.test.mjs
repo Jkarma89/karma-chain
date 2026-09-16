@@ -47,8 +47,57 @@ function stageProtocol(mutate) {
   return file;
 }
 
-/** 构造一个 5 边界各 1 验证者、无共享因素的合法跨机形态。 */
+/**
+ * 构造一个 5 边界各 1 验证者、无共享因素的合法跨机形态。
+ *
+ * ## 夹具**自描述**：它连节点列表一起定义，不跟着真实声明走
+ *
+ * 原先只定义 `deployments.g`，节点列表沿用真实的 `topology.nodes`。
+ * 2026-09-16 加了第六个验证者 l1-6 之后这份夹具就断了 ——
+ * 校验器正确地报出 `node(s) not assigned to any failure domain: l1-6`，
+ * 而那是**夹具没跟上**，不是被测对象有问题。
+ *
+ * 场景 G 问的是"5 边界各 1 验证者时校验器怎么说"，它的含义不该随真实链的
+ * 成员数变化 —— 下面几条断言里的 `合并为 4 个`、`同时损失 2 个验证者`
+ * 都是按 5 这个数算出来的。所以夹具自己定义节点，**加多少成员都不会再断**。
+ */
 function cleanFiveDomains(p) {
+  const ids = ['l1-1', 'l1-2', 'l1-3', 'l1-4', 'l1-5'];
+  const byId = new Map(p.topology.nodes.map((n) => [n.id, n]));
+  const pick = (id) => {
+    const n = byId.get(id);
+    if (!n) throw new Error(`夹具需要节点 ${id}，而真实声明里没有它 —— 夹具与声明的最小交集变了`);
+    return n;
+  };
+  p.topology.nodes = [...ids, 'primary-1', 'primary-2'].map(pick);
+  // validators.count / nodes[] 要跟着一起收窄，否则校验器会先在
+  // "topology 有 5 个 l1-validator 但 validators.count 是 6" 上失败。
+  const keep = new Set(ids.map((id) => pick(id).validatorIndex));
+  p.validators.nodes = p.validators.nodes.filter((v) => keep.has(v.index));
+  p.validators.count = p.validators.nodes.length;
+  // 索引必须仍是连续的 1..count（load.mjs 的另一条约束）。若将来某次扩容把
+  // l1-1..l1-5 的 validatorIndex 打乱，这里要立刻说清是**夹具**该改，
+  // 而不是让校验器在索引约束上先失败、把本场景真正要测的容错判定挡在后面。
+  assert.deepEqual(
+    p.validators.nodes.map((v) => v.index),
+    Array.from({ length: ids.length }, (_, i) => i + 1),
+    '夹具留下的验证者索引必须是连续的 1..5',
+  );
+
+  // 校验器会审**每一个**部署形态，不只是 --deployment 指定的那个 ——
+  // 所以被夹具移走的节点必须从既有形态（local / lan / …）里一并摘掉，
+  // 否则它们会先报 "unknown node id(s)"，本场景又一次测不到自己要测的东西。
+  // 只做减法：每边界的验证者数只会变少，不会把既有形态推过 ⌊n/4⌋ 的上限。
+  const known = new Set(p.topology.nodes.map((n) => n.id));
+  for (const dep of Object.values(p.topology.deployments)) {
+    for (const domain of dep.failureDomains) {
+      domain.nodes = domain.nodes.filter((id) => known.has(id));
+    }
+    // 边界里一个节点都不剩就把边界本身去掉（schema 不允许空边界）——
+    // 新加一台机器通常就是新加一个独占的边界，摘掉那个节点会正好掏空它。
+    dep.failureDomains = dep.failureDomains.filter((d) => d.nodes.length > 0);
+  }
+
   p.topology.deployments.g = {
     description: '场景 G 测试用：5 边界各 1 验证者，无共享因素',
     failureDomains: [
