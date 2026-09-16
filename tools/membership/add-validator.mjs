@@ -44,7 +44,7 @@ import {
 } from '../verify/lib/identity.mjs';
 import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, TOPICS, STATUS,
-  readMemberSet, classifyDrift, nodeIdFromBytes20,
+  readMemberSet, classifyDrift, nodeIdFromBytes20, readPChainMembers, classifyPChainDrift,
 } from './member-set.mjs';
 
 export const EXIT_OK = 0;
@@ -103,7 +103,14 @@ export async function assessProgress({ client, pchain, nodeId, subnetId }) {
  * 刻意在动链之前全部查完，而不是边做边查 —— 走到一半才发现拦不住的问题，
  * 留下的是一个需要人工收拾的中间态。
  */
-export async function precheck({ client, pchain, nodeId, config }) {
+export async function precheck({ client, pchain, nodeId, config, subnetId }) {
+  // **subnetId 必填。** 第一版漏了它：函数体里引用 `subnetId` 抛 ReferenceError，
+  // 而那句话在 try 里，被当成"读不到 P 链"吞掉 —— 第二个事实来源**静默消失**，
+  // 前置检查照样报"全部通过"。漏参数的代价不该是少一整个来源。
+  if (!subnetId) {
+    throw new Error('precheck 需要 subnetId —— 少了它读不到 P 链侧那个事实来源，'
+      + '而「别的成员卡在第四步」只有那一侧看得见');
+  }
   const problems = [];
   const d = deriveTopology(config);
 
@@ -223,7 +230,34 @@ export async function precheck({ client, pchain, nodeId, config }) {
   const drift = classifyDrift(set.members, config.validators.nodes);
   const others = drift.drifts.filter((x) => x.nodeId !== nodeId);
 
-  return { ok: problems.length === 0, problems, otherDrifts: others, tolerance: tol };
+  // ── 第二个事实来源：合约侧 vs P 链侧（T070）──────────────────────────────
+  //
+  // 为什么注册之前要看这个：如果**别的**成员正卡在第四步，那它在 P 链上带着权重、
+  // 在合约侧却不算成员。此时两侧的成员数不同，而容错该按 P 链算 ——
+  // 不看这一侧就等于按一个偏小的 n 去判断"注册会不会把链停掉"。
+  //
+  // 读不到时如实标记，不静默当作"没问题"。
+  let split = null;
+  let splitError = null;
+  try {
+    const pset = await readPChainMembers({ pchain, subnetId });
+    split = classifyPChainDrift({ contractMembers: set.members, pchainMembers: pset.members });
+  } catch (err) {
+    splitError = err.message;
+  }
+  // 本次要注册的这个成员出现在 P 链侧、合约侧还没有，是**正常的中间态**
+  //（第三步做完、第四步没做完），不该算进"别人的问题"里。
+  const otherSplits = (split?.splits ?? []).filter((s) => s.nodeId !== nodeId);
+
+  return {
+    ok: problems.length === 0,
+    problems,
+    otherDrifts: others,
+    tolerance: tol,
+    split,
+    splitError,
+    otherSplits,
+  };
 }
 
 /**
@@ -1160,9 +1194,16 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
   // ── 前置检查 ──────────────────────────────────────────────────────────────
   console.error('前置检查…');
-  const pre = await precheck({ client, pchain, nodeId, config });
+  const pre = await precheck({ client, pchain, nodeId, config, subnetId: identity.subnetId });
   for (const p of pre.problems) console.error(`  ✗ ${p}`);
   for (const dr of pre.otherDrifts) console.error(`  ⚠ 另有漂移 [${dr.kind}] ${dr.nodeId ?? ''}`);
+  if (pre.splitError) {
+    console.error(`  ⚠ **读不到 P 链侧**：${pre.splitError}`);
+    console.error('     于是「别的成员是否卡在第四步」本次无法判断 —— 不是没问题，是没看。');
+  } else if (pre.split) {
+    console.error(`  ✓ 两个事实来源：合约 ${pre.split.contractCount} 个 / P 链 ${pre.split.pchainCount} 个`);
+    for (const s of pre.otherSplits) console.error(`  ⚠ 两侧分歧 [${s.kind}] ${s.nodeId ?? ''}`);
+  }
   if (!pre.ok) {
     console.error('\n**前置检查未通过 —— 一步都没动链。** 修好上面这些再来。');
     process.exit(EXIT_PRECHECK);

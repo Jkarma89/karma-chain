@@ -286,7 +286,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 - [X] T025 [US2] 新建 `tools/membership/abi/validator-manager.json`（按 T004 的途径取得并锁版本）
 - [X] T026 [US2] 新建 `tools/membership/member-set.mjs`：读链上实际成员；
       与"期望成员"比对并给出三种漂移的分类
-- [ ] T070 T026 补第二个事实来源：**P 链的 `platform.getCurrentValidators({subnetID})`**
+- [X] T070 T026 补第二个事实来源：**P 链的 `platform.getCurrentValidators({subnetID})`**
       （research V-28）。合约侧是「PoA owner 注册了谁」，P 链侧是「谁真的在共识里带权重」——
       **两者可以不一致**，ACP-77 第三步做完、第四步没做完时就是那个状态，
       而那恰恰是最需要看清的中间态。注意两侧 validationID 编码不同
