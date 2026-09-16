@@ -32,7 +32,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProtocol, deriveTopology, REPO_ROOT } from '../protocol/load.mjs';
-import { readRegisteredMembers } from '../membership/member-set.mjs';
+import { readConsensusMembers } from '../membership/member-set.mjs';
 // 容错收敛到链上成员的判定只有一份，在面板那边（T073）。
 // 这里引用它而不是再写一遍 —— 同一个判定有两份实现，迟早会各自漂移。
 import { scopeToChainMembers } from '../dashboard/snapshot.mjs';
@@ -182,10 +182,17 @@ export function summarize(rows, faultTolerance, observed = {}) {
   const declared = faultTolerance.declaredValidatorCount;
 
   let line = `${online}/${total} 验证者在线（上限：可容忍 ${max} 个离线）`;
-  // 声明多于链上注册是正常的中间态（有成员正在加入），但必须说出来 ——
+  // 声明多于 P 链成员是正常的中间态（有成员正在加入），但必须说出来 ——
   // 否则"6 个机器却按 5 算"看着像少算了一个。
   if (Number.isFinite(declared) && declared !== total) {
-    line += ` [按链上注册的 ${total} 个算；声明 ${declared} 个，差额是尚未注册完的成员]`;
+    line += ` [按 P 链上带权重的 ${total} 个算；声明 ${declared} 个，差额是尚未注册完的成员]`;
+  }
+  // **等权是 ⌊n/4⌋ 的前提**（research R-05 / V-22）。不等时那条推导不成立，
+  // 而上面那个"可容忍 N 个离线"就是按它算出来的 —— 必须当场说破，
+  // 否则给出的是一个看着确定的错数。`undefined` 表示这一侧没提供权重信息，不妄断。
+  if (faultTolerance.equalWeights === false) {
+    line += ' ⚠ **上限不可信**：P 链上各成员权重**不相等**，'
+      + `而 ⌊n/4⌋ 的推导以等权为前提 —— 这个 ${max} 是按不成立的前提算出来的`;
   }
   // 观测行数与基准不符本身就是异常，必须说出来而不是让算式吸收掉
   if (counted.length !== total) {
@@ -386,11 +393,22 @@ export async function collect(opts = parseArgs()) {
     };
   });
 
-  // 容错的 n 收敛到**链上注册成员**（T073）。读不到就不收敛，并在
-  // summarize 里如实说基准是哪一个 —— 退回声明是 V-31 那个假警报的成因。
-  const memberSet = await readRegisteredMembers({
-    rpcUrl: process.env.KARMACHAIN_RPC_URL
-      ?? `http://127.0.0.1:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`,
+  // 容错的 n 收敛到 **P 链上带权重的成员**（T073 + T070 修正）。读不到就不收敛，
+  // 并在 summarize 里如实说基准是哪一个 —— 退回声明是 V-31 那个假警报的成因，
+  // 退回合约是 T070 查实的那个偏乐观口径（共识按 P 链算，`67*600` 是直接证据）。
+  //
+  // 必须直连某个 Primary：P 链只有它们完整同步，L1 的入口代理后面是 L1 验证者，
+  // 它们不提供 P 链视图。
+  const primaryNode = d.topologyNodes.find((n) => n.role === 'primary');
+  const memberSet = await readConsensusMembers({
+    pchainUrl: primaryNode ? `http://${primaryNode.address}:${primaryNode.httpPort}` : null,
+    subnetId: (() => {
+      try {
+        return JSON.parse(readFileSync(
+          resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json'), 'utf8',
+        )).subnetId ?? null;
+      } catch { return null; }   // 尚未建链 —— 让它走 source: unknown，不猜
+    })(),
   });
   const scoped = scopeToChainMembers({ rows, faultTolerance: d.faultTolerance, memberSet });
 

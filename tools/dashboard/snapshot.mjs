@@ -186,24 +186,34 @@ function deriveDomainMargin(faultTolerance, alreadyDown) {
  * 这不是"数字不准"，是**结论方向错了**。假警报会让人去排查一个不存在的故障，
  * 而反复的假警报会训练人忽略面板 —— 那比少一个告警更坏。
  *
- * ## 谁是共识集合：链上，不是声明
+ * ## 谁是共识集合：**P 链**，不是声明，也不是合约
  *
  * 功能 005 之后成员运行期可变，**声明只是"我们打算有几个"**（data-model 第 2 节）。
- * 容错判据问的是"再掉几个就停摆"，那只能按**链上真正带权重的成员**算。
- * 声明与链上的差额是**漂移**，单独呈现（FR-030），不该混进容错结论。
+ * 容错判据问的是"再掉几个就停摆"，那只能按**共识里真正带权重的成员**算 ——
+ * 而那是 P 链的 L1 验证者集合。
  *
- * ## 读不到链上成员时：说"不知道"，不要拿声明凑
+ * 合约侧也不行（2026-09-16 实测，T070）：第三步做完、第四步没做完时，
+ * 合约说 5 个、P 链说 6 个。而那一刻 L1 的 Warp 校验报的是
+ * `signature weight is insufficient: 67*600 > 100*200` —— **600**，
+ * 即 6 个验证者的总权重。共识按 P 链算，这是直接证据。
+ * 按合约算会少一个成员，方向**偏乐观**：把"再掉一个就停摆"报成"还有余量"。
  *
- * 退回声明正是上面那个假警报的成因。`source !== 'chain'` 时本函数**原样返回**，
+ * 声明与 P 链的差额、合约与 P 链的差额，都是**漂移/分歧**，单独呈现（FR-030 / T070），
+ * 不该混进容错结论。
+ *
+ * ## 读不到时：说"不知道"，不要拿声明或合约凑
+ *
+ * 退回声明正是上面那个假警报的成因。`source !== 'p-chain'` 时本函数**原样返回**，
  * 并让调用方据此把档位判成"成员集合未知" —— 宁可承认不知道，
  * 也不要给出一个看起来确定的错结论。
  *
  * @param {object[]} rows                    已 enrich 的节点行（带 nodeId 与 domain）
  * @param {object}   faultTolerance          按**声明**派生的容错（deriveTopology 的输出）
- * @param {{source:'chain', registeredNodeIds:string[]}|{source:'unknown', error?:string}} memberSet
+ * @param {{source:'p-chain', registeredNodeIds:string[], equalWeights?:boolean}
+ *        |{source:'unknown', error?:string}} memberSet
  */
 export function scopeToChainMembers({ rows, faultTolerance, memberSet }) {
-  if (memberSet?.source !== 'chain') {
+  if (memberSet?.source !== 'p-chain') {
     return {
       rows: rows.map((r) => ({ ...r, registeredOnChain: null })),
       faultTolerance,
@@ -230,10 +240,10 @@ export function scopeToChainMembers({ rows, faultTolerance, memberSet }) {
     };
   });
 
-  // n 取**链上注册数**，不是声明数，也不是行数。
+  // n 取 **P 链上带权重的成员数**，不是声明数，也不是行数。
   //
   // 不用行数的理由沿用 deriveTier 里那条：拿观测行数当分母，会在少了一行时
-  // 把缺失悄悄算成在线。链上注册了 5 个而只看见 4 行时，第 5 个应当算**不参与**。
+  // 把缺失悄悄算成在线。P 链上有 5 个而只看见 4 行时，第 5 个应当算**不参与**。
   const n = registered.size;
   const maxOfflineValidators = Math.floor(n / 4);
 
@@ -251,8 +261,14 @@ export function scopeToChainMembers({ rows, faultTolerance, memberSet }) {
       validatorCount: n,
       maxOfflineValidators,
       effectiveDomains,
-      // 保留声明侧的数字，供呈现"声明 6 / 链上 5"这种差额用
+      // 保留声明侧的数字，供呈现"声明 6 / P 链 5"这种差额用
       declaredValidatorCount: faultTolerance.validatorCount,
+      /**
+       * ⌊n/4⌋ 成立的**前提**：等权（research R-05 / V-22 实测各 100）。
+       * 权重不等时那条推导不成立 —— 照实传上去，让呈现层能说"前提不成立"，
+       * 而不是给一个看着确定的错数。`undefined` 表示这一侧没提供权重信息。
+       */
+      equalWeights: memberSet.equalWeights,
     },
     scoped: true,
   };
@@ -296,9 +312,9 @@ export function deriveTier({ rows, faultTolerance, observer, memberSet }) {
     if (observer?.blind ?? (observer?.reachableNodes === 0)) return TIERS.OBSERVER_BLIND;
 
     // P1b —— 紧随观察者失明之后，且必须**先于**所有数值判据。
-    // 两者同类：都是"我们看不见"，不是"链坏了"。读不到链上成员集合时，
+    // 两者同类：都是"我们看不见"，不是"链坏了"。读不到 P 链的成员集合时，
     // 下面每一条数值判据的 n 都只能取自声明，而那会算出 V-31 那个假警报。
-    if (memberSet && memberSet.source !== 'chain') return TIERS.MEMBERS_UNKNOWN;
+    if (memberSet && memberSet.source !== 'p-chain') return TIERS.MEMBERS_UNKNOWN;
 
     if (participating < threshold) {
       // P2 —— 必须先于 P3。若放到 P3 之后：跨机分批启动期间报「链已停止」，

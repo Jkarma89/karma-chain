@@ -61,7 +61,7 @@ const v31 = () => {
     v('l1-6', 'NodeID-F', 'unreachable'),      // 已声明，**未注册**，未启动
   ];
   const memberSet = {
-    source: 'chain',
+    source: 'p-chain',
     registeredNodeIds: ['NodeID-A', 'NodeID-B', 'NodeID-C', 'NodeID-D', 'NodeID-E'],
   };
   return { rows, faultTolerance: declaredFt(6), memberSet };
@@ -138,15 +138,15 @@ describe('**保守侧**：链上注册了但看不见的成员，算不参与', 
       v('l1-3', 'NodeID-C'), v('l1-4', 'NodeID-D'),
     ];
     const memberSet = {
-      source: 'chain',
+      source: 'p-chain',
       registeredNodeIds: ['NodeID-A', 'NodeID-B', 'NodeID-C', 'NodeID-D', 'NodeID-E'],
     };
     const scope = scopeToChainMembers({ rows, faultTolerance: declaredFt(5), memberSet });
     assert.equal(scope.faultTolerance.validatorCount, 5,
-      'n 取链上注册数，不是行数 —— 否则少一行会把缺失算成在线');
+      'n 取 P 链上带权重的成员数，不是行数 —— 否则少一行会把缺失算成在线');
     const got = deriveTier({ rows: scope.rows, faultTolerance: scope.faultTolerance, observer, memberSet });
     assert.equal(got.observedValidators, 4);
-    assert.equal(got.healthPercent, 80, '4 个在线 / 5 个注册 = 80%');
+    assert.equal(got.healthPercent, 80, '4 个在线 / 5 个 P 链成员 = 80%');
   });
 });
 

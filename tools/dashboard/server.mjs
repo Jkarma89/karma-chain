@@ -125,10 +125,14 @@ export function createPoller({ ctx, intervalSeconds }) {
       domains: ctx.domains,
       publishedRpcPort: ctx.publishedRpcPort,
     });
-    // 容错判据要用**链上**注册的成员数，不是声明数（T073 / research V-31）。
+    // 容错判据要用 **P 链**上带权重的成员数 —— 不是声明数（T073 / research V-31），
+    // 也不是合约事件数（T070 修正：合约与 P 链在第三/四步之间合法地不一致，
+    // 而共识按 P 链算 —— 2026-09-16 的 `67*600` 那句报错是直接证据）。
     // 读不到时它返回 source: unknown，面板据此判成「成员集合未知」——
-    // 而不是退回声明去凑一个看起来确定的结论。
-    const memberSet = await readMemberSetCached({ rpcUrl: ctx.rpcUrl });
+    // 而不是退回任何一侧去凑一个看起来确定的结论。
+    const memberSet = await readMemberSetCached({
+      pchainUrl: ctx.pchainUrl, subnetId: ctx.subnetId,
+    });
     state.snapshot = buildSnapshot({
       // 在**探测完成时**打戳，不是请求到达时 —— 页面的新鲜度判定依赖它反映数据年龄
       collectedAt: Date.now(),

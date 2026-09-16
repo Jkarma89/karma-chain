@@ -45,10 +45,12 @@ export function loadContext({ deployment } = {}) {
 
   let blockchainId = null;
   let chainAlias = null;
+  let subnetId = null;
   try {
     const identity = readJson('blockchain/chain-identity/karmachain.identity.json');
     blockchainId = identity.blockchainId ?? null;
     chainAlias = identity.blockchainName ?? protocol.chain?.blockchainName ?? null;
+    subnetId = identity.subnetId ?? null;
   } catch { /* 尚未建链 —— 面板照样起，只是没有 L1 判据 */ }
 
   let baselineGenesisHash = null;
@@ -70,11 +72,20 @@ export function loadContext({ deployment } = {}) {
     domains: [...domains].map(([id, address]) => ({ id, address })),
     // 对外公布的 RPC 端口 —— pathAlive 用它探"到那台机器的路径是否通"
     publishedRpcPort: protocol.endpoints.hostRpcPort,
-    // 读链上成员集合用（T073）。与面板直连各节点不同，这里要经**入口代理** ——
-    // 合约调用要打到链上，而单个节点的 /ext/bc/<id>/rpc 也行，但经代理能享受
-    // 004 那套故障转移：某个节点不应答时不会让成员集合变成"未知"。
+    // L1 的 RPC 入口。经**入口代理**享受 004 那套故障转移。
     rpcUrl: process.env.KARMACHAIN_RPC_URL
       ?? `http://127.0.0.1:${protocol.endpoints.hostRpcPort}${protocol.endpoints.rpcPath}`,
+    // 读**共识成员集合**用（T073 + T070 修正）：容错的 n 取自 **P 链**的
+    // L1 验证者集合，而 P 链只有 Primary 完整同步 —— 所以必须直连某个 Primary，
+    // 不能走 L1 的入口代理（那个代理后面是 L1 验证者，它们不提供 P 链视图）。
+    //
+    // 取第一个 Primary。它不应答时 readConsensusMembers 会返回 source: unknown，
+    // 面板据此判成「成员集合未知」—— 那是对的：读不到就说读不到，不拿另一侧凑。
+    pchainUrl: (() => {
+      const p = derived.topologyNodes.find((n) => n.role === 'primary');
+      return p ? `http://${p.address}:${p.httpPort}` : null;
+    })(),
+    subnetId,
     blockchainId,
     chain: {
       chainId: protocol.chain.chainId,
@@ -89,27 +100,32 @@ export function loadContext({ deployment } = {}) {
 }
 
 /**
- * 读一次链上注册的成员集合，给容错判据用（功能 005 / T073）。
+ * 读一次**共识成员集合**（P 链侧），给容错判据用（功能 005 / T073 + T070 修正）。
  *
- * **缓存 30 秒。** 成员变化是稀有事件（一次人工操作），而面板每几秒轮询一次 ——
- * 每轮都从创世扫一遍日志是白花的成本。30 秒足够让一次注册在下一两轮里显形。
+ * **缓存 30 秒。** 成员变化是稀有事件（一次人工操作），而面板每几秒轮询一次。
+ * 30 秒足够让一次注册在下一两轮里显形。
  *
- * **读不到时返回 `source: 'unknown'`，绝不退回声明。** 退回声明正是
+ * **读的是 P 链，不是合约。** 共识权重来自 P 链的 L1 验证者集合 ——
+ * 2026-09-16 实测：第三步做完、第四步没做完时合约说 5 个、P 链说 6 个，
+ * 而 L1 的 Warp 校验按 **600**（6 个各 100）算权重。按合约算会少一个成员，
+ * 方向偏乐观：把"再掉一个就停摆"报成"还有余量"。
+ *
+ * **读不到时返回 `source: 'unknown'`，绝不退回声明或合约。** 退回声明正是
  * research V-31 那个假警报的成因：声明 6 / 链上 5 / 在线 4 →
  * 按声明算出「链已停止出块」，而链在正常出块（探测交易区块 975 确认）。
  */
 const MEMBER_SET_TTL_MS = 30_000;
 let memberSetCache = { at: 0, value: null };
 
-export async function readMemberSetCached({ rpcUrl, now = Date.now() } = {}) {
+export async function readMemberSetCached({ pchainUrl, subnetId, now = Date.now() } = {}) {
   if (memberSetCache.value && now - memberSetCache.at < MEMBER_SET_TTL_MS) return memberSetCache.value;
-  // 取回与判形状的活都在 member-set.mjs 的 readRegisteredMembers 里 ——
+  // 取回与判形状的活都在 member-set.mjs 的 readConsensusMembers 里 ——
   // `node-status` 也要它，而"成员集合长什么样"不该有两份定义。
   // 本函数只加缓存这一层。
-  const { readRegisteredMembers } = await import('../membership/member-set.mjs');
-  const value = await readRegisteredMembers({ rpcUrl, now });
+  const { readConsensusMembers } = await import('../membership/member-set.mjs');
+  const value = await readConsensusMembers({ pchainUrl, subnetId, now });
   // 失败**不进缓存** —— 否则一次网络抖动会让面板在 30 秒里都说"成员集合未知"
-  if (value.source === 'chain') memberSetCache = { at: now, value };
+  if (value.source === 'p-chain') memberSetCache = { at: now, value };
   return value;
 }
 

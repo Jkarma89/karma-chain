@@ -402,34 +402,66 @@ export async function readView(client, name, address = PROXY_ADDRESS) {
 }
 
 /**
- * 链上注册成员的 **nodeID 集合**，给容错判据用（功能 005 / T073）。
+ * **共识成员**的 nodeID 集合，给容错判据用（功能 005 / T073 + T070 修正）。
  *
- * 容错的 n 必须是**链上注册数**，不是声明数。research V-31 的假警报就出在这里：
- * 声明 6 / 链上 5 / 在线 4 → 按声明算出「链已停止出块」，
- * 而同一时刻探测交易在区块 975 里 8.7 秒确认。
+ * ## 为什么读 P 链，而不是合约
  *
- * **读不到时返回 `source: 'unknown'`，绝不退回声明。** 退回声明就是把
- * "不知道"说成"知道"，而那个说法恰好是错的那一个。
+ * 容错的 n 必须是**共识里真的带权重的那一批**。而那是 **P 链的 L1 验证者集合** ——
+ * 不是声明，也不是合约事件。
+ *
+ * 声明不行（research V-31 的假警报）：声明 6 / 链上 5 / 在线 4 →
+ * 按声明算出「链已停止出块」，而同一时刻探测交易在区块 975 里 8.7 秒确认。
+ *
+ * 合约也不行（2026-09-16 实测）：第三步做完、第四步没做完时，
+ * 合约说 5 个、P 链说 6 个。而那一刻 L1 的 Warp 校验报的是
+ * `signature weight is insufficient: 67*600 > 100*200` —— **600**，
+ * 也就是 6 个验证者的总权重。**共识按 P 链算，这是直接证据，不是推断。**
+ * 按合约算会少一个成员，方向是**偏乐观**的：把"再掉一个就停摆"报成"还有余量"。
+ *
+ * **读不到时返回 `source: 'unknown'`，绝不退回声明或合约。** 退回任何一侧都是把
+ * "不知道"说成"知道"，而在有成员正在加入时，那个说法恰好是错的那一个。
  *
  * 这里只负责取回集合与它的形状 —— 怎么用它收敛容错，在
  * `tools/dashboard/snapshot.mjs` 的 `scopeToChainMembers` 里（只有一份，
  * 那个模块零 import，所以 `node-status` 引它不会背上传递依赖）。
  * 本函数存在的理由是：面板与 `node-status` 都要它，而"成员集合长什么样"
  * 这件事不该有两份定义。
+ *
+ * @param {{pchainUrl: string, subnetId: string, now?: number}} args
+ *   `pchainUrl` 形如 `http://<Primary 地址>:<httpPort>` —— Primary 是 P 链的权益方，
+ *   也是唯一完整同步主网络的节点。
  */
-export async function readRegisteredMembers({ rpcUrl, now = Date.now() } = {}) {
+export async function readConsensusMembers({ pchainUrl, subnetId, now = Date.now() } = {}) {
   try {
-    const { createPublicClient, http } = await import('viem');
-    const client = createPublicClient({ transport: http(rpcUrl) });
-    const set = await readMemberSet({ client });
+    if (!pchainUrl) throw new Error('缺 pchainUrl（某个 Primary 的 http 地址）');
+    if (!subnetId) throw new Error('缺 subnetId');
+    const pchain = async (method, params) => {
+      const r = await fetch(`${pchainUrl.replace(/\/$/, '')}/ext/bc/P`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(`${method}: ${j.error.message}`);
+      return j.result;
+    };
+    const set = await readPChainMembers({ pchain, subnetId });
+    const weights = [...new Set(set.members.map((m) => String(m.weight)))];
     return {
-      source: 'chain',
+      source: 'p-chain',
       registeredNodeIds: set.members.map((m) => m.nodeId).filter(Boolean),
       readAt: now,
-      // nodeID 未知的成员（Completed 没配对 Initiated）单独计数 ——
-      // 它们确实在集合里，但认不出是谁，所以不能进 registeredNodeIds。
-      // 不说出来的话，链上注册数与这个数组的长度会静默不等。
+      // nodeID 认不出的成员单独计数 —— 它们确实带着权重，但认不出是谁，
+      // 所以不能进 registeredNodeIds。不说出来的话，成员数与这个数组的长度会静默不等。
       unidentified: set.members.filter((m) => !m.nodeId).length,
+      /**
+       * 等权是 ⌊n/4⌋ 那条推导的**前提**（research R-05 / V-22）。
+       * 不等时那条推导不成立，而按它算出的余量会是错的 —— 所以这里照实报出，
+       * 让调用方能说"前提不成立"，而不是给一个看着确定的错数。
+       */
+      equalWeights: weights.length <= 1,
+      weights,
     };
   } catch (err) {
     return { source: 'unknown', error: err.message, readAt: now };

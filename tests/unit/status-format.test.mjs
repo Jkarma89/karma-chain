@@ -225,12 +225,40 @@ describe('容错基准：链上注册数，且要说清用的是哪个', () => {
     assert.match(s.line, /链继续出块/, '在容错内应当明说链继续出块');
   });
 
-  test('声明数与链上数不同时，必须说出用的是哪个', () => {
+  test('声明数与 P 链数不同时，必须说出用的是哪个', () => {
     const ft = { validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 6 };
     const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
-    assert.match(s.line, /链上注册的 5 个/,
-      `没说基准是链上注册数 —— "6 台机器却按 5 算"看着像少算了一个：${s.line}`);
+    assert.match(s.line, /P 链上带权重的 5 个/,
+      `没说基准是 P 链成员数 —— "6 台机器却按 5 算"看着像少算了一个：${s.line}`);
     assert.match(s.line, /声明 6 个/, '没给出声明数，读的人无从核对差额');
+  });
+
+  // ⌊n/4⌋ 整条推导建立在**等权**上（research R-05 / V-22 实测各 100）。
+  // 权重不等时上面那个"可容忍 N 个离线"是按不成立的前提算的 —— 必须当场说破。
+  test('**权重不等时说明上限不可信**', () => {
+    const ft = {
+      validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 5, equalWeights: false,
+    };
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
+    assert.match(s.line, /上限不可信/,
+      '权重不等却照常给出"可容忍 1 个离线" —— 那个数是按一条不成立的前提算的，'
+      + `而读的人无从知道：${s.line}`);
+    assert.match(s.line, /等权为前提/, '没说清为什么不可信');
+  });
+
+  test('等权时不加这句噪声', () => {
+    const ft = {
+      validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 5, equalWeights: true,
+    };
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
+    assert.doesNotMatch(s.line, /上限不可信/, '恒定出现的警告等于没有警告');
+  });
+
+  test('没有权重信息时**不妄断**（undefined ≠ 不等权）', () => {
+    const ft = { validatorCount: 5, maxOfflineValidators: 1, declaredValidatorCount: 5 };
+    const s = summarize(rows(['healthy', 'healthy', 'healthy', 'healthy', 'healthy']), ft, {});
+    assert.doesNotMatch(s.line, /上限不可信/,
+      '这一侧没提供权重信息就报"不可信"—— 那是把"不知道"说成了"知道它不等权"');
   });
 
   test('声明数与链上数相同时不加这句噪声', () => {

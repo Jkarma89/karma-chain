@@ -238,6 +238,92 @@ describe('readPChainMembers：参数缺一个就抛，不静默返回空集合',
   });
 });
 
+// ## 容错的分母必须取自 P 链
+//
+// 这一组守的是 T070 查实的那个偏乐观口径。证据链：
+//   2026-09-16，第三步做完、第四步没做完 —— 合约说 5 个、P 链说 6 个
+//   同一时刻 L1 的 Warp 校验报 `signature weight is insufficient: 67*600 > 100*200`
+//   **600** = 6 个验证者 × 100 —— 共识按 P 链算，这是直接证据，不是推断
+//
+// 按合约算会少一个成员，把"再掉一个就停摆"报成"还有余量"。
+// 而这种错**不会自己暴露**：两侧一致时两种算法给出同一个数，
+// 只有在有成员正在加入时才分叉 —— 也就是最需要判准的那一刻。
+describe('容错口径：取 P 链，不取合约、不取声明', () => {
+  const read = (p) => readFileSync(resolve(REPO_ROOT, p), 'utf8');
+
+  /**
+   * 取出一个顶层函数的函数体。
+   *
+   * **断言必须落在函数体里，不能落在整个文件上。** 今天在这条守卫上栽过一次：
+   * 原先断言 `readPChainMembers({ pchain, subnetId…` 出现在**文件中**，
+   * 而命令行段里也有一处同形调用 —— 于是把 readConsensusMembers 改成读合约之后，
+   * 字符串仍然存在，守卫照样通过，那条变异没能变红。
+   */
+  const bodyOf = (path, name) => {
+    const src = read(path);
+    const start = src.indexOf(`export async function ${name}(`);
+    assert.notEqual(start, -1, `${path} 里找不到 ${name}`);
+    const end = src.indexOf('\n}\n', start);
+    assert.notEqual(end, -1, `${name} 的函数体没有正常结束`);
+    return src.slice(start, end);
+  };
+
+  test('readConsensusMembers 读 P 链的 getCurrentValidators', () => {
+    const body = bodyOf('tools/membership/member-set.mjs', 'readConsensusMembers');
+    assert.match(body, /\(\{\s*pchainUrl,\s*subnetId/,
+      'readConsensusMembers 的签名不对 —— 它必须收 P 链地址与 subnetId');
+    assert.match(body, /readPChainMembers\(\{\s*pchain,\s*subnetId\s*\}\)/,
+      'readConsensusMembers **的函数体里**没有走 P 链那条读取 —— '
+      + '容错的分母会重新落回合约事件，而那是 T070 查实的偏乐观口径');
+    assert.doesNotMatch(body, /readMemberSet\(/,
+      'readConsensusMembers 里出现了 readMemberSet（合约事件那条路）');
+    assert.match(body, /source: 'p-chain'/,
+      "成员集合的 source 不是 'p-chain' —— 呈现层据此判断口径");
+  });
+
+  test('**合约事件不再作为容错分母**（readRegisteredMembers 已退场）', () => {
+    for (const p of [
+      'tools/membership/member-set.mjs',
+      'tools/dashboard/poll.mjs',
+      'tools/inspect/node-status.mjs',
+    ]) {
+      assert.doesNotMatch(read(p), /readRegisteredMembers/,
+        `${p} 里还有 readRegisteredMembers —— 那个函数按**合约事件**算成员数，`
+        + '方向偏乐观。留着它就留着一条随时会被接回去的旧口径');
+    }
+  });
+
+  test('两个调用方都直连 Primary，不走 L1 的入口代理', () => {
+    // P 链只有 Primary 完整同步；L1 的代理后面是 L1 验证者，它们不提供 P 链视图。
+    for (const [p, re] of [
+      ['tools/dashboard/poll.mjs', /role === 'primary'/],
+      ['tools/inspect/node-status.mjs', /role === 'primary'/],
+    ]) {
+      assert.match(read(p), re,
+        `${p} 没有从拓扑里挑 Primary —— 拿 L1 的 RPC 去查 P 链会查不到，`
+        + '而查不到会让面板判成"成员集合未知"，看起来像观测问题而不是接线问题');
+    }
+  });
+
+  test('收敛判据只认 p-chain 这个 source', () => {
+    const src = read('tools/dashboard/snapshot.mjs');
+    assert.match(src, /memberSet\?\.source !== 'p-chain'/,
+      "scopeToChainMembers 没有把 source 限定为 'p-chain'");
+    assert.match(src, /memberSet\.source !== 'p-chain'/,
+      "deriveTier 的「成员集合未知」判定没有限定 'p-chain'");
+    assert.doesNotMatch(src, /source !== 'chain'|source === 'chain'/,
+      "还留着旧的 'chain' 判定 —— 两个 source 名同时被接受就等于口径不确定");
+  });
+
+  test('等权前提被传上去（⌊n/4⌋ 就建立在它上面）', () => {
+    assert.match(read('tools/membership/member-set.mjs'), /equalWeights: weights\.length <= 1/,
+      'readConsensusMembers 没有算等权');
+    assert.match(read('tools/dashboard/snapshot.mjs'), /equalWeights: memberSet\.equalWeights/,
+      'scopeToChainMembers 没有把等权前提传给呈现层 —— '
+      + '那样权重不等时会照常给出一个按不成立前提算出的上限');
+  });
+});
+
 // ## 接线也要守
 //
 // 上面那些测的是**判定**。但判定对而**没人调用**，第二个事实来源就等于不存在 ——
