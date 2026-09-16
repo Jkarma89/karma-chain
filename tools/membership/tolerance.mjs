@@ -68,6 +68,72 @@ export function toleranceAfterAdd({ membersBefore, offlineIds, newMemberOnline }
 }
 
 /**
+ * 现在**还能不能凑出签名**（FR-018 的那个不明显的代价）。
+ *
+ * ## 为什么紧急摘除恰恰是最难执行的时候
+ *
+ * 退出的第二步要收集 L1 验证者的签名，门槛是总权重的 `quorumNum`%。
+ * 而紧急摘除的前提就是**有一台机器已经失联** —— 它签不了。
+ *
+ * n=6、等权 100、门槛 67%：需要 402 权重，即**至少 5 个**。死掉一个之后
+ * 剩下 5 个**必须全签**，一个都不能出问题。而 2026-09-14…16 反复撞到的
+ * P2P 签名故障（节点自己能签、别人经 P2P 要不到）说明"全签"不是理所当然的。
+ *
+ * 所以这一条要在**动链之前**算出来：凑不够就别开始。第一步是合约交易、
+ * 本身可回滚，但它会把成员置成 `pending-removed`（status 3）——
+ * 那是一个真实的中间态，而卡在那里之后要靠重发消息才能往下走。
+ *
+ * **按权重算，不按个数。** 等权是当前的事实（research V-22），但它是事实
+ * 而不是前提：权重一旦不等，按个数折算就是错的。
+ *
+ * @param {{memberWeights: Array<{nodeId: string, weight: bigint|number|string}>,
+ *          offlineIds: string[], quorumNum?: number}} args
+ */
+export function signerAvailability({ memberWeights, offlineIds, quorumNum = 67 }) {
+  if (!Array.isArray(memberWeights) || !memberWeights.length) {
+    throw new Error('signerAvailability 需要 memberWeights（链上成员及其权重）');
+  }
+  const offline = new Set(offlineIds);
+  let total = 0n;
+  let available = 0n;
+  let availableCount = 0;
+  for (const m of memberWeights) {
+    const w = BigInt(m.weight);
+    total += w;
+    if (!offline.has(m.nodeId)) { available += w; availableCount += 1; }
+  }
+  if (total === 0n) throw new Error('成员总权重为 0 —— 算不出签名占比');
+
+  // 门槛用整数比较，不折成浮点：`available * 100 >= quorumNum * total`
+  // 与 avalanchego 的判据同形（它报的是 `67*600 > 100*200` 那种乘法式）。
+  const meets = available * 100n >= BigInt(quorumNum) * total;
+  const percent = Number((available * 100n) / total);
+  // 还差多少权重。已达标时为 0 —— 不给负数，那会让调用方的措辞变成"还差 -100"。
+  const needed = (BigInt(quorumNum) * total + 99n) / 100n;   // ⌈quorumNum% × total⌉
+  const shortfall = meets ? 0n : needed - available;
+
+  return {
+    totalWeight: total,
+    availableWeight: available,
+    availableCount,
+    offlineCount: memberWeights.length - availableCount,
+    percent,
+    quorumNum,
+    meetsQuorum: meets,
+    /** 还差多少权重才够门槛。达标时为 0。 */
+    shortfall,
+    /** 等权时"还差几个" —— 只在真等权时有意义，否则为 null，不给一个误导的整数。 */
+    shortfallMembers: (() => {
+      if (meets) return 0;
+      const ws = new Set(memberWeights.map((m) => String(m.weight)));
+      if (ws.size !== 1) return null;
+      const each = BigInt(memberWeights[0].weight);
+      return each === 0n ? null : Number((shortfall + each - 1n) / each);
+    })(),
+  };
+}
+
+/**
  * 退一个成员的代价（FR-011 / FR-012）。
  *
  * ## 退比加更容易出错，而且方向是反直觉的

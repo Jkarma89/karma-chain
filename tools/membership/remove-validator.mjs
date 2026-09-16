@@ -36,7 +36,11 @@
 // 而它应当由**人看得见的两步**来保证。
 //
 // 用法：
-//   node tools/membership/remove-validator.mjs --node-id NodeID-… [--yes]
+//   node tools/membership/remove-validator.mjs --node-id NodeID-… [--emergency] [--yes]
+//
+// 两条路径（契约第 4 节）：不加 --emergency 是**优雅退出**（机器还活着、能配合，
+// 走完四步后再停进程）；加 --emergency 是**紧急摘除**（机器已损坏/失联）。
+// 走哪条由机器的实际状态决定 —— 与参数不符时工具停下来说清楚，参数只是确认。
 //
 // 退出码：0 完成/无需操作 | 3 用户中止 | 11 前置检查未过 | 12 某一步失败
 import { createPublicClient, http } from 'viem';
@@ -50,7 +54,7 @@ import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, STATUS,
   readMemberSet, readPChainMembers, classifyPChainDrift,
 } from './member-set.mjs';
-import { removalImpact, maxOffline } from './tolerance.mjs';
+import { removalImpact, signerAvailability } from './tolerance.mjs';
 // 第二步、确认消息的构造、谓词编码、Primary/L1 签名聚合 —— 与加入共用。
 // 复制一份的后果不是多几行字，是两条路径对"消息长什么样"各有一套理解。
 import {
@@ -205,6 +209,26 @@ export async function removalPrecheck({ client, pchain, nodeId, config, subnetId
     ? removalImpact({ membersBefore: pset.members.length, offlineIds, removingNodeId: nodeId })
     : null;
 
+  // ── 现在还能不能凑出签名（FR-018）───────────────────────────────────────
+  //
+  // **在动链之前算。** 第一步是合约交易、本身可回滚，但它会把成员置成
+  // pending-removed（status 3）—— 那是一个真实的中间态，卡在那儿之后要靠
+  // 重发消息才能往下走。凑不够就别开始。
+  //
+  // 这一条对紧急摘除尤其要紧：它的前提就是有一台机器失联，而那台机器
+  // **签不了** —— 也就是说紧急摘除恰恰是最难执行的时候。
+  const signers = signerAvailability({
+    memberWeights: pset.members.map((m) => ({ nodeId: m.nodeId, weight: m.weight })),
+    offlineIds,
+  });
+  if (!signers.meetsQuorum) {
+    problems.push(`**现在凑不出第二步需要的签名。** 可签权重 ${signers.availableWeight}`
+      + ` / 总权重 ${signers.totalWeight} = ${signers.percent}%，门槛 ${signers.quorumNum}%，`
+      + `还差 ${signers.shortfall}`
+      + (signers.shortfallMembers === null ? '' : `（等权下约 ${signers.shortfallMembers} 个成员）`)
+      + '。先把离线的机器弄回来 —— 现在开始只会把成员卡在 pending-removed。');
+  }
+
   if (impact?.wouldEmptySet) {
     problems.push('这是最后一个成员 —— 退掉它不是缩容，是销毁这条链。本工具不做这件事。');
   }
@@ -222,7 +246,7 @@ export async function removalPrecheck({ client, pchain, nodeId, config, subnetId
     split = classifyPChainDrift({ contractMembers: set.members, pchainMembers: pset.members });
   } catch { /* 读不到合约侧不阻断退出 —— P 链那一侧才是门槛依据 */ }
 
-  return { ok: problems.length === 0, problems, impact, split };
+  return { ok: problems.length === 0, problems, impact, split, signers, targetOffline: offlineIds.includes(nodeId) };
 }
 
 /** 第一步：合约 `initiateValidatorRemoval(validationID)`。失败即回滚，链上不留中间态。 */
@@ -514,7 +538,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   const autoYes = args.includes('--yes');
   const nodeId = flag('--node-id');
   if (!nodeId || nodeId === true) {
-    console.error('用法: node tools/membership/remove-validator.mjs --node-id NodeID-… [--yes]');
+    console.error('用法: node tools/membership/remove-validator.mjs --node-id NodeID-… [--emergency] [--yes]');
     console.error('  先跑 npm run membership:status 看当前成员。');
     process.exit(EXIT_PRECHECK);
   }
@@ -554,6 +578,60 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     process.exit(EXIT_PRECHECK);
   }
   console.error('  ✓ 全部通过');
+
+  // ── 两条退出路径：走哪一条由**机器的实际状态**决定，而不是由参数决定 ──────
+  //
+  // 契约第 4 节给了两条路径，前提不同：优雅退出要求"机器还活着、能配合"，
+  // 紧急摘除的前提是"机器已损坏 / 失联"。
+  //
+  // **两个方向都要拦，因为两种误用各有真实代价：**
+  //
+  //   机器已失联而不加 --emergency
+  //     → 走完四步后工具会让你"现在去停进程"，而那台机器上没有进程可停。
+  //       更要紧的是紧急摘除的那两个代价没被说出来（见下），
+  //       其中"少一个签名者"会让第二步凑不出门槛。
+  //
+  //   机器还活着却加了 --emergency
+  //     → 紧急路径跳过"停进程"这一步，于是留下一个**不在集合里却仍在运行**的节点。
+  //       它不破坏共识（不带权重），但它会一直跑着、一直在面板上占一行，
+  //       而且机器重启后 devnet-start 还会把它拉起来。
+  //
+  // 所以不让参数单方面决定：工具探到实际状态，与参数不符就停下来说清楚。
+  // 这仍然是"人看得见的两步" —— 参数是**对已知情况的确认**，不是开关。
+  const emergency = args.includes('--emergency');
+  if (pre.targetOffline && !emergency) {
+    console.error('\n**这台机器当前不应答** —— 这是紧急摘除的场景。');
+    console.error('  优雅退出的前提是"机器还活着、能配合"：走完四步后要去停它的进程，');
+    console.error('  而那台机器上现在没有进程可停。');
+    console.error('\n  加 --emergency 重跑。它会把两个代价说清楚，其中一个不明显：');
+    console.error(`  ① 少一个签名者 —— 现在可签权重 ${pre.signers.availableWeight}`
+      + `/${pre.signers.totalWeight} = ${pre.signers.percent}%（门槛 ${pre.signers.quorumNum}%）`);
+    console.error('  ② 摘除之后无法确认它不会回来 —— 见 --emergency 的输出');
+    process.exit(EXIT_PRECHECK);
+  }
+  if (!pre.targetOffline && emergency) {
+    console.error('\n**这台机器还在应答** —— 用优雅退出（去掉 --emergency）。');
+    console.error('  紧急摘除跳过"停进程"那一步，于是会留下一个**不在集合里却仍在运行**的节点：');
+    console.error('  它不带权重、不破坏共识，但会一直跑着占一行，而且机器重启后');
+    console.error('  devnet-start 还会把它拉起来。既然它活着，就按规程停它。');
+    process.exit(EXIT_PRECHECK);
+  }
+
+  if (emergency) {
+    console.error('\n== 紧急摘除（机器已损坏 / 失联）==');
+    console.error('  与优雅退出的区别：不做"停进程"那一步 —— 没有进程可停。');
+    console.error('  **代价一：少一个签名者。** 第二步要收集 L1 验证者的签名，');
+    console.error(`  而失联那台签不了。现在可签权重 ${pre.signers.availableWeight}`
+      + `/${pre.signers.totalWeight} = ${pre.signers.percent}%，门槛 ${pre.signers.quorumNum}%`
+      + ` —— ${pre.signers.meetsQuorum ? '够' : '**不够**'}。`);
+    console.error(`  剩下 ${pre.signers.availableCount} 个能签的**必须全签**，一个都不能出问题。`);
+    console.error('  （2026-09-14…16 反复撞到过：节点自己能签、别人经 P2P 要不到 ——'
+      + ' 修法是 up -d --force-recreate 重建那个容器，见 docs/devnet.md §5.3）');
+    console.error('  **代价二：无法确认它不会回来。** 优雅退出里进程是你自己停的，');
+    console.error('  所以你知道它停了。这里那台机器随时可能重新上线，而它的密钥仍在本机 ——');
+    console.error('  摘除完成后**先把它从 deployment.json 里移除并重新渲染**，');
+    console.error('  再让那台机器开机；否则 devnet-start 会把一个已经不是成员的节点拉起来。');
+  }
 
   // ── 代价告知（FR-011）──────────────────────────────────────────────────────
   const im = pre.impact;

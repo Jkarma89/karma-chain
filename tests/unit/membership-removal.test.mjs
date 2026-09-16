@@ -20,7 +20,7 @@
 // 工具若对"清理一台已经坏掉的机器"发出吓人的警告，人就会开始忽略这些警告。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { removalImpact, maxOffline } from '../../tools/membership/tolerance.mjs';
+import { removalImpact, maxOffline, signerAvailability } from '../../tools/membership/tolerance.mjs';
 
 const impact = (n, offline, removing) => removalImpact({
   membersBefore: n, offlineIds: offline, removingNodeId: removing,
@@ -148,5 +148,120 @@ describe('边界：不能退到一个都不剩', () => {
       /removingNodeId/,
       '不知道退的是哪一个，就算不出退完还有几个离线 —— '
       + '默默当成"退一个在线的"会在清理坏机器时给出偏悲观的结论');
+  });
+});
+
+// ## 紧急摘除的那个**不明显**的代价（T037 / FR-018）
+//
+// 紧急摘除的前提是"有一台机器已失联"。而第二步要收集 L1 验证者的签名 ——
+// **失联那台签不了**。也就是说紧急摘除恰恰是最难执行的时候。
+//
+// n=6、等权 100、门槛 67%：需要 402 权重，即至少 5 个。死掉一个之后
+// 剩下 5 个**必须全签**，一个都不能出问题。而 2026-09-14…16 反复撞到的
+// P2P 签名故障（节点自己能签、别人经 P2P 要不到）说明"全签"不是理所当然的。
+//
+// 这一条要在**动链之前**算：第一步虽然可回滚，但它会把成员置成
+// pending-removed（status 3），卡在那儿之后要靠重发消息才能往下走。
+describe('signerAvailability：现在还能不能凑出签名', () => {
+  const eq = (n) => Array.from({ length: n }, (_, i) => ({ nodeId: `n${i}`, weight: 100n }));
+
+  test('当前这条链：6 个全在线 → 100%，达标', () => {
+    const r = signerAvailability({ memberWeights: eq(6), offlineIds: [] });
+    assert.equal(r.totalWeight, 600n);
+    assert.equal(r.availableWeight, 600n);
+    assert.equal(r.percent, 100);
+    assert.equal(r.meetsQuorum, true);
+    assert.equal(r.shortfall, 0n);
+    assert.equal(r.shortfallMembers, 0);
+  });
+
+  test('**6 个掉 1 个 → 83%，刚好够**（紧急摘除的典型场景）', () => {
+    const r = signerAvailability({ memberWeights: eq(6), offlineIds: ['n0'] });
+    assert.equal(r.availableWeight, 500n);
+    assert.equal(r.percent, 83);
+    assert.equal(r.meetsQuorum, true, '500/600 = 83% ≥ 67%，够');
+    assert.equal(r.availableCount, 5, '剩下 5 个能签的**必须全签**');
+  });
+
+  test('**6 个掉 2 个 → 66%，不够**（差一点，而这一点就是全部）', () => {
+    const r = signerAvailability({ memberWeights: eq(6), offlineIds: ['n0', 'n1'] });
+    assert.equal(r.percent, 66);
+    assert.equal(r.meetsQuorum, false,
+      '400/600 = 66.67%，而门槛是 67% —— 差 0.33 个百分点。'
+      + '用浮点或四舍五入很容易把它算成"够"，那会让人开始一个走不完的流程');
+    assert.equal(r.shortfall, 2n, '⌈67% × 600⌉ = 402，还差 2 权重');
+    assert.equal(r.shortfallMembers, 1, '等权下再回来一个就够');
+  });
+
+  test('门槛用整数乘法比较，不折成浮点', () => {
+    // 66.67% 这种情形正是浮点比较会出错的地方。判据与 avalanchego 报错同形
+    // （它报的是 `67*600 > 100*200` 那种乘法式）。
+    const r = signerAvailability({ memberWeights: eq(3), offlineIds: ['n0'] });
+    assert.equal(r.meetsQuorum, false, '200/300 = 66.67% < 67%');
+    const ok = signerAvailability({ memberWeights: eq(3), offlineIds: [] });
+    assert.equal(ok.meetsQuorum, true);
+  });
+
+  test('权重不等时按权重算，且"还差几个"给 null 而不是猜一个数', () => {
+    const r = signerAvailability({
+      memberWeights: [
+        { nodeId: 'a', weight: 100n }, { nodeId: 'b', weight: 100n },
+        { nodeId: 'c', weight: 400n },
+      ],
+      offlineIds: ['c'],
+    });
+    assert.equal(r.totalWeight, 600n);
+    assert.equal(r.availableWeight, 200n, '掉的是权重最大的那个');
+    assert.equal(r.meetsQuorum, false);
+    assert.equal(r.shortfallMembers, null,
+      '权重不等却给出了"还差几个" —— 那个数会误导：'
+      + '回来一个小权重的可能仍然不够');
+    assert.equal(r.shortfall, 202n, '⌈67% × 600⌉ = 402，还差 202 权重');
+  });
+
+  // 变红检查里"needed 用向下取整"那条一开始**没红** —— 因为等权 100 时
+  // 67×600/100 = 402 恰好整除，ceil 与 floor 给出同一个数。
+  // 总权重不是 100 的倍数时两者才分叉，而那时 floor 会给出
+  // **"不达标但还差 0"** 这种自相矛盾的输出。
+  test('总权重不整除时，shortfall 与 meetsQuorum 不许自相矛盾', () => {
+    // 总权重 350：⌈67% × 350⌉ = 235（floor 会给 234）
+    const r = signerAvailability({
+      memberWeights: [{ nodeId: 'a', weight: 234n }, { nodeId: 'b', weight: 116n }],
+      offlineIds: ['b'],
+    });
+    assert.equal(r.totalWeight, 350n);
+    assert.equal(r.availableWeight, 234n);
+    assert.equal(r.meetsQuorum, false, '234×100 = 23400 < 67×350 = 23450');
+    assert.ok(r.shortfall > 0n,
+      `不达标却报"还差 ${r.shortfall}" —— 向下取整会算出 234−234 = 0，`
+      + '于是输出变成"凑不够，但你一点都不缺"');
+    assert.equal(r.shortfall, 1n, '⌈67% × 350⌉ = 235，还差 1');
+  });
+
+  test('达标时 shortfall 为 0，不给负数', () => {
+    const r = signerAvailability({ memberWeights: eq(6), offlineIds: [] });
+    assert.equal(r.shortfall, 0n,
+      '负的 shortfall 会让调用方的措辞变成"还差 -100 权重"');
+  });
+
+  test('字符串与 number 权重都接受（JSON-RPC 回的是字符串）', () => {
+    const r = signerAvailability({
+      memberWeights: [{ nodeId: 'a', weight: '100' }, { nodeId: 'b', weight: 100 }],
+      offlineIds: [],
+    });
+    assert.equal(r.totalWeight, 200n);
+  });
+
+  test('**空集合 → 抛**（不返回一个 0/0 的"达标"）', () => {
+    assert.throws(() => signerAvailability({ memberWeights: [], offlineIds: [] }),
+      /memberWeights/,
+      '空集合被放过去 —— 0/0 在整数比较下是 0 >= 0，会算成"达标"，'
+      + '于是一条读不到成员的链看起来可以开始退出流程');
+  });
+
+  test('总权重为 0 → 抛', () => {
+    assert.throws(() => signerAvailability({
+      memberWeights: [{ nodeId: 'a', weight: 0n }], offlineIds: [],
+    }), /总权重/);
   });
 });
