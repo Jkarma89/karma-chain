@@ -949,8 +949,17 @@ export function registrationConfirmationMessage({ validationID, networkId, regis
  *
  * @param {string} signingSubnetId 由**哪个集合**签。本链的 subnetID —— 见上面那段。
  */
+/**
+ * @param {string|null} justification 只有**否定性**断言需要它。
+ *   `registered: true` 节点能从 P 链状态直接读出，不需要；
+ *   `registered: false` 读不出来 —— 节点无法区分"被摘除了"与"从来没有过"，
+ *   所以要额外材料说明"它本来是什么"。缺了就回
+ *   `invalid justification type: <nil>`（2026-09-16 实测）。
+ *   构造见 remove-validator.mjs 的 removalJustification。
+ */
 export async function aggregateConfirmationSignatures({
-  aggregatorUrl, unsignedMessage, signingSubnetId, quorumPercentage = 67, timeoutMs = 90_000,
+  aggregatorUrl, unsignedMessage, signingSubnetId, justification = null,
+  quorumPercentage = 67, timeoutMs = 90_000,
 }) {
   if (!signingSubnetId) {
     throw new Error('aggregateConfirmationSignatures 需要 signingSubnetId'
@@ -966,6 +975,10 @@ export async function aggregateConfirmationSignatures({
         message: unsignedMessage.replace(/^0x/, ''),
         'signing-subnet-id': signingSubnetId,
         'quorum-percentage': quorumPercentage,
+        // 只在真有 justification 时带上这个字段。传 null 会让聚合器把它当成
+        // "给了一个空的 justification"，而节点对空值与缺字段的回答不同
+        // （前者 proto 解析失败，后者 `invalid justification type: <nil>`）。
+        ...(justification ? { justification: justification.replace(/^0x/, '') } : {}),
       }),
       signal: AbortSignal.timeout(timeoutMs),
     });

@@ -42,9 +42,10 @@
 import { createPublicClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
 import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
-import { identityOf } from '../verify/lib/identity.mjs';
+import { identityOf, cb58Decode } from '../verify/lib/identity.mjs';
 import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, STATUS,
   readMemberSet, readPChainMembers, classifyPChainDrift,
@@ -265,7 +266,7 @@ export async function step3Remove({
   const { Context, pvm, utils, secp256k1, addTxSignatures } = await import('@avalabs/avalanchejs');
   const { assertPayerAccount, computeFee } = await import('./add-validator.mjs');
 
-  const priv = Buffer.from(privateKeyHex.replace(/^0x/, ''), 'hex');
+  const priv = Buffer.from(privateKeyHex.replace(/^0x/i, ''), 'hex');
   const addrBytes = secp256k1.publicKeyBytesToAddress(secp256k1.getPublicKey(priv));
   const api = new pvm.PVMApi(pchainUri);
 
@@ -287,7 +288,7 @@ export async function step3Remove({
   const unsignedTx = pvm.newSetL1ValidatorWeightTx({
     feeState,
     fromAddressesBytes: [addrBytes],
-    message: Buffer.from(signedMessage.replace(/^0x/, ''), 'hex'),
+    message: Buffer.from(signedMessage.replace(/^0x/i, ''), 'hex'),
     utxos,
   }, context);
 
@@ -307,6 +308,129 @@ export async function step3Remove({
 }
 
 /**
+ * `registered: false` 的签名请求**必须带 justification**（2026-09-16 实测）。
+ *
+ * ## 这一条是一路问出来的，每一步都有节点给的确切回答
+ *
+ *   不给 justification            → `invalid justification type: <nil>`
+ *   给裸的 warp 字节              → `failed to parse justification: proto: cannot parse invalid wire-format data`
+ *                                   —— 于是知道它是 **protobuf**，不是裸字节
+ *   protobuf 字段2 ← 216B AddressedCall → `packer has insufficient length for input`
+ *   protobuf 字段2 ← 258B 整条消息       → `unknown type ID 1337` —— 它把 networkID 当成了 typeID
+ *   protobuf 字段2 ← **182B 内层注册消息** → **解析通过**，改报 `validation "…" exists`
+ *
+ * 最后那句才是应有的拒签理由：l1-6 确实还是成员，`registered: false` 是假陈述。
+ * 格式于是被定死，而**整个过程没有动过链** —— 签名请求是只读的。
+ *
+ * ## 为什么"不存在"需要额外材料，而"存在"不需要
+ *
+ * 加入的第四步断言的是 `registered: true`，节点从 P 链状态直接读得出。
+ * 退出断言的是 `registered: false` —— **"不存在"读不出来**：
+ * 节点无法区分"这个 validationID 被摘除了"与"这个 validationID 从来没有过"。
+ * justification 提供的正是"它本来是什么"，节点据此重算 validationID 再确认它不在集合里。
+ *
+ * ## 两个变体，按**证据**选而不是信声明
+ *
+ *   创世成员    `SubnetIDIndex{subnetID, index}` —— validationID 由
+ *               `sha256(subnetID ‖ uint32BE(index))` 派生（同上实测，五个逐一命中）
+ *   后加入成员  当初那条 `RegisterL1Validator` 消息的 **182 字节内层**
+ *
+ * 选哪一支由 `genesisValidationIndex` 拿 validationID 去试公式决定 ——
+ * **不读声明里的 `origin`**。声明可以写错，而公式对得上就是对得上。
+ */
+export function removalJustification({ registerMessage, subnetId, index } = {}) {
+  const varint = (n) => {
+    const out = [];
+    let v = n;
+    do { let b = v & 0x7f; v >>>= 7; if (v) b |= 0x80; out.push(b); } while (v);
+    return Buffer.from(out);
+  };
+  const lenField = (fieldNo, buf) => Buffer.concat([
+    Buffer.from([(fieldNo << 3) | 2]), varint(buf.length), buf,
+  ]);
+  const varField = (fieldNo, n) => Buffer.concat([Buffer.from([(fieldNo << 3) | 0]), varint(n)]);
+
+  if (registerMessage) {
+    const bytes = Buffer.from(String(registerMessage).replace(/^0x/i, ''), 'hex');
+    if (!bytes.length) throw new Error('removalJustification: registerMessage 是空的');
+    // 字段 2 = register_l1_validator_message（实测命中的那一支）
+    return `0x${lenField(2, bytes).toString('hex')}`;
+  }
+
+  if (subnetId !== undefined && index !== undefined) {
+    if (!Number.isInteger(index) || index < 0) {
+      throw new Error(`removalJustification: index 是 ${index} —— 必须是 ≥ 0 的整数`);
+    }
+    const subnetBytes = Buffer.from(cb58Decode(subnetId));
+    if (subnetBytes.length !== 32) {
+      throw new Error(`subnetID 解码后是 ${subnetBytes.length} 字节，应当是 32 字节`);
+    }
+    // 字段 1 = convert_subnet_to_l1_tx_data（SubnetIDIndex{subnet_id=1, index=2}）
+    const inner = Buffer.concat([lenField(1, subnetBytes), varField(2, index)]);
+    return `0x${lenField(1, inner).toString('hex')}`;
+  }
+
+  throw new Error('removalJustification 需要 registerMessage（后加入的成员）'
+    + '或 subnetId + index（创世成员）—— 两者都没给的话，节点会回'
+    + ' `invalid justification type: <nil>`，而那句话不会告诉你缺的是哪一支');
+}
+
+/**
+ * 这个 validationID 是不是**创世派生**的？是则给出它的 index。
+ *
+ * 公式 `sha256(subnetID ‖ uint32BE(index))` 由节点自己的报错反推并验证：
+ * 拿一个 `SubnetIDIndex{subnetID, index:5}` 去问，节点回
+ * `validationID "…" != justificationID "y9QvY…"` —— 那个 justificationID
+ * 就是它算出的值，四种候选写法里只有这一种命中。
+ * 随后五个创世成员的真实 validationID 逐一命中 index 0…4，公式即被独立验证。
+ *
+ * **按公式判而不是读声明的 `origin`**：声明可以写错，公式对得上就是对得上。
+ */
+export function genesisValidationIndex({ subnetId, validationID, maxIndex = 64 }) {
+  const subnetBytes = Buffer.from(cb58Decode(subnetId));
+  const want = String(validationID).replace(/^0x/i, '').toLowerCase();
+  for (let i = 0; i <= maxIndex; i += 1) {
+    const idx = Buffer.alloc(4);
+    idx.writeUInt32BE(i);
+    const got = createHash('sha256').update(Buffer.concat([subnetBytes, idx])).digest('hex');
+    if (got === want) return i;
+  }
+  return null;
+}
+
+/**
+ * 从一条 AddressedCall 包着的未签名 Warp 消息里切出**内层 ACP-77 消息**。
+ *
+ * 布局（与 add-validator 里 registrationConfirmationMessage 的构造互逆）：
+ *   codec(2) + networkID(4) + sourceChainID(32) + payloadLen(4) + AddressedCall
+ *   AddressedCall = codec(2) + typeID(4) + srcAddrLen(4) + srcAddr + payloadLen(4) + 内层
+ *
+ * 实测的三个尺寸：整条 258 / AddressedCall 216 / 内层 182。
+ * 切错一层的后果都试过：给 216 报 `packer has insufficient length`，
+ * 给 258 报 `unknown type ID 1337`（把 networkID 当成了 typeID）。
+ */
+export function innerMessageOf(unsignedWarpMessageHex) {
+  const b = Buffer.from(String(unsignedWarpMessageHex).replace(/^0x/i, ''), 'hex');
+  if (b.length < 42 + 14) throw new Error(`消息只有 ${b.length} 字节，装不下 Warp 头加 AddressedCall 头`);
+  const payloadLen = b.readUInt32BE(38);
+  const addressedCall = b.subarray(42, 42 + payloadLen);
+  if (addressedCall.length !== payloadLen) {
+    throw new Error(`payload 声明 ${payloadLen} 字节，实际只有 ${addressedCall.length} —— 消息被截断了`);
+  }
+  if (addressedCall.readUInt32BE(2) !== 1) {
+    throw new Error(`payload 的 typeID 是 ${addressedCall.readUInt32BE(2)}，不是 1（AddressedCall）`);
+  }
+  const srcAddrLen = addressedCall.readUInt32BE(6);
+  const innerOffset = 2 + 4 + 4 + srcAddrLen + 4;
+  const innerLen = addressedCall.readUInt32BE(2 + 4 + 4 + srcAddrLen);
+  const inner = addressedCall.subarray(innerOffset, innerOffset + innerLen);
+  if (inner.length !== innerLen) {
+    throw new Error(`内层声明 ${innerLen} 字节，实际只有 ${inner.length}`);
+  }
+  return `0x${inner.toString('hex')}`;
+}
+
+/**
  * 第四步：把 P 链的摘除确认交给合约（`completeValidatorRemoval`）。
  *
  * 确认消息与加入那步同构，只是 `registered: **false**`。
@@ -314,13 +438,23 @@ export async function step3Remove({
  * `requirePrimaryNetworkSigners` 的那个配置项与实际效果不一致，我判断错过一轮）。
  */
 export async function step4Remove({
-  client, validationID, networkId, subnetId, aggregatorUrl, ownerAccount, dryRun = false,
+  client, validationID, networkId, subnetId, aggregatorUrl, ownerAccount,
+  registerMessage = null, dryRun = false,
 }) {
   const unsignedMessage = registrationConfirmationMessage({
     validationID, networkId, registered: false,
   });
+
+  // **justification 按证据选支**，不读声明的 origin：
+  // 拿 validationID 去试创世公式，命中就是创世成员（用 SubnetIDIndex），
+  // 不命中才是后加入的（用当初那条注册消息）。
+  const genesisIndex = genesisValidationIndex({ subnetId, validationID });
+  const justification = genesisIndex === null
+    ? removalJustification({ registerMessage })
+    : removalJustification({ subnetId, index: genesisIndex });
+
   const signedMessage = await aggregateConfirmationSignatures({
-    aggregatorUrl, unsignedMessage, signingSubnetId: subnetId,
+    aggregatorUrl, unsignedMessage, signingSubnetId: subnetId, justification,
   });
   const storageKeys = packWarpPredicate(signedMessage);
   const accessList = [{ address: WARP_PRECOMPILE_ADDRESS, storageKeys }];
@@ -328,6 +462,7 @@ export async function step4Remove({
   const plan = {
     unsignedBytes: (unsignedMessage.length - 2) / 2,
     signedBytes: (signedMessage.length - 2) / 2,
+    justificationKind: genesisIndex === null ? 'register-message' : `subnet-index(${genesisIndex})`,
     storageKeys: storageKeys.length,
   };
 

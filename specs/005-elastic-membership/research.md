@@ -484,6 +484,48 @@ spec 的 FR-020 要求决定必须有实测数据。两条候选：
   另：`eth_call`（`simulateContract`）会自行为调用准备谓词结果，**模拟通过不能证明会成功**。
   同一条消息模拟通过、真实出块 revert，两次都是这样。
 
+- **V-35** ✅ **退出第四步的 `registered: false` 必须带 justification**，而加入那步不需要
+  （2026-09-16，全部在链外验证，**一步都没动链**）。
+
+  **为什么"不存在"需要额外材料。** 加入断言 `registered: true`，节点从 P 链状态
+  直接读得出。退出断言 `registered: false` —— 而"不存在"读不出来：
+  节点无法区分"这个 validationID 被摘除了"与"它从来没有过"。
+  justification 提供的正是"它本来是什么"，节点据此重算 validationID 再确认它不在集合里。
+
+  **格式是一路问出来的**，每一步都有节点给的确切回答（签名请求只读，所以可以放心试）：
+
+  | 传什么 | 节点回什么 |
+  |---|---|
+  | 不给 | `invalid justification type: <nil>` |
+  | 裸 warp 字节 | `proto: cannot parse invalid wire-format data` ⇒ **是 protobuf** |
+  | 字段 2 ← 216B AddressedCall | `packer has insufficient length for input` |
+  | 字段 2 ← 258B 整条消息 | `unknown type ID 1337` ⇒ 它把 networkID 当成了 typeID |
+  | **字段 2 ← 182B 内层注册消息** | **解析通过**，改报 `validation "…" exists` |
+
+  最后那句才是应有的拒签理由：l1-6 确实还是成员，`registered: false` 是假陈述。
+  等第三步真把它从 P 链摘掉，同一个请求就会成功。
+
+  **两个变体，按证据选支：**
+
+  - 后加入成员 → protobuf 字段 2 = 当初那条 `RegisterL1Validator` 的 **182 字节内层**
+  - 创世成员 → 字段 1 = `SubnetIDIndex{subnet_id, index}`
+
+  创世那一支的 validationID 派生公式由节点自己的报错反推：拿
+  `SubnetIDIndex{subnetID, index:5}` 去问，它回
+  `validationID "…" != justificationID "y9QvYNhviCvVPHVkSDQKqrTD1k9DfRqjB383kTPc7yanQrtE7"`
+  —— 那个 justificationID 就是它算出的值。四种候选写法里只有
+  **`sha256(subnetID ‖ uint32BE(index))`** 命中。
+
+  随后五个创世成员的真实 validationID 逐一命中，公式被独立验证，
+  并顺带定出各自的 index（**与 l1-N 编号不一致**，是转换交易里验证者数组的顺序）：
+
+  | 成员 | l1-1 | l1-4 | l1-5 | l1-3 | l1-2 |
+  |---|---|---|---|---|---|
+  | index | 0 | 1 | 2 | 3 | 4 |
+
+  所以选哪一支**不能读声明里的 `origin`** —— 拿 validationID 去试公式，
+  命中就是创世成员。声明可以写错，公式对得上就是对得上。
+
 - **V-33** ✅ T072 滚动完成后，**五个注册验证者全部开启 Warp API**（逐台实测）。
   签名聚合的 quorum 够了：5/5 = 100% ≥ 67%。
   滚动中 win-2 有一次误判：面板报 unreachable 而 `curl` 200 —— 那是我跑得太早，
