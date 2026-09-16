@@ -353,7 +353,7 @@ docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate <�
 > **被移除的节点不是故障节点。** 面板会把它归入 `membership`（"不是当前成员（非故障）"），
 > 而不是 `node-infra` —— 两者处置相反，别去那台机器上查（FR-028）。
 
-下面几条是**只能靠实测发现**的坑（扩容与缩容的完整规程、`n → f` 那张表尚未成文 —— 见 T059）。
+完整规程（含 `n → f` 那张表与哪些变化不会提高容错）见 **§11**。下面几条是**只能靠实测发现**的坑。
 
 - **排查顺序：先把日志级别调上去，再猜。** 第四步失败时，合约只回一个自定义错误选择器、
   Warp 预编译只回 `valid = false`，`log-level: info` 下**完全静默**。
@@ -1225,3 +1225,137 @@ $env:KARMACHAIN_DOMAIN='<本机边界>'; .\scripts\devnet-dashboard.ps1
 | 面板显示「观测降级」 | 没取到容器事实（`.devnet/containers.json` 缺失或超过 120 秒）。跑一次 `scripts/devnet-status` 可刷新。**核心判据不受影响**，只是本机节点的「被主动停止」会显示为「整域缺席」 |
 | `cannot attach stdin to a TTY-enabled container` | 已修（按 stdin 是否为终端条件加 `-t`）。若仍出现，说明用了旧版脚本 |
 | 面板报「链已停止」但链其实好着 | **这是缺陷，不是配置问题。** 请贴出 `/api/snapshot` 的 `observer` 与 `tier` 字段 —— 面板的设计承诺是：观察者自己看不见时永不替链下结论 |
+
+---
+
+## 11. 扩容与缩容的完整规程（功能 005 / FR-037）
+
+> **先读这一节的第一段。** 加验证者**常常买不到任何容错提升** —— 这是本节最反直觉、
+> 也最容易让人白花力气的一条。
+
+### 11.1 `n → f` 真值表：多加节点不等于更抗
+
+可离线数 `f` 由共识参数定死，**不是可调项**：发起查询要求已连接权重 ≥ 75%
+（`minConnectedStakeToQuery = α/k = 15/20`），故 `f` 是使 `(n−f)/n ≥ 0.75` 成立的最大整数，
+即 **`f = ⌊n/4⌋`**。
+
+| n（验证者数） | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 |
+|---|---|---|---|---|---|---|---|---|---|
+| **f（可同时离线）** | 1 | 1 | 1 | **1** | 2 | 2 | 2 | 2 | 3 |
+
+**哪些变化不会提高容错：**
+
+- **5 → 6 → 7 全都停在 f = 1。** 加两台机器、两份运维成本，容错一点没变。
+  想从 1 提到 2，**必须到 8 个**。
+- **加 Primary 也不提高 L1 的容错** —— 那是另一条链（P 链）的权益问题，
+  与 `⌊n/4⌋` 无关。而且加 Primary 有它自己的反直觉：两个各握 50%、引导要求 ≥ 80%，
+  所以"加一个 Primary"只是把"2 个都必须在"换成"3 个都必须在"（004 的 V-08）。
+- **加观察/入口机完全不影响容错**，它也不需要任何协议或拓扑改动。
+- **等权是这条推导的前提。** 权重一旦不等，`⌊n/4⌋` 不成立 ——
+  `npm run membership:status` 与面板会在权重不等时明说"上限不可信"。
+
+**什么才提高容错：** 把 n 推过下一个 4 的倍数（5→8、9→12）。
+在那之前，加机器买到的是**别的**东西（更多故障边界、更多 RPC 入口、更多备份），
+不是更高的 `f`。值不值得由你定 —— 但不要以为加了就更抗。
+
+### 11.2 扩容：加一个 L1 验证者
+
+四步 ACP-77 流程，**每步之间停下来**。工具从链上读进度，中断后重跑即可续。
+
+**① 目标机器上生成密钥（私钥不离开那台机器）**
+
+```bash
+# 在新机器上
+git clone <仓库> && cd karma-chain
+docker build -f docker/node/Dockerfile \
+  --build-arg TARGETARCH=$(dpkg --print-architecture) -t karmachain/node:local .
+KARMACHAIN_DOMAIN=<边界名> tools/membership/gen-node-keys.sh <节点序号>
+```
+
+它打印一段 JSON（**只有公开材料**：NodeID、BLS 公钥、proof of possession、三个 sha256）。
+私钥留在那台机器的 `blockchain/validators/dev/node-N/`，**不提交、不外传**。
+
+**② 把公开材料写进声明并重新渲染**
+
+把那段 JSON 的 `identity` 块贴进 `blockchain/deployment.json` 的 `validators.nodes[]`，
+在 `topology.nodes` 与对应形态的 `failureDomains` 里补上节点，然后：
+
+```bash
+npm run render && npm test          # 生成物与守卫都要过
+git commit -am "..." && git push    # 各机器靠 git pull 同步
+```
+
+**③ 起签名聚合器**（按需容器，用完就停；任意一台能连到 Primary staking 端口的机器）
+
+```bash
+docker build -f docker/aggregator/Dockerfile \
+  --build-arg TARGETARCH=$(dpkg --print-architecture) -t karmachain/aggregator:local .
+docker run -d --rm --name karmachain-aggregator -p 8646:8646 \
+  -v "$PWD/blockchain:/repo/blockchain:ro" karmachain/aggregator:local
+curl -s http://127.0.0.1:8646/health     # 必须是 "up"
+```
+
+不在本机时用 `KARMACHAIN_AGGREGATOR_URL` 指过去。
+
+**④ 走四步**
+
+```bash
+node tools/membership/add-validator.mjs --node-id NodeID-…
+```
+
+反复跑它，每次做一步：
+
+| 步 | 做什么 | 代价 / 风险 |
+|---|---|---|
+| ① | 合约 `initiateValidatorRegistration` | 合约交易，失败即回滚，**链上不留中间态** |
+| ② | 收集 L1 验证者签名 | **不写链**，失败可无代价重做 |
+| ③ | P 链 `RegisterL1ValidatorTx` | **唯一花钱的一步**（实测手续费 0.0000469 AVAX + 给新成员约 0.1 AVAX 持续费用）。成功后若④失败，链上是「P 链认了、合约没认」 |
+| ④ | 合约 `completeValidatorRegistration` | 合约交易，失败即回滚；可直接重试 |
+
+前置检查会拦下三类情况，**都不动链**：两个 Primary 不都在线、新成员的机器没起来、
+以及**这次注册会把链停掉**（分母涨而门槛没涨，见 11.1）。
+
+做完之后停掉聚合器：`docker rm -f karmachain-aggregator`。
+
+### 11.3 缩容：退一个 L1 验证者
+
+两条路径，**走哪条由机器的实际状态决定**（详见 §5.4 那张对照表）：
+
+```bash
+node tools/membership/remove-validator.mjs --node-id NodeID-…              # 优雅退出
+node tools/membership/remove-validator.mjs --node-id NodeID-… --emergency  # 紧急摘除
+```
+
+**顺序不能反：先从集合移除 → 等确认 → 再停进程。** 反过来是制造一段
+"集合里有个死节点"的窗口 —— 一边少了个出力的，一边分母还没降。
+工具**刻意不停任何容器**，停进程是第四步完成之后另一条命令的事。
+
+退出前工具会告知两件**不同性质**的事：
+
+- **`f` 下降 → 要你确认。** 代价真实，但决定权在你。
+  注意方向：退成员时分母降，`f` 可能跟着降（8→7 时从 2 掉到 1）。
+- **退完会跌破查询门槛 → 直接拦下。** 这不是权衡，是这一步会立刻把链停掉。
+
+**退掉一个已经离线的成员是在改善处境** —— 它占着分母却不为共识出力。
+n=5 掉 2 个（已越界）时，退掉那个离线的能让链回到容错内。
+
+退完之后：停进程 → 从 `deployment.json` 移除 → `npm run render` → 提交推送。
+紧急摘除时**顺序反过来**：先改声明再让机器开机。
+
+### 11.4 这些都**不需要**重置链
+
+扩缩容不碰出生证明那六项（`configVersion`、`chain.chainId`、`avalanche.networkId`、
+`chain.blockchainName`、创世文件 sha256、创世区块哈希），所以：
+
+- 不递增 `configVersion`
+- 既有节点**不重启**
+- 创世哈希不变，链数据不动
+
+改协议参数才走宪法第十五条那条路（见 §8），那条路**要重置**。
+
+**分界是一个问题，不是一张字段清单**：这次改的是**协议参数**（这条链是什么 ——
+chainId、networkId、创世、gas、代币、共识参数），还是**部署描述**（这条链跑在哪儿 ——
+机器、地址、端口、故障边界、成员集合）？前者进出生证明、要重置；后者不进、不重置。
+
+成员集合是后者里最特别的一项：它的事实来源**在链上**，声明只是"我们打算有几个"。
+所以它的变化甚至不需要改文件就已经发生了 —— 文件是跟着链走的，不是反过来。

@@ -427,7 +427,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       （成员事实来源移到链上为何不违宪）、以及被否方案。进 `docs/adr/README.md` 索引
 - [ ] T058 [P] `docs/devnet.md`：**把两条流程分开写**（FR-038）——
       协议变更仍走宪法第十五条并重置；部署变更不递增 `configVersion`、不重置
-- [ ] T059 [P] `docs/devnet.md`：扩容与缩容的完整规程，含 **`n → f` 那张表**
+- [X] T059 [P] `docs/devnet.md`：扩容与缩容的完整规程，含 **`n → f` 那张表**
       与"哪些变化不会提高容错"（FR-037）
 - [ ] T060 全套复跑：`npm test`（应 ≥736 且**无既有断言被放宽**）、
       `npm run test:integration`、`npm run test:e2e`、`npm run render:check`、
