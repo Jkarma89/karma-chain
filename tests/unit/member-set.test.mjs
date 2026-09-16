@@ -62,6 +62,12 @@ const initiatedLog = (seed, weight = 100n) => logOf('InitiatedValidatorRegistrat
 const completedLog = (seed, weight = 100n) => logOf('CompletedValidatorRegistration', {
   validationID: vid(seed), weight,
 }, 101n);
+const initiatedRemovalLog = (seed, weight = 100n) => logOf('InitiatedValidatorRemoval', {
+  validationID: vid(seed),
+  validatorWeightMessageID: keccak256(toHex(`weightmsg:${seed}`)),
+  weight,
+  endTime: 0n,
+}, 150n);
 const removedLog = (seed) => logOf('CompletedValidatorRemoval', { validationID: vid(seed) }, 200n);
 
 /** 声明侧的成员（走 identityOf 的「声明身份」那条路，不需要密钥文件）。 */
@@ -242,5 +248,53 @@ describe('三种漂移（data-model 第 2 节）', () => {
       assert.ok(/处置|重试|补进|退出|查/.test(d.detail),
         `漂移 ${d.kind} 没给出该怎么办：${d.detail}`);
     }
+  });
+});
+
+// ## `InitiatedValidatorRemoval`：不改变集合，但**必须进 history**
+//
+// 写 T036（退出流程）时才发现这个缺口：这条事件原先被归进
+// `NON_MEMBERSHIP_TOPICS`（"ABI 里认得、但不影响成员集合"），于是完全不进 history。
+// 而它带着 `validatorWeightMessageID` —— **退出的第二步要拿它去收集签名**。
+//
+// 后果是退出流程走到第二步时报"事件里没有 validatorWeightMessageID"，
+// 而根因在一百多行之外的一个分类名单里。**「不改变集合」不等于「不需要记下来」。**
+describe('InitiatedValidatorRemoval —— 不动集合，但记得住', () => {
+  const logs = (seed) => [genesisLog(seed), initiatedRemovalLog(seed)];
+
+  test('**成员仍在集合里**（合约侧要到 Completed 才移除）', () => {
+    const r = memberSetFromLogs(logs('a'));
+    assert.equal(r.members.length, 1, '发起退出就把成员移出集合了 —— '
+      + '那会让容错的 n 提前少一个，而它此刻还带着权重');
+    assert.equal(r.members[0].nodeId, nodeIdOf('a'));
+  });
+
+  test('**history 里有它，且带 validatorWeightMessageID**', () => {
+    const r = memberSetFromLogs(logs('a'));
+    const h = r.history.find((x) => x.eventName === 'InitiatedValidatorRemoval');
+    assert.ok(h, 'history 里找不到 InitiatedValidatorRemoval —— '
+      + '退出的第二步就拿不到那条 Warp 消息的 ID，流程卡死在第二步，'
+      + '而报出来的是"事件里没有 validatorWeightMessageID"，看不出根因');
+    assert.match(h.validatorWeightMessageID, /^0x[0-9a-f]{64}$/,
+      'validatorWeightMessageID 没被解出来');
+  });
+
+  test('nodeId 从既有条目补上 —— 这条事件本身不带 nodeID', () => {
+    const r = memberSetFromLogs(logs('a'));
+    const h = r.history.find((x) => x.eventName === 'InitiatedValidatorRemoval');
+    assert.equal(h.nodeId, nodeIdOf('a'),
+      'nodeId 为空 —— 那样就没法按 nodeID 找出"这个成员退到哪一步了"');
+  });
+
+  test('**不出现在 ignoredTopics / unknownTopics 里**（它是被真正解析的）', () => {
+    const r = memberSetFromLogs(logs('a'));
+    assert.deepEqual(r.unknownTopics, [], '被当成不认识的 topic 了');
+    assert.deepEqual(r.ignoredTopics.map((x) => x.event), [],
+      '仍被归进"认得但忽略"—— 那正是它进不了 history 的原因');
+  });
+
+  test('发起退出之后再 Completed → 集合里才没有它', () => {
+    const r = memberSetFromLogs([...logs('a'), removedLog('a')]);
+    assert.deepEqual(r.members, [], 'Completed 之后成员还在集合里');
   });
 });

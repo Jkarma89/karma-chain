@@ -56,6 +56,7 @@ export const TOPICS = Object.freeze({
   registeredInitial: topicOf('RegisteredInitialValidator'),
   initiated: topicOf('InitiatedValidatorRegistration'),
   completedRegistration: topicOf('CompletedValidatorRegistration'),
+  initiatedRemoval: topicOf('InitiatedValidatorRemoval'),
   completedRemoval: topicOf('CompletedValidatorRemoval'),
 });
 
@@ -65,8 +66,11 @@ export const TOPICS = Object.freeze({
  * 单独列出来，是为了让「真的不认识的 topic」那个列表能保持为空 ——
  * 一个恒定非空的告警列表等于没有告警。
  */
+// 注意 `InitiatedValidatorRemoval` **不在**这份名单里 —— 它确实不改变成员集合，
+// 但它带着退出第二步要用的 `validatorWeightMessageID`，所以被真正解析（见上面那段）。
+// 「不改变集合」不等于「不需要记下来」。
 const NON_MEMBERSHIP_TOPICS = new Map(
-  ['OwnershipTransferred', 'Initialized', 'InitiatedValidatorRemoval']
+  ['OwnershipTransferred', 'Initialized']
     .filter((name) => VALIDATOR_MANAGER_ABI.some((x) => x.type === 'event' && x.name === name))
     .map((name) => [topicOf(name), name]),
 );
@@ -137,6 +141,30 @@ export function memberSetFromLogs(logs) {
         });
       }
       history.push({ eventName: 'CompletedValidatorRegistration', validationID: args.validationID, at });
+      continue;
+    }
+
+    // **不改变成员集合，但进 history。** 这两件事必须分开：
+    // 合约侧要到 CompletedValidatorRemoval 才把成员移出集合，所以这条事件
+    // 不该动 `active`；但它带着 `validatorWeightMessageID` ——
+    // **退出的第二步要拿它去收集签名**。
+    //
+    // 第一版把它归进 NON_MEMBERSHIP_TOPICS（"认得但不影响集合"），于是它
+    // 完全不进 history，`assessRemovalProgress` 永远拿不到那个消息 ID，
+    // 退出流程卡在第二步而报的是"事件里没有 validatorWeightMessageID"。
+    // 写 T036 时才发现 —— 「不改变集合」不等于「不需要记下来」。
+    if (t === TOPICS.initiatedRemoval) {
+      const { args } = decodeEventLog({ abi: VALIDATOR_MANAGER_ABI, data: log.data, topics: log.topics });
+      // 这条事件**不带 nodeID**（只有 validationID），nodeId 从既有条目里取
+      const e = byValidationId.get(args.validationID);
+      history.push({
+        eventName: 'InitiatedValidatorRemoval',
+        validationID: args.validationID,
+        nodeId: e?.nodeId ?? null,
+        validatorWeightMessageID: args.validatorWeightMessageID ?? null,
+        weight: args.weight,
+        at,
+      });
       continue;
     }
 

@@ -356,7 +356,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ### 实现
 
-- [ ] T036 [US3] 新建 `tools/membership/remove-validator.mjs`：**优雅退出** ——
+- [X] T036 [US3] 新建 `tools/membership/remove-validator.mjs`：**优雅退出** ——
       先从集合移除 → 等确认 → 再停进程（顺序不能反，见契约第 4 节）
 - [ ] T037 [US3] 加**紧急摘除**路径（机器已损坏/失联时用），
       并在文档里写明它与优雅退出的区别与代价（FR-018）

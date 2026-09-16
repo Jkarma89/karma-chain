@@ -564,10 +564,19 @@ export function meetsQuorum({ signers, registeredCount, quorumNum }) {
  * 网络故障，前三次分别是入站端口空回复两次、出站连不上一次），
  * 而 ubuntu-1 / ubuntu-2 在 50 毫秒内返回。钉在单个节点上就会被这台机器拖死。
  *
+ * ## 加入与退出共用这一步
+ *
+ * 参数叫 `messageID` 而不是 `registrationMessageID`：**退出的第二步是同一件事** ——
+ * 拿一条链上的 Warp 消息去收集 L1 验证者的签名。加入时那条消息来自
+ * `InitiatedValidatorRegistration.registrationMessageID`，退出时来自
+ * `InitiatedValidatorRemoval.validatorWeightMessageID`。
+ * 名字若绑在"注册"上，退出那边就会出现第二份同样的实现。
+ *
+ * @param {string} messageID 链上那条 Warp 消息的 ID（合约事件给出，bytes32 或 CB58）
  * @param {number} quorumNum 权重门槛的分子，取自链配置的 `quorumNumerator`（实测 67）
  */
 export async function step2({
-  config, identity, registrationMessageID, registeredCount,
+  config, identity, messageID, registeredCount,
   // 超时从 45 秒收到 12 秒：实测成功的调用是 **0.05–2 秒**，45 秒只会让
   // 一个坏节点把整轮拖死（4 轮 × 6 节点最坏要几分钟）。
   quorumNum = 67, timeoutMs = 12_000, rounds = 4, delayMs = 4_000,
@@ -577,7 +586,7 @@ export async function step2({
   if (!registeredCount) throw new Error('step2 需要 registeredCount（链上注册的成员数）来折算权重占比');
   const d = deriveTopology(config);
   const validators = d.topologyNodes.filter((n) => n.role === 'l1-validator');
-  const messageId = messageIdToCb58(registrationMessageID);
+  const messageId = messageIdToCb58(messageID);
   const attempts = [];
 
   const call = async (node, method, params) => {
@@ -1229,7 +1238,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     try {
       const set = await readMemberSet({ client });
       r = await step2({
-        config, identity, registrationMessageID: messageId,
+        config, identity, messageID: messageId,
         registeredCount: set.members.length,
         members: memberCandidates({ config, memberSet: set }),
       });
@@ -1273,7 +1282,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     let s2;
     try {
       s2 = await step2({
-        config, identity, registrationMessageID: progress.registrationMessageID,
+        config, identity, messageID: progress.registrationMessageID,
         registeredCount: set.members.length,
         members: memberCandidates({ config, memberSet: set }),
       });
