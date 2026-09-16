@@ -130,6 +130,27 @@ export async function readMemberSetCached({ pchainUrl, subnetId, now = Date.now(
 }
 
 /**
+ * **Primary 网络**的权益分布，带同一套缓存策略（功能 005 / T046、FR-023）。
+ *
+ * 与上面那个是**两次不同的读取**，别合并：上面带 `subnetID` 问的是本条 L1 的成员，
+ * 这里不带 `subnetID`，问的是 Primary 网络自己的验证者与各自质押。
+ * 前者决定容错的 n，后者决定"被重启的验证者还能不能回来" —— 两个判据，两个来源。
+ *
+ * 失败同样不进缓存，理由同上。
+ */
+let primaryStakeCache = { at: 0, value: null };
+
+export async function readPrimaryStakeCached({ pchainUrl, now = Date.now() } = {}) {
+  if (primaryStakeCache.value && now - primaryStakeCache.at < MEMBER_SET_TTL_MS) {
+    return primaryStakeCache.value;
+  }
+  const { readPrimaryNetworkStake } = await import('../membership/member-set.mjs');
+  const value = await readPrimaryNetworkStake({ pchainUrl, now });
+  if (value.source === 'p-chain') primaryStakeCache = { at: now, value };
+  return value;
+}
+
+/**
  * 一轮探测 + 分类。**无采样休眠。**
  *
  * `prev` 是上一轮的 `{ [nodeId]: height }`；首轮传 `{}`（classify 会据此把

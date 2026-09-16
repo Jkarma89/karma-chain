@@ -152,6 +152,32 @@ describe('第 1 层：结构断言 —— 键集合等于白名单（T062）', (
       '取值本身也不该出现在对外投影里 —— 哪怕换了个键名');
   });
 
+  // 005 / T046 把"能不能恢复"的**依据**也放进了快照（`rejoin`）：
+  // 每个权益持有者的 NodeID、质押额、在不在服务。
+  // 那比 004 的结论字段更敏感 —— 结论只说"现在脆弱"，依据直接说出**脆弱在谁身上**。
+  test('005 新增的 rejoin（权益明细）不进对外视图', () => {
+    const out = toPublicView({
+      ...fakeSnapshot(),
+      recoveryCapability: 'blocked',
+      rejoin: {
+        verdict: 'blocked',
+        connectedWeight: 1000000n,
+        totalWeight: 2000000n,
+        percent: 50,
+        thresholdPercent: 80,
+        holders: [{ nodeId: SENSITIVE.nodeId, weight: 1000000n, id: 'primary-1', serving: false }],
+        unmatched: [],
+        reason: null,
+      },
+    });
+    assert.deepEqual(Object.keys(out).sort(), [...PUBLIC_FIELDS].sort());
+    assert.ok(!('rejoin' in out), '权益明细泄漏到了对外视图');
+    assert.ok(!JSON.stringify(out).includes(SENSITIVE.nodeId),
+      '明细里的 NodeID 一个都不许出现 —— 它指名了这张网此刻的薄弱点在哪台机器上');
+    assert.ok(!JSON.stringify(out).includes('1000000'),
+      '质押额也不该出现：权益分布本身就是"掉哪几台会瘫"的答案');
+  });
+
   test('首轮未完成的快照也能安全投影（不抛、不泄漏）', () => {
     const out = toPublicView({ collectedAt: null, tier: null, deployment: 'lan' });
     assert.deepEqual(Object.keys(out).sort(), [...PUBLIC_FIELDS].sort());

@@ -104,8 +104,20 @@ export function participatesInConsensus(row) {
  *
  * @returns {boolean|null} `null` = 传进来的不是 Primary（使用错误）
  */
-export function servesPChain(row) {
-  if (row?.role !== 'primary') return null;
+export function servesPChain(row, { stakeHolders } = {}) {
+  // 谁算"P 链权益持有者"：有实测的权益分布就按它判，没有就回落到声明的 role。
+  //
+  // **回落是一个代理，而且它有到期日。** 今天 `role === 'primary'` 与
+  // "是 Primary 网络验证者"等价，因为 6 个 L1 验证者都带 `partial-sync-primary-network`，
+  // 而 avalanchego 的错误常量 `partial sync should not be configured for a validator`
+  // 保证带这个 flag 的节点**不可能**是 Primary 验证者（005 research R-07a③）。
+  //
+  // 一旦 T045 去掉那个 flag，这个代理就**静悄悄地错**：L1 验证者成了权益持有者，
+  // 而本函数对它们返回 null，于是它们的权益在"能不能恢复"里凭空消失。
+  // 所以传进来的权益分布优先，回落只是读不到时的退路。
+  if (stakeHolders) {
+    if (!row?.nodeId || !stakeHolders.has(row.nodeId)) return null;
+  } else if (row?.role !== 'primary') return null;
   if (SERVING_L1.has(row.state)) return true;          // healthy / catching-up：在服务
   // `unreachable` 的两种含义离线语义**相反**（002 的 data-model §7）：
   // 其余节点的对等列表里有它 → 它活着，断的是**本机到它的路径** → 算在服务（FR-018）。
@@ -124,13 +136,136 @@ export function servesPChain(row) {
  *
  * **写成 `primaries.length` 看起来更通用，实际会在拓扑变化时静悄悄给出错误结论**：
  * 3 个 Primary（各 33%）时 80% 门槛仍需 3 个全在；5 个（各 20%）时需要 4 个。
- * 真正的通用化（按权益算）属于"增加 Primary 节点数"那个特性，不在本期 ——
- * 本期把数字写死并把来源写清。
  *
- * 80% 这个百分比**不进判据**：它是 avalanchego 的内部门控参数，
- * 不在 blockchain/protocol.json 里，也可能随版本变化。
+ * ## 功能 005 / T046：通用化已经做了，但这个常量**留着**
+ *
+ * 通用判定见 `assessRejoinCapability()` —— 它按**实测的权益分布**算，
+ * 不数个数。本常量保留为两件事：
+ *
+ *   ① 读不到 P 链权益时的**回落值**（并且此时会如实标成 `unknown`，见那个函数）
+ *   ② 文档 §9.5 那张门槛表与面板文案的对照锚点（既有三条守卫钉着它）
+ *
+ * 它只在**当前这个 2×50% 的形态**下正确。`equalWeightHoldersRequired()`
+ * 会按声明的 Primary 数重新算一遍，两者不一致时
+ * `tests/unit/recovery-stake-based.test.mjs` 变红 ——
+ * 那正是上面那句"拓扑变化时静悄悄给出错误结论"要防的事，现在它不再静悄悄。
  */
 export const PRIMARIES_REQUIRED_FOR_REJOIN = 2;
+
+/**
+ * 引导要求连上的 P 链权益比例。
+ *
+ * **它不是本仓库的参数**：avalanchego 自报 `"required at least 80.000000%"`
+ *（004 / V-08 实测，节点日志里连同 `percentConnected: 0.5` 一起出现），
+ * 不在 `blockchain/protocol.json` 里，也可能随 avalanchego 版本变化。
+ *
+ * 004 当时因此选择"不让这个百分比进判据"，把结果写死成 2。
+ * 005 要按权益算，就绕不开它 —— 于是**写下来并注明出处**，
+ * 而不是继续藏在一个 2 里面。藏着的坏处已经看到了：那个 2 无法回答
+ * "加到 5 个 Primary 之后需要几个"，而 005 正要回答这个。
+ */
+export const PCHAIN_BOOTSTRAP_STAKE_THRESHOLD = 0.8;
+
+/**
+ * **等权前提下**，引导需要连上的最少持有者数 = ⌈门槛 × n⌉。
+ *
+ * 只在等权时有意义。权重不等时"需要几个"这个问法本身就是错的 ——
+ * 答案取决于**是哪几个**，那时要用 `assessRejoinCapability()`。
+ */
+export function equalWeightHoldersRequired(n, threshold = PCHAIN_BOOTSTRAP_STAKE_THRESHOLD) {
+  if (!Number.isInteger(n) || n <= 0) return 0;
+  return Math.ceil(threshold * n - 1e-9);
+}
+
+/**
+ * 按**实际权益分布**判定"一个被重启的验证者还能不能重新加入"（FR-023）。
+ *
+ * ## 三值，而且第三值不是装饰
+ *
+ * 未匹配上的权益持有者（P 链上有、声明里没有，因此没有观测行）是真实存在的情形 ——
+ * 有人绕过工具加了一个。此时**两种算法会给出不同答案**：
+ *
+ *   把未匹配的算作"在服务" → 偏乐观 → 可能给出假的 `ok`
+ *   把未匹配的算作"不在服务" → 偏悲观 → 可能给出假的 `blocked`
+ *
+ * 假 `ok` 的代价是有人去重启一个验证者，而它**再也回不来**（004 的整个由来）。
+ * 假 `blocked` 的代价只是没必要地不敢动手，可恢复。
+ *
+ * 所以做法是：**两种算法都算，一致才下结论，不一致就说 `unknown`。**
+ * 这样既不会给假绿灯，也不会在未匹配权益根本不足以改变结论时白白 `unknown`。
+ *
+ * @returns {{verdict:'ok'|'blocked'|'unknown', connectedWeight:bigint, totalWeight:bigint,
+ *            percent:number|null, thresholdPercent:number, holders:Array,
+ *            unmatched:Array, reason:string|null}}
+ */
+export function assessRejoinCapability({
+  rows, pchainStake, threshold = PCHAIN_BOOTSTRAP_STAKE_THRESHOLD,
+}) {
+  const empty = {
+    connectedWeight: 0n, totalWeight: 0n, percent: null,
+    thresholdPercent: threshold * 100, holders: [], unmatched: [],
+  };
+  if (pchainStake?.source !== 'p-chain') {
+    return {
+      ...empty,
+      verdict: 'unknown',
+      reason: `读不到 P 链的权益分布${pchainStake?.error ? `（${pchainStake.error}）` : ''}——`
+        + ' 因此无法判断"还能不能让验证者重新加入"。'
+        + ` 不回落到任何假设的分布：拿一个猜的分布算出来的结论看着确定，却可能是错的。`,
+    };
+  }
+
+  const byNodeId = new Map();
+  for (const r of rows ?? []) if (r?.nodeId) byNodeId.set(r.nodeId, r);
+  const stakeHolders = new Set(pchainStake.validators.map((v) => v.nodeId));
+
+  const holders = [];
+  const unmatched = [];
+  let connected = 0n;
+  let unknownWeight = 0n;
+
+  for (const v of pchainStake.validators) {
+    const row = byNodeId.get(v.nodeId);
+    const serving = row ? servesPChain(row, { stakeHolders }) : null;
+    if (serving === true) connected += v.weight;
+    else if (!row) { unknownWeight += v.weight; unmatched.push(v); }
+    holders.push({ nodeId: v.nodeId, weight: v.weight, id: row?.id ?? null, serving });
+  }
+
+  const total = pchainStake.totalWeight;
+  // 用整数比较，避免浮点在"恰好等于门槛"那一格上给出摇摆的答案。
+  // ⌈threshold × total⌉，threshold 用万分位表示（0.8 → 8000）。
+  const bp = BigInt(Math.round(threshold * 10000));
+  const needed = (bp * total + 9999n) / 10000n;
+  const pessimistic = connected >= needed;
+  const optimistic = connected + unknownWeight >= needed;
+
+  const pct = Number((connected * 10000n) / total) / 100;
+  const base = {
+    connectedWeight: connected,
+    totalWeight: total,
+    percent: pct,
+    thresholdPercent: threshold * 100,
+    holders,
+    unmatched,
+  };
+
+  if (pessimistic === optimistic) {
+    return {
+      ...base,
+      verdict: pessimistic ? 'ok' : 'blocked',
+      reason: null,
+    };
+  }
+  return {
+    ...base,
+    verdict: 'unknown',
+    reason: `P 链上有 ${unmatched.length} 个权益持有者不在声明里`
+      + `（合计 ${unknownWeight} / ${total}）—— 探测不到它们在不在服务。`
+      + ' 算作在服务则结论是"能恢复"，算作不在则是"不能" —— 两者不一致，'
+      + '所以此刻给不出确定答案。先跑 npm run membership:status 把它们弄清楚。',
+  };
+}
 
 /**
  * 恢复能力 —— **与三档健康度正交**的一个维度：这张网现在还能不能让验证者重新加入。
@@ -145,11 +280,24 @@ export const PRIMARIES_REQUIRED_FOR_REJOIN = 2;
  *
  * @returns {'ok'|'blocked'|'unknown'}
  */
-export function deriveRecoveryCapability({ rows, tier }) {
+export function deriveRecoveryCapability({ rows, tier, pchainStake }) {
   // 观察者失明时**不作任何断言**（FR-019）。这一刻面板知道得最少 ——
   // 一个在本机网线松了时仍然断言"别重启任何东西"的面板，
   // 会把一次局部链路故障变成一次不必要的停手。
   if (tier === TIERS.OBSERVER_BLIND) return 'unknown';
+
+  // 有实测的权益分布就按它算（T046 / FR-023）。
+  if (pchainStake?.source === 'p-chain') {
+    return assessRejoinCapability({ rows, pchainStake }).verdict;
+  }
+
+  // 回落：数在服务的 Primary 个数，与 004 的行为逐字相同。
+  //
+  // **为什么这里不改成 unknown。** 004 的这条判据在 2×50% 的形态下是正确的，
+  // 而 P 链权益是一次**额外**的读取 —— 让一次读取失败把一条本来正确的结论
+  // 变成"不知道"，是把可用的信息丢掉。回落的边界写在常量的注释里：
+  // 它只在当前形态下正确，而 equalWeightHoldersRequired() 与那条守卫
+  // 保证形态一变就有人知道。
   const serving = rows.filter((r) => servesPChain(r) === true).length;
   return serving < PRIMARIES_REQUIRED_FOR_REJOIN ? 'blocked' : 'ok';
 }
@@ -427,7 +575,7 @@ const incident = (cls, message, nodeId) => ({
  *   - `starting` **不**产生 consensus-margin —— 它是"要等"，不是"须处置"。
  */
 export function buildIncidents({
-  rows, tier, observer, chainIdentity, recoveryCapability, membership,
+  rows, tier, observer, chainIdentity, recoveryCapability, membership, rejoin,
 }) {
   const out = [];
 
@@ -441,14 +589,30 @@ export function buildIncidents({
   // 与每个 Primary 各自那条 node-infra 并存是对的，不是重复 ——
   // 前者说"哪个东西坏了"，后者说"因此现在不能做什么"。
   if (recoveryCapability === 'blocked') {
-    const stalled = rows.filter((r) => r.role === 'primary' && servesPChain(r) !== true);
-    out.push(incident(
-      'recovery-blocked',
-      `Primary 在服务的不足 ${PRIMARIES_REQUIRED_FOR_REJOIN} 个（${stalled.map((r) => r.id).join('、') || '—'}）——`
-      + '此刻任何 L1 验证者一旦重启都**无法重新加入**：它要先引导 P 链，'
-      + '而 P 链引导要求连上足够的 P 链权益，两个 Primary 各握一半。'
-      + '链本身仍按上面的档位出块，这两件事互不影响',
-    ));
+    // 有权益分布就按**权益**说话，没有就退回"数个数"（004 的原话）。
+    // 说"不足 2 个"在 2×50% 时是对的，但它回答不了"5 个 Primary 时缺了谁"——
+    // 而按权益说的那句话对任意分布都成立。
+    const a = rejoin;
+    if (a && a.verdict === 'blocked') {
+      const down = a.holders.filter((h) => h.serving !== true);
+      out.push(incident(
+        'recovery-blocked',
+        `已连上的 P 链权益 ${a.percent}% < 引导要求的 ${a.thresholdPercent}%`
+        + `（缺席的权益持有者：${down.map((h) => h.id ?? h.nodeId).join('、') || '—'}）——`
+        + '此刻任何 L1 验证者一旦重启都**无法重新加入**：它要先引导 P 链，'
+        + '而引导要求连上足够比例的 P 链权益。'
+        + '链本身仍按上面的档位出块，这两件事互不影响',
+      ));
+    } else {
+      const stalled = rows.filter((r) => r.role === 'primary' && servesPChain(r) !== true);
+      out.push(incident(
+        'recovery-blocked',
+        `Primary 在服务的不足 ${PRIMARIES_REQUIRED_FOR_REJOIN} 个（${stalled.map((r) => r.id).join('、') || '—'}）——`
+        + '此刻任何 L1 验证者一旦重启都**无法重新加入**：它要先引导 P 链，'
+        + '而 P 链引导要求连上足够的 P 链权益，两个 Primary 各握一半。'
+        + '链本身仍按上面的档位出块，这两件事互不影响',
+      ));
+    }
   }
 
   if (tier === TIERS.OBSERVER_BLIND) {
@@ -645,7 +809,7 @@ export function buildMembership({ faultTolerance, memberSet }) {
 export function buildSnapshot({
   collectedAt, pollIntervalMs, deployment, networkHeight,
   rows, faultTolerance, observer, chain, baselineGenesisHash,
-  containerFacts, summaryLine, memberSet,
+  containerFacts, summaryLine, memberSet, pchainStake,
 }) {
   const enrichedAll = enrichRows({ rows, networkHeight, baselineGenesisHash });
   // **容错判据必须先收敛到链上注册的成员**（T073 / research V-31）。
@@ -657,10 +821,18 @@ export function buildSnapshot({
     rows: enriched, faultTolerance: scope.faultTolerance, observer, memberSet,
   });
   // 恢复能力在档位**之后**算，且 deriveTier 不读它 —— 单向依赖，档位不受影响（FR-013）
-  const recoveryCapability = deriveRecoveryCapability({ rows: enriched, tier: tierInfo.tier });
+  const recoveryCapability = deriveRecoveryCapability({
+    rows: enriched, tier: tierInfo.tier, pchainStake,
+  });
+  // 权益侧的明细（T046）。观察者失明时不算 —— 那一刻的 recoveryCapability 是 unknown，
+  // 再给一份"缺了谁"的明细会和它自相矛盾。
+  const rejoin = tierInfo.tier === TIERS.OBSERVER_BLIND
+    ? null
+    : assessRejoinCapability({ rows: enriched, pchainStake });
   const membership = buildMembership({ faultTolerance: scope.faultTolerance, memberSet });
   const incidents = buildIncidents({
     rows: enriched, tier: tierInfo.tier, observer, chainIdentity, recoveryCapability, membership,
+    rejoin,
   });
 
   return {
@@ -673,6 +845,13 @@ export function buildSnapshot({
     // 附加字段：既有字段的语义与取值一律不变；**不进**对外精简视图（FR-022）。
     recoveryCapability,
     primariesRequiredForRejoin: PRIMARIES_REQUIRED_FOR_REJOIN,
+    /**
+     * 权益侧的明细（005 / T046、FR-023）：连上了多少权益、门槛多少、缺席的是谁。
+     * `recoveryCapability` 是它的结论，这里是**得出那个结论的依据** ——
+     * 004 只给结论，于是"为什么是 blocked"要靠人去猜哪两台机器。
+     * 与 recoveryCapability 一样**不进**对外精简视图（FR-022）。
+     */
+    rejoin,
     // **收敛后的那份**，不是声明的那份。
     // 此前这里返回未收敛的 faultTolerance，而 tier / 两个余量是按收敛后算的 ——
     // 注册进行中（链上 5、声明 6）时，视图里的解释文字会和它上面的数字互相矛盾。

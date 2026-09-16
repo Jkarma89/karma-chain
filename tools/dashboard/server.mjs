@@ -13,7 +13,9 @@ import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dirname } from 'node:path';
-import { loadContext, pollOnce, observerViewpoint, readMemberSetCached } from './poll.mjs';
+import {
+  loadContext, pollOnce, observerViewpoint, readMemberSetCached, readPrimaryStakeCached,
+} from './poll.mjs';
 import { buildSnapshot } from './snapshot.mjs';
 // 公开投影（US6）：显式字段白名单，方向刻意是挑出允许的而非删掉不允许的。
 import { toPublicView } from './public-view.mjs';
@@ -133,6 +135,11 @@ export function createPoller({ ctx, intervalSeconds }) {
     const memberSet = await readMemberSetCached({
       pchainUrl: ctx.pchainUrl, subnetId: ctx.subnetId,
     });
+    // "被重启的验证者还能不能回来"要按**实际权益分布**判，不是数 Primary 个数
+    //（T046 / FR-023）。004 把它写成常量 2 并注明"来源是权益门槛而非总数"，
+    // 同时留了一句"真正的通用化属于增加 Primary 节点数那个特性" —— 就是这里。
+    // 读不到时返回 source: unknown，判定回落到那个常量（见 deriveRecoveryCapability）。
+    const pchainStake = await readPrimaryStakeCached({ pchainUrl: ctx.pchainUrl });
     state.snapshot = buildSnapshot({
       // 在**探测完成时**打戳，不是请求到达时 —— 页面的新鲜度判定依赖它反映数据年龄
       collectedAt: Date.now(),
@@ -150,6 +157,7 @@ export function createPoller({ ctx, intervalSeconds }) {
       },
       summaryLine: polled.summaryLine,
       memberSet,
+      pchainStake,
     });
     state.prevHeights = polled.heights;
     state.rounds += 1;

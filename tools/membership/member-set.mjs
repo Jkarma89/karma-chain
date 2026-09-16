@@ -264,6 +264,51 @@ export async function readPChainMembers({ pchain, subnetId }) {
 }
 
 /**
+ * **Primary 网络**的权益分布（功能 005 / T046、FR-023）。
+ *
+ * ## 为什么需要它：004 把门槛写成了常量 `2`
+ *
+ * 004 的 `PRIMARIES_REQUIRED_FOR_REJOIN = 2` 注释里说得很清楚，那个 2
+ * **来自权益门槛而不是"Primary 总数"**：两个 Primary 各握 50%，
+ * 而引导要连上 ≥80%，所以两个都得在。它同时留了一句
+ * 「真正的通用化（按权益算）属于'增加 Primary 节点数'那个特性」——
+ * 那就是本期。
+ *
+ * 注意与 `readPChainMembers` 的区别：那个带 `subnetID`，问的是**某条 L1 的成员**；
+ * 这个**不带**，问的是 Primary 网络自己的验证者集合与各自权益。
+ * 两者的 `weight` 含义也不同：L1 侧是 ACP-77 的成员权重（本仓库恒为 100），
+ * Primary 侧是**质押的 nAVAX**（本仓库实测各 10^15 = 100 万 AVAX）。
+ *
+ * 读不到时返回 `source: 'unknown'` 并带上原因 —— 不回落到任何假设的分布。
+ * 拿一个猜的分布去算"能不能恢复"，会给出一个看着确定的错结论。
+ */
+export async function readPrimaryNetworkStake({ pchainUrl, now = Date.now() } = {}) {
+  try {
+    if (!pchainUrl) throw new Error('缺 pchainUrl（某个 Primary 的 http 地址）');
+    const r = await fetch(`${pchainUrl.replace(/\/$/, '')}/ext/bc/P`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'platform.getCurrentValidators', params: {} }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const j = await r.json();
+    if (j.error) throw new Error(j.error.message ?? String(j.error));
+    const validators = (j.result?.validators ?? []).map((v) => ({
+      nodeId: v.nodeID,
+      // Primary 网络侧优先用 stakeAmount；没有时回落到 weight（含委托的合计）。
+      // 两者在本仓库相同（无委托者），不同的部署里可能不同，所以记下取的是哪个。
+      weight: BigInt(v.stakeAmount ?? v.weight ?? 0),
+    }));
+    if (!validators.length) throw new Error('P 链返回了空的验证者集合');
+    const totalWeight = validators.reduce((a, v) => a + v.weight, 0n);
+    if (totalWeight === 0n) throw new Error('P 链验证者的权益合计为 0');
+    return { source: 'p-chain', validators, totalWeight, readAt: now };
+  } catch (err) {
+    return { source: 'unknown', error: err.message, readAt: now };
+  }
+}
+
+/**
  * 比对**合约侧**与 **P 链侧**（T070）。
  *
  * 纯函数：两侧的成员数组进来，分歧出去。`stoppedAtStepFour` 单独给出来，
