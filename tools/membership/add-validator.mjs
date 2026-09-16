@@ -123,10 +123,14 @@ export async function precheck({ client, pchain, nodeId, config }) {
 
   // ── 恢复能力：两个 Primary 都必须在线（FR-015）────────────────────────────
   //
-  // 不是"最好在线"。链配置里 requirePrimaryNetworkSigners=true、quorumNumerator=67，
-  // 而两个 Primary 各握 50% P 链权益 —— 第四步的确认消息要 67% 的 Primary 权重签名，
-  // 少一个就永远聚合不出来。走到第四步才卡住的话，链上已经是
-  // "P 链认了、合约没认" 的中间态（004 的 V-08 查实了这个 AND 依赖）。
+  // 不是"最好在线"。但**理由不是第四步的签名** —— 那条我判断错过：
+  // 链配置里有 requirePrimaryNetworkSigners=true，研究 V-32 据此断定确认消息要由
+  // 两个 Primary 签。实测（2026-09-16）证伪：节点 debug 日志里的
+  // `signature weight is insufficient: 67*600 > 100*200` 表明验证用的是
+  // **L1 自己的验证者集合**（总权重 600），Primary 的签名在那里折算不出权重。
+  //
+  // 两个 Primary 仍然必须在线，理由是 004 的 V-08：P 链引导要求连上 ≥ 80% 权益，
+  // 而它们各握 50% —— 少一个，新成员就引导不起来，第三步的 P 链交易也没人处理。
   const reachable = async (n) => {
     try {
       const r = await fetch(`http://${n.address}:${n.httpPort}/ext/info`, {
@@ -868,17 +872,46 @@ export function registrationConfirmationMessage({ validationID, networkId, regis
 }
 
 /**
- * 向签名聚合器要 **Primary Network** 的签名。
+ * 向签名聚合器要 P 链确认消息的签名。
  *
- * 为什么非要一个外部进程：收这个签名**没有 HTTP 路可走**（2026-09-16 逐个实测）——
- * L1 节点的 `warp_getMessageAggregateSignature` 只能聚合它自己库里有的消息（`not found`），
- * P 链的 `platform.*` 没有对应方法，avalanchego 级端点全是 404。签名请求只走 P2P。
- * 见 docker/aggregator/。
+ * ## 签名者是 **L1 自己的验证者**，不是 Primary —— 这一条我判断错过
+ *
+ * 链配置里有 `requirePrimaryNetworkSigners: true`，研究 V-32 据此断定
+ * 「第四步的确认消息要由两个 Primary 签名」。我照这个做了，收齐了两个 Primary
+ * 的签名（100% 的 Primary 权重），**交易照样 revert**。
+ *
+ * 节点日志把话说死了（2026-09-16，l1-1 开 debug 后抓到）：
+ *
+ *   `failed to verify warp signature`
+ *   `err="signature weight is insufficient: 67*600 > 100*200"`
+ *
+ * `totalWeight = 600` —— 那是 **L1 自己六个验证者**的总权重（每个 100，
+ * 含第三步刚进 P 链的 l1-6）。也就是说验证用的是 L1 的集合，
+ * 而两个 Primary 的签名在这个集合里只折算出 200。
+ *
+ * 所以门槛是 **67% × 600 = 402**，需要六个里至少 5 个签。实测 5/6 = 83% 通过。
+ *
+ * **教训**：`requirePrimaryNetworkSigners` 这个名字与它在本链上的实际效果不一致，
+ * 而我从名字推出了签名者是谁。权重那句报错是唯一说得清的证据，
+ * 它只在节点的 **debug** 日志里 —— info 级下这一步失败是完全静默的。
+ *
+ * ## 为什么非要一个外部进程
+ *
+ * 收签名**没有 HTTP 路可走**（2026-09-16 逐个实测）：L1 节点的
+ * `warp_getMessageAggregateSignature` 只能聚合它自己库里有的消息（`not found`），
+ * P 链的 `platform.*` 没有对应方法，avalanchego 级端点全是 404。
+ * 签名请求只走 P2P。见 docker/aggregator/。
+ *
+ * @param {string} signingSubnetId 由**哪个集合**签。本链的 subnetID —— 见上面那段。
  */
-export async function aggregatePrimarySignatures({
-  aggregatorUrl, unsignedMessage, quorumPercentage = 67, timeoutMs = 90_000,
+export async function aggregateConfirmationSignatures({
+  aggregatorUrl, unsignedMessage, signingSubnetId, quorumPercentage = 67, timeoutMs = 90_000,
 }) {
-  const PRIMARY_NETWORK_ID = '11111111111111111111111111111111LpoYY';
+  if (!signingSubnetId) {
+    throw new Error('aggregateConfirmationSignatures 需要 signingSubnetId'
+      + ' —— 由哪个验证者集合签是这一步的关键，不能靠默认值'
+      + '（按 Primary Network 要签名会收齐 100% 的 Primary 权重，而合约那边照样判不过）。');
+  }
   let r;
   try {
     r = await fetch(`${aggregatorUrl.replace(/\/$/, '')}/aggregate-signatures`, {
@@ -886,7 +919,7 @@ export async function aggregatePrimarySignatures({
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         message: unsignedMessage.replace(/^0x/, ''),
-        'signing-subnet-id': PRIMARY_NETWORK_ID,
+        'signing-subnet-id': signingSubnetId,
         'quorum-percentage': quorumPercentage,
       }),
       signal: AbortSignal.timeout(timeoutMs),
@@ -898,9 +931,10 @@ export async function aggregatePrimarySignatures({
   const body = await r.json();
   if (body.error) {
     throw new Error(`聚合器没能收齐签名：${body.error}\n`
-      + '  两个 Primary 各握 50% P 链权益，门槛 67% —— **两个都得签**（研究 V-32）。\n'
-      + '  常见成因：某个 Primary 不在线；或聚合器连不上它们'
-      + '（日志里 connectedWeight 为 0 时，多半是配置缺 allow-private-ips —— 实测过）。');
+      + '  签名者是 **L1 自己的验证者**（见本函数顶部那段），等权 n 个、门槛 67%\n'
+      + '  —— n = 6 时要 5 个签。常见成因：某个验证者不签（它自己能签、HTTP 也通，\n'
+      + '  但别人经 P2P 要不到 —— 实测修法是 up -d --force-recreate 重建那个容器），\n'
+      + '  或聚合器连不上它们（日志里 connectedWeight 为 0 时，多半是缺 allow-private-ips）。');
   }
   const signed = body['signed-message'];
   if (!signed) {
@@ -945,10 +979,12 @@ export function packWarpPredicate(signedMessageHex) {
  * 可以在批准之前知道。
  */
 export async function step4({
-  client, validationID, networkId, aggregatorUrl, ownerAccount, dryRun = false,
+  client, validationID, networkId, subnetId, aggregatorUrl, ownerAccount, dryRun = false,
 }) {
   const unsignedMessage = registrationConfirmationMessage({ validationID, networkId });
-  const signedMessage = await aggregatePrimarySignatures({ aggregatorUrl, unsignedMessage });
+  const signedMessage = await aggregateConfirmationSignatures({
+    aggregatorUrl, unsignedMessage, signingSubnetId: subnetId,
+  });
   const counted = countSigners(signedMessage, unsignedMessage);
   const storageKeys = packWarpPredicate(signedMessage);
 
@@ -956,7 +992,7 @@ export async function step4({
   const plan = {
     unsignedBytes: (unsignedMessage.length - 2) / 2,
     signedBytes: (signedMessage.length - 2) / 2,
-    primarySigners: counted.signers,
+    signers: counted.signers,
     bitsetHex: counted.bitsetHex,
     storageKeys: storageKeys.length,
     signedMessage,
@@ -1340,6 +1376,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       client,
       validationID: progress.validationID,
       networkId: config.avalanche.networkId,
+      subnetId: identity.subnetId,   // 由**本 L1 的验证者集合**签，不是 Primary
       aggregatorUrl,
       ownerAccount,
     };
@@ -1355,8 +1392,8 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     console.error(`\n签名聚合器 ${aggregatorUrl}`);
     console.error('干跑（已聚合、已模拟，**尚未发交易**）：');
     console.error(`  确认消息    ${plan.unsignedBytes} → ${plan.signedBytes} 字节`);
-    console.error(`  Primary 签名 ${plan.primarySigners}/2（bitset ${plan.bitsetHex}）`
-      + ` —— 两个各握 50%，门槛 67%，${plan.primarySigners >= 2 ? '达标' : '**不够**'}`);
+    console.error(`  签名者      ${plan.signers} 个（bitset ${plan.bitsetHex}）`
+      + ` —— 由 **L1 自己的验证者**签，门槛 67% 的总权重`);
     console.error(`  谓词        ${plan.storageKeys} 个 storage key（access list 交给 Warp 预编译）`);
     console.error('  合约模拟    ✓ 调用形状没问题');
     console.error('              **但模拟不能证明会成功** —— eth_call 会自行准备谓词结果，'

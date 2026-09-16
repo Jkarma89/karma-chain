@@ -451,13 +451,38 @@ spec 的 FR-020 要求决定必须有实测数据。两条候选：
   也确实是路径写错，但同时功能也真没开**，两个原因叠在一起，先排哪个都会被误导。
   判据应当先看日志里的 `WarpAPIEnabled`，那是功能有没有开的直接证据。
 
-- **V-32** ✅ **第四步要求两个 Primary 都在线**（2026-09-15，链配置实测）。
-  节点日志里 warpConfig 为 `{quorumNumerator: 67, requirePrimaryNetworkSigners: true}`：
-  P 链发回的确认消息必须由 **Primary Network 验证者**签名，而两个 Primary 各握 50%
-  P 链权益 —— 67% 的门槛意味着**两个都必须在**。这正是 004 的 V-08 查实的 AND 依赖，
-  延伸到了注册流程的最后一步。
-  因此 add-validator 的前置检查把它列为**阻断项**：少一个 Primary 时拦下且不动链，
-  而不是走到第四步才卡住 —— 那时链上已是「P 链认了、合约没认」的中间态。
+- **V-32** ❌ **作废**（原文：第四步的确认消息必须由 Primary Network 验证者签名）。
+  当时的依据是节点日志里的 warpConfig `{quorumNumerator: 67, requirePrimaryNetworkSigners: true}`
+  —— **那是从配置项的名字推出来的，不是实测**。见下面的 V-34。
+  （结论"两个 Primary 都必须在线"本身仍然成立，但**理由换了**：不是为了第四步的签名，
+  而是 004 的 V-08 —— P 链引导要求连上 ≥ 80% 权益，而它们各握 50%。）
+
+- **V-34** ✅ **第四步的确认消息由 L1 自己的验证者签，不是 Primary**（2026-09-16，
+  节点 debug 日志实测）。
+
+  按 V-32 做了一轮：聚合器收齐**两个 Primary** 的签名（100% 的 Primary 权重），
+  交易上链后仍然 revert。`debug_traceTransaction` 显示合约 STATICCALL Warp 预编译
+  拿回 `valid = false`。把 l1-1 的链配置临时调到 `log-level: debug`，抓到了唯一说得清的证据：
+
+  ```
+  failed to verify warp signature
+  err="signature weight is insufficient: 67*600 > 100*200"
+  ```
+
+  `totalWeight = 600` 是 **L1 六个验证者**的总权重（每个 100，含第三步刚进 P 链的 l1-6）。
+  也就是说验证用的是 L1 自己的集合，Primary 的签名在那里只折算出 200。
+  改成向本 subnet 要签名后：**5/6 签名者（bitset 0x3d）= 83% ≥ 67%**，交易在区块 995 成功。
+
+  **两条教训**：
+
+  1. `requirePrimaryNetworkSigners` 这个名字与它在本链上的实际效果不一致。
+     从配置项名字推断行为，推错了，而且推错之后的表现是"签名收齐了、交易照样失败"。
+  2. 这一步的失败在 `log-level: info` 下**完全静默** —— 合约只回一个自定义错误选择器，
+     预编译只回 `valid = false`。权重那句报错只在 debug 级出现。
+     排查这类问题应当**先把日志级别调上去**，而不是先猜。
+
+  另：`eth_call`（`simulateContract`）会自行为调用准备谓词结果，**模拟通过不能证明会成功**。
+  同一条消息模拟通过、真实出块 revert，两次都是这样。
 
 - **V-33** ✅ T072 滚动完成后，**五个注册验证者全部开启 Warp API**（逐台实测）。
   签名聚合的 quorum 够了：5/5 = 100% ≥ 67%。
