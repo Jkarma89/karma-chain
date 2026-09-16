@@ -316,7 +316,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       读不到链上成员时的退路要想清楚：宁可说「成员集合未知」，
       也不要拿声明去凑一个看起来确定的结论
 
-- [ ] T074 `docs/devnet.md` 补一条：**这台 Windows 机器上 `docker restart` 会弄坏容器网络**。
+- [X] T074 `docs/devnet.md` 补一条：**这台 Windows 机器上 `docker restart` 会弄坏容器网络**。
       2026-09-15 第三次撞到同类问题：`docker restart karmachain-l1-1` 之后，
       **宿主连得上两个 Primary 的 staking 端口，而容器连不上** ——
       节点卡在 `failed to connect to bootstrap nodes`，链的 VM 一直没初始化，
@@ -446,7 +446,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       本条只**记录并核实**这个判断，删除与否留给单独一次清理（不在 005 范围内：
       宪法要求删除既有制品走明示流程，而本期的承诺里没有这一项）
 
-- [ ] T067 `docs/devnet.md` 加一条运维故障模式：**宿主连不上已发布端口，而容器内自测正常**。
+- [X] T067 `docs/devnet.md` 加一条运维故障模式：**宿主连不上已发布端口，而容器内自测正常**。
       2026-09-14 在 win-1 上连撞两次（`l1-1` Up 17 小时、`karmachain-rpc-win-1` Up 21 小时）。
       特征：容器内 `curl` 200、`docker port` 显示端口已发布、Windows 保留段无冲突、
       宿主侧 TCP **连得上**而 HTTP **空回复**（`Empty reply from server`）。

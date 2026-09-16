@@ -264,6 +264,91 @@ scripts/devnet-node.sh resume l1-3    # SIGCONT
 > `resume` 后链健康检查会持续报 `grpc: the client connection is closing` 且无法自愈——此时需 `stop` + `start` 恢复。
 > 需要节点长时间离线时请直接用 `stop`。
 
+## 5.3 容器网络故障模式 —— 一个修法管六次（T067 / T074）
+
+**先说结论：滚动配置变更一律用 `up -d --force-recreate`，不要用 `docker restart`。**
+代价一样（都要停一下），而 `restart` 在 Windows/Docker Desktop 的机器上会额外引入一个网络故障。
+
+2026-09-14 到 09-16 在 `win-1` 与 `win-2` 上共撞到**六次**同一类问题。
+它们表现各不相同，**修法完全相同**：重建那个容器。
+
+| # | 日期 | 方向 | 现象 |
+|---|---|---|---|
+| 1–2 | 09-14 | 入站 | 宿主侧 TCP **连得上**而 HTTP **空回复**（`Empty reply from server`）；容器内 `curl` 200、`docker port` 显示端口已发布、Windows 保留段无冲突 |
+| 3 | 09-15 | 出站 | `docker restart` 之后，**宿主连得上两个 Primary 的 staking 端口，而容器连不上**；节点卡在 `failed to connect to bootstrap nodes`，链的 VM 一直没初始化，60 秒后转 unhealthy |
+| 4–5 | 09-15/16 | P2P 应用消息 | 节点**引导完成、高度跟得上、HTTP 正常、自己能签**，但 Warp 签名聚合**双向不通**：它当发起方挂 30 秒，别人也要不到它的签名。四个 Linux 节点一致地只拿到 3/5 |
+| 6 | 09-16 | 同步停滞 | 节点**卡在某个高度不追赶**（991，其余五个已到 993），容器却是 `healthy` |
+
+**为什么这些看起来不像同一件事，却是同一件事。** 前三次是连接层（入站空回复、出站不通），
+第四、五次只坏了 `AppRequest` 这一类消息而共识消息正常，第六次连共识也停了但健康检查不报。
+共同点是 Docker Desktop 的网络栈进入了一个**部分可用**的状态，
+而部分可用比完全不可用更难认：每一层的探测都能给出"看起来正常"的答案。
+
+**认它的判据（按顺序试，不要跳）**
+
+```bash
+# ① 宿主 → 容器：TCP 通不通，HTTP 答不答（这两件事会分叉）
+timeout 5 bash -c "echo > /dev/tcp/<地址>/<端口>"   # 通
+curl -s -m 5 http://<地址>:<端口>/ext/info -X POST … # 空回复 → 第 1–2 类
+
+# ② 容器 → 外部：容器内自测（第 3 类在这里现形，宿主侧看不出来）
+docker run --rm --entrypoint bash karmachain/node:local -c \
+  'timeout 5 bash -c "echo > /dev/tcp/<Primary 地址>/<staking 端口>"'
+
+# ③ 高度：它自己报的高度与其余节点的对比（第 6 类）
+#    注意本机的 RPC 代理可能正指向这个落后的节点 —— 那会让**所有**读数变陈旧
+node tools/inspect/node-status.mjs --json | jq '.nodes[] | {id, height, state}'
+
+# ④ P2P 应用消息：节点自己能签、别人要不到（第 4–5 类）
+#    自签走 HTTP，聚合走 P2P —— 前者成后者败，就是这一类
+curl … -d '{"method":"warp_getMessageSignature","params":["<消息ID>"]}'          # 成
+curl … -d '{"method":"warp_getMessageAggregateSignature","params":[…]}'          # 挂住
+```
+
+**修法（六次都有效）**
+
+```bash
+docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate <服务>
+```
+
+重建后 10–20 秒即恢复（第 6 类实测 20 秒追平）。**不要用 `docker restart`** —— 第 3 次就是它造成的。
+
+> **一个连带的陷阱**：本机的 RPC 入口（`http://127.0.0.1:8545`）后面是本机那个节点。
+> 它落后时，你在本机读到的高度、回执、合约状态**全是陈旧的**，而读出来的东西看着完全正常。
+> 2026-09-16 因此误判过一次：查交易回执"查不到"、查进度"还是第三步"，
+> 而实际上交易早已上链。**排查跨节点的事情时，直连一个已知跟得上的节点。**
+
+## 5.4 成员增删的运维要点（US2）
+
+加入流程由 `node tools/membership/add-validator.mjs --node-id NodeID-…` 驱动：
+它**从链上读进度**、每步之前停下来给你看要花什么，做完一步就停。
+`npm run membership:status` 列出声明 / 合约 / P 链三侧的成员并标出分歧。
+
+下面几条是**只能靠实测发现**的坑（扩容与缩容的完整规程、`n → f` 那张表尚未成文 —— 见 T059）。
+
+- **排查顺序：先把日志级别调上去，再猜。** 第四步失败时，合约只回一个自定义错误选择器、
+  Warp 预编译只回 `valid = false`，`log-level: info` 下**完全静默**。
+  把链配置临时调到 `debug` 才看到唯一说得清的那句
+  `signature weight is insufficient: 67*600 > 100*200` —— 它直接给出了总权重与门槛。
+  在那之前我按配置项的名字推断了一整轮，全错。
+
+- **确认消息由 L1 自己的验证者签，不是 Primary。** 链配置里有
+  `requirePrimaryNetworkSigners: true`，但它在本链上的实际效果与名字不一致（research V-34）。
+  收齐两个 Primary 的签名（100% 的 Primary 权重）交易照样 revert。
+
+- **签名聚合器少一个 `allow-private-ips` 就静默连不上。** TCP 通、握手建不起来、
+  `connectedWeight: 0`、**不报任何拨号错误**，换机器也一样。
+  配置由 `docker/aggregator/entrypoint.sh` 从节点 flags 推导，正常情况下不需要人管。
+
+- **转换块刚落地时，P 链的 Warp 校验会算不出验证者集合。** `ConvertSubnetToL1Tx`
+  在最后一个 P 链块里时，第三步会被拒，报
+  `unknown validator: NumIndices (4) >= NumFilteredValidators (0)`。
+  让 P 链**再前进一个块**（任何一笔 P 链交易，费用约 0.000005 AVAX）即可。
+
+- **容错的分母取 P 链，不取合约、不取声明。** 三者在成员加入过程中会合法地不一致；
+  共识按 P 链算（同上那句 `67*600` 是直接证据）。`npm run membership:status`
+  会把三侧都列出来并标出分歧。
+
 ## 6. 排障（按 FR-030 类别）
 
 | 类别 | 现象 | 处理 |
@@ -275,6 +360,7 @@ scripts/devnet-node.sh resume l1-3    # SIGCONT
 | node | `devnet-status` 报 N/7 不健康（退出 1） | `scripts/devnet-logs.sh <node>` 看日志；必要时 `devnet-node stop/start <node>` |
 | validator | `devnet-verify` 报某节点未 bootstrapped | 同上；若长时间不恢复则 `scripts/devnet-reset` |
 | p2p | 某节点 `peers` 明显低于其他节点 | 查该节点日志的对等连接相关条目 |
+| node | 宿主侧 TCP 通而 HTTP 空回复 / 容器连不出去 / 节点卡在某个高度不追赶 / 自己能签但别人要不到它的签名 | 都是**同一类**容器网络故障，修法相同：`up -d --force-recreate <服务>`。判据与六次实测见 §5.3 |
 | rpc | 403 `invalid host specified` | 见 §3 Host 头限制 |
 | rpc | `devnet-verify` 报 `connection refused` | 网络未启动或已停止；`scripts/devnet-start` |
 
@@ -473,6 +559,10 @@ netsh interface ipv4 show excludedportrange protocol=tcp
 | `ubuntu-1` | 21664、21665、21650、21651 |
 | `ubuntu-2` | 21666、21667、21652、21653 |
 | `ubuntu-3` | 21668、21669 |
+| `ubuntu-4` | 21670、21671 |
+
+> 这张表的唯一事实来源是 `blockchain/deployment.json`。加机器时按那里的
+> `httpPort` / `stakingPort` 补一行 —— 不要凭这张表反推端口。
 
 ```powershell
 # Windows
@@ -510,10 +600,37 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 （模式变更算本地改动）。确认 `git diff --summary` 全是 `mode change 100644 => 100755` 后
 `git checkout -- scripts/` 再 pull。
 
+**⑦bis Docker 的来源逐台不同，别假设命令通用。** 2026-09-16 在 `ubuntu-4` 上撞到：
+`sudo sh scripts/devnet-start.sh` 报 `'docker compose' (v2) not available`。
+清点之后发现六台机器的 Docker 来源并不一致：
+
+| 边界 | Docker 来源 | compose v2 |
+|---|---|---|
+| `ubuntu-1`…`ubuntu-3` | **snap**（`docker` snap，canonical） | snap 里自带 |
+| `ubuntu-4` | **Ubuntu 的 apt 包**（`29.1.3-0ubuntu3~22.04.2`） | 需另装 `docker-compose-v2` |
+| `win-1`、`win-2` | Docker Desktop | 自带 |
+
+`ubuntu-4` 的修法（Ubuntu 22.04，同一个 apt 源就有）：
+
+```bash
+apt-cache policy docker-compose-v2      # 先看 Candidate 是不是版本号
+sudo apt install -y docker-compose-v2
+docker compose version                  # 应为 2.40.x
+```
+
+**不要退回 v1 的 `docker-compose`。** 启动脚本刻意只认 v2（`docker compose version`），
+而两者在 `--force-recreate` 与挂载 inode 的行为上不同 —— 见上面那段 ⚠️。
+用 v1 会让这台机器在同一个坑里表现得跟别人不一样。
+
+判定来源的方法：`dpkg -l | grep -i docker` 空而 `snap list | grep docker` 有 ⇒ snap 装的；
+`docker --version` 带 `0ubuntuN` 后缀 ⇒ Ubuntu 的 apt 包。
+
 **⑧ 架构可以混。** 镜像**逐台各自构建**（`docker/node/Dockerfile` 按 `TARGETARCH` 选
 subnet-evm 的二进制与校验值），因此 amd64 与 arm64 机器可以混在同一条链里 ——
 本项目当前就是 **3 台 amd64（win-1、win-2、ubuntu-3）+ 2 台 arm64（ubuntu-1、ubuntu-2）**，
-创世哈希与链身份完全一致。
+创世哈希与链身份完全一致。（`ubuntu-4` 的架构**未核实** —— 它的镜像是用
+`--build-arg TARGETARCH=$(dpkg --print-architecture)` 构建的，成功即说明两者匹配，
+但那次没记下具体值。要确认就在那台上跑一次 `dpkg --print-architecture`。）
 
 推论：`docker save` / `docker load` 搬镜像**只在同架构之间有效**。arm64 机器不能用
 amd64 机器导出的镜像（反之亦然），报错发生在容器启动而不是 load，容易误判。
