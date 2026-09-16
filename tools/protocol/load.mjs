@@ -1,5 +1,7 @@
 // tools/protocol/load.mjs
-// 读取并校验 blockchain/protocol.json —— KarmaChain 协议参数的唯一事实来源（宪法第十六条）。
+// 读取并校验 blockchain/protocol.json（协议参数）+ blockchain/deployment.json（部署描述）——
+// 合起来是 KarmaChain 配置的唯一事实来源（宪法第十六条）。005 把两者分了家，
+// 因为「改了一台机器的端口」不该让链重置；分法与理由见 ADR-0012 与下面 mergeConfig 的注释。
 // 其他所有工具（创世/文档/compose 生成器、验证器、测试）必须经由本模块获取参数，不得自行解析或硬编码。
 //
 // 用法（库）：   import { loadProtocol } from '../protocol/load.mjs'

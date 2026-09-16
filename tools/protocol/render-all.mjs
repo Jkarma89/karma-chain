@@ -53,8 +53,10 @@ for (const [script, produces] of GENERATORS) {
 }
 
 if (!failures.length) {
+  // 报出处时**两份文件都要提**：005 之后部署描述搬去了 deployment.json，
+  // 只提 protocol.json 会把查漂移的人引向错误的文件 —— 改了机器地址却在那里找不到。
   console.log(check
-    ? `\n全部 ${GENERATORS.length} 项生成物与 blockchain/protocol.json 一致。`
+    ? `\n全部 ${GENERATORS.length} 项生成物与 blockchain/protocol.json + blockchain/deployment.json 一致。`
     : `\n已生成 ${GENERATORS.length} 项派生物。下一步：npm test 会指出还有什么没同步。`);
   process.exit(0);
 }
