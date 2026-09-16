@@ -238,6 +238,8 @@ button:disabled { opacity: 0.55; cursor: default; }
 .notes { margin-top: 1.75rem; border-top: 1px solid var(--line); padding-top: 0.9rem; }
 .note { color: var(--dim); font-size: 0.87rem; margin: 0.4rem 0; max-width: 78ch; }
 .note.small { font-size: 0.82rem; }
+/* 说明性文字里的"这个数字不可信"一类 —— 比普通 note 要抓眼睛 */
+.note.bad { color: var(--critical); }
 .note strong { color: var(--fg); }
 
 .mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; }
@@ -364,6 +366,14 @@ td.merged { color: var(--warn); }
 .incident-group--sync-lag { border-left-color: var(--waiting); background: var(--waiting-wash); }
 .incident-group--consensus-margin { border-left-color: var(--warn); background: var(--warn-wash); }
 .incident-group--chain-identity { border-left-color: var(--critical); background: var(--critical-wash); }
+/* 004 与 005 加的四类。此前它们**没有颜色**，落到默认的灰框 ——
+   recovery-blocked 是严重的却看着中性，而 FR-029 要求 T-5 越界"显目报出"。
+   membership 刻意保持中性：它**不是故障**（正在加入或已被主动移除），
+   染成红色会让人去修一台没坏的机器。 */
+.incident-group--recovery-blocked { border-left-color: var(--critical); background: var(--critical-wash); }
+.incident-group--membership { border-left-color: var(--unknown); background: var(--unknown-wash); }
+.incident-group--topology-limit { border-left-color: var(--warn); background: var(--warn-wash); }
+.incident-group--tolerance-basis { border-left-color: var(--warn); background: var(--warn-wash); }
 
 .incident-group-title { font-weight: 600; margin-bottom: 0.2rem; }
 .incident-group--observation .incident-group-title { color: var(--unknown); }
@@ -371,6 +381,10 @@ td.merged { color: var(--warn); }
 .incident-group--sync-lag .incident-group-title { color: var(--waiting); }
 .incident-group--consensus-margin .incident-group-title { color: var(--warn); }
 .incident-group--chain-identity .incident-group-title { color: var(--critical); }
+.incident-group--recovery-blocked .incident-group-title { color: var(--critical); }
+.incident-group--membership .incident-group-title { color: var(--unknown); }
+.incident-group--topology-limit .incident-group-title { color: var(--warn); }
+.incident-group--tolerance-basis .incident-group-title { color: var(--warn); }
 
 .incident-action { color: var(--dim); font-size: 0.85rem; }
 

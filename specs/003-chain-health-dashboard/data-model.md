@@ -193,7 +193,11 @@ healthPercent = round(participating / validatorCount * 100)
 | `chain-identity` | `genesisMatchesBaseline === false` | 该机器跑在另一条链上 —— 比下线严重，**且不表现为健康度下降** |
 | `membership` | `registeredOnChain === false`（**先于所有状态判据**） | 它不是当前共识成员，**不是故障** —— 分清正在加入还是已退出，再决定续注册还是清理声明 |
 
-> `membership` 由**功能 005**（FR-028 / T038）加入，是这张表唯一的一次扩充。
+> `membership` 由**功能 005**（FR-028 / T038）加入。005 另加了两类
+> （`topology-limit` / `tolerance-basis`），登记在
+> [005 的 data-model 第 2 节](../005-elastic-membership/data-model.md)；
+> `recovery-blocked` 由 004 加入，登记在 004 的 data-model。
+> 也就是说这张表是 003 当时的六类，后续扩充各自记在自己的特性里。
 >
 > 原因：成员集合在 005 之后运行期可变，于是出现了一类"声明里有、链上没有"的节点 ——
 > 它可能**正在加入**（注册没走完），也可能**已被主动移除**（按规程，移除之后才停进程、

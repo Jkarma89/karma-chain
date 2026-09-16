@@ -142,7 +142,10 @@ const ft = (perDomain, f = 1) => ({
   tolerateWholeDomainLoss: perDomain.length > 1,
 });
 
-const snap = ({ rows, faultTolerance, observer, baseline = BASELINE, containerFacts, deployment = 'lan' }) =>
+const snap = ({
+  rows, faultTolerance, observer, baseline = BASELINE, containerFacts, deployment = 'lan',
+  memberSet,
+}) =>
   buildSnapshot({
     collectedAt: Date.now(),
     pollIntervalMs: 2000,
@@ -161,6 +164,7 @@ const snap = ({ rows, faultTolerance, observer, baseline = BASELINE, containerFa
     baselineGenesisHash: baseline,
     containerFacts: containerFacts ?? { available: true, reason: null },
     summaryLine: '5/5 验证者在线',
+    memberSet,
   });
 
 const five = (over = []) => [1, 2, 3, 4, 5].map((i) => validator(i, over[i - 1] ?? {}));
@@ -285,6 +289,78 @@ const SCENARIOS = {
       primary(1),
       primary(2, { state: 'unreachable', reachable: false, countsAsOffline: false, peers: null, detail: '本机视角不可达 —— 其余节点仍看得见它' })],
   }),
+
+  // ── 功能 005 的三种新形态（T054）────────────────────────────────────────────
+  //
+  // 这三种在 005 之前**不可能出现**：成员集合是固定的，声明与链上永远一致。
+  // 现在它们是常态的一部分 —— 一次注册走到第三步就是第一种。
+
+  // ① n 正在变：声明 6 个，P 链上只有 5 个带权重（第四步还没做完）。
+  //    第六行会被 scopeToChainMembers 判为 registeredOnChain: false 并退出容错判据。
+  'membership-joining': () => snap({
+    rows: [...five(), validator(6, { state: 'bootstrapping', detail: '正在引导', height: 120 }),
+      primary(1), primary(2)],
+    faultTolerance: ft([1, 1, 1, 1, 1, 1]),
+    memberSet: {
+      source: 'p-chain',
+      registeredNodeIds: [1, 2, 3, 4, 5].map((i) => `NodeID-fake${i}`),
+      unidentified: 0,
+      equalWeights: true,
+      weights: ['100'],
+    },
+  }),
+
+  // ② 成员漂移 + 权重不等：⌊n/4⌋ 的**前提不成立**，页面上那些余量数字不可信。
+  //    这一格的意义是：不可信要能说出来，而不是给一个看着确定的错数。
+  'membership-drift-unequal-weights': () => snap({
+    rows: [...five(), primary(1), primary(2)],
+    memberSet: {
+      source: 'p-chain',
+      registeredNodeIds: [1, 2, 3, 4].map((i) => `NodeID-fake${i}`),
+      unidentified: 1,
+      equalWeights: false,
+      weights: ['100', '600'],
+    },
+  }),
+
+  // ③ T-5 越界：一个有效边界承载 2 个验证者，而上限是 1（FR-029）。
+  //    跨机形态下这是**声明**的问题，不是节点的问题 —— 处置在仓库里。
+  // 注意：边界的验证者数由 scopeToChainMembers **按行重数**（收敛到链上成员），
+  // 所以光把 ft 写成 [2,1,1,1] 不够 —— 必须真有两行落在同一个边界里。
+  // 第一版就是漏了这一点，那条断言红了，而红得对。
+  'topology-over-limit': () => snap({
+    rows: [validator(1, { domain: 'd-1' }), validator(2, { domain: 'd-1' }),
+      validator(3, { domain: 'd-2' }), validator(4, { domain: 'd-3' }), validator(5, { domain: 'd-4' }),
+      primary(1), primary(2)],
+    faultTolerance: ft([2, 1, 1, 1]),
+    memberSet: {
+      source: 'p-chain',
+      registeredNodeIds: [1, 2, 3, 4, 5].map((i) => `NodeID-fake${i}`),
+      unidentified: 0,
+      equalWeights: true,
+      weights: ['100'],
+    },
+  }),
+
+  // ④ 反方向的漂移：链上有 6 个，声明里只有 5 个。
+  //    这一侧**没有行可挂** —— 逐行的 membership 分类只看得见声明里的节点，
+  //    而这种漂移恰恰是声明里没有的那个。不单独报就只剩一个数字差。
+  'membership-extra-on-chain': () => snap({
+    rows: [...five(), primary(1), primary(2)],
+    memberSet: {
+      source: 'p-chain',
+      registeredNodeIds: [1, 2, 3, 4, 5, 6].map((i) => `NodeID-fake${i}`),
+      unidentified: 1,
+      equalWeights: true,
+      weights: ['100'],
+    },
+  }),
+
+  // ⑤ 成员集合读不到：档位应是 members-unknown，且**不得**拿声明数去凑一个余量。
+  'members-unknown': () => snap({
+    rows: [...five(), primary(1), primary(2)],
+    memberSet: { source: 'unknown', error: 'P 链不应答' },
+  }),
 };
 
 const VIEWS = ['view-health', 'view-nodes', 'view-observer', 'view-domains', 'view-identity', 'view-public'];
@@ -313,7 +389,17 @@ after(() => {
 
 // ---------- 测试 ----------
 
-describe('六个视图 × 十七种快照形态：渲染不得抛错', () => {
+describe('六个视图 × 全部快照形态：渲染不得抛错', () => {
+  // 形态数不写死在标题里 —— 005 加了四种，写死的数字会立刻过期而没人改。
+  test(`形态数 ${Object.keys(SCENARIOS).length} 个，且覆盖 005 的四种新形态`, () => {
+    for (const k of ['membership-joining', 'membership-drift-unequal-weights',
+      'topology-over-limit', 'members-unknown']) {
+      assert.ok(SCENARIOS[k], `缺形态 ${k} —— 005 之后这四种是常态的一部分`);
+    }
+    assert.ok(Object.keys(SCENARIOS).length >= 21,
+      '形态数比预期少 —— 有人删掉了某一格，那一格覆盖的缺陷会重新变得可能');
+  });
+
   for (const name of VIEWS) {
     for (const [scenario, build] of Object.entries(SCENARIOS)) {
       test(`${name} 渲染 ${scenario}`, async () => {
@@ -498,5 +584,61 @@ describe('渲染结果的几条内容判据', () => {
       assert.ok(root.allClasses.has(cls),
         `${scenario} 应当用 ${cls} 版式 —— 若只换颜色不换版式，FR-009 的三通道就少了一条`);
     }
+  });
+});
+
+describe('005 的三句话必须真的出现在页面上（T049 / T051、FR-025 / FR-029）', () => {
+  // 「渲染不抛错」证明不了任何**内容**。上面那组穷举保证页面不白屏，
+  // 这一组保证该说的话说了 —— 否则 FR-025 会落成"数据算好了，但没人看得见"。
+  const textOf = async (view, scenario) => {
+    const mod = await import(`../../tools/dashboard/public/${view}.mjs`);
+    const root = new StubNode('div');
+    mod.render(SCENARIOS[scenario](), root);
+    return root.textContent;
+  };
+
+  test('加一个成员不改变上限时，**明说"仍然是"**，不只把两个数字摆出来', async () => {
+    const t = await textOf('view-domains', 'normal');
+    assert.match(t, /仍然是/,
+      '页面没有正面回答"加一个会不会变" —— 而人看到"从 5 个变成 6 个"'
+      + '几乎一定会以为更抗了（F-5：n=5→6→7 上限一直是 1）');
+    assert.match(t, /成员数得到 8|上限会提高/,
+      '说了"不变"就要顺带说清"要到几才变"，否则那句话只是个否定');
+  });
+
+  test('注册进行中时，声明数与链上数**都报出来**', async () => {
+    const t = await textOf('view-domains', 'membership-joining');
+    assert.match(t, /链上成员 5 个/, '链上数必须报出来 —— 判据是按它算的');
+    assert.match(t, /声明 6 个/, '差额也要报出来，否则看的人以为面板漏了一个节点');
+  });
+
+  test('权重不等时，明说"上面这些数字此刻不可信"', async () => {
+    const t = await textOf('view-domains', 'membership-drift-unequal-weights');
+    assert.match(t, /不可信/,
+      '⌊n/4⌋ 的前提是等权。前提不成立却给出一个看着确定的余量，比不给更坏');
+  });
+
+  test('T-5 越界**显目报出**，且处置指向仓库而不是机房', async () => {
+    const t = await textOf('view-domains', 'topology-over-limit');
+    assert.match(t, /超过上限/, 'FR-029 要求显目报出，不得静默通过');
+    assert.match(t, /deployment\.json/,
+      '处置方向必须指向声明文件 —— 指向"去那台机器看节点"是错的，节点没坏');
+  });
+
+  test('「链上有、声明里没有」也要有处置方向（FR-030 的第三种）', async () => {
+    const t = await textOf('view-domains', 'membership-extra-on-chain');
+    assert.match(t, /有成员没写进声明/,
+      '这一侧没有行可挂 —— 逐行的 membership 分类看不见它，必须另报一条链级的');
+    assert.match(t, /认不出/, 'nodeID 认不出的那几个要单独说，否则成员数与列出的节点数会静默不等');
+    assert.match(t, /补进 deployment\.json/,
+      '三种漂移共用一条 action，那条 action 必须把这个方向也写清楚');
+  });
+
+  test('**反向断言**：不越界的形态里没有那条越界提示', async () => {
+    const t = await textOf('view-domains', 'normal');
+    assert.doesNotMatch(t, /超过上限/,
+      '正常形态也报越界 —— 一条恒亮的告警等于没有告警');
+    assert.doesNotMatch(t, /有成员没写进声明/,
+      '声明与链上一致时也报漂移 —— 同上，恒亮等于没有');
   });
 });

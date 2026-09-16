@@ -36,6 +36,12 @@ export const INCIDENT_CLASSES = new Set([
   'recovery-blocked',
   // 声明里有、链上没有 —— 正在加入或已退出。**都不是故障**（FR-028 / T038）
   'membership',
+  // 某个**有效**故障边界的验证者数超过 ⌊n/4⌋（005 / FR-029）。
+  // 它不是节点故障也不是链故障 —— 是**声明本身**有问题，处置在仓库里而不在机房里。
+  'topology-limit',
+  // 链上成员权重不等 → ⌊n/4⌋ 那条推导的前提不成立，上面所有余量数字都不可信
+  //（005 / FR-024 的前提，research R-05 / V-22）。
+  'tolerance-basis',
 ]);
 
 /** 已引导且在服务 L1 —— 只有这两个状态本身就代表"在提供连接权益"。 */
@@ -420,7 +426,9 @@ const incident = (cls, message, nodeId) => ({
  *     归错类会让人去看验证者，而要修的是本机网络。
  *   - `starting` **不**产生 consensus-margin —— 它是"要等"，不是"须处置"。
  */
-export function buildIncidents({ rows, tier, observer, chainIdentity, recoveryCapability }) {
+export function buildIncidents({
+  rows, tier, observer, chainIdentity, recoveryCapability, membership,
+}) {
   const out = [];
 
   for (const row of rows) {
@@ -465,6 +473,46 @@ export function buildIncidents({ rows, tier, observer, chainIdentity, recoveryCa
   if (chainIdentity?.forkDetected) {
     const bad = rows.filter((r) => r.genesisMatchesBaseline === false).map((r) => r.id);
     out.push(incident('chain-identity', `创世哈希与仓库基准不一致：${bad.join('、')}`));
+  }
+
+  // T-5 越界（FR-029）：**不静默通过**。
+  // 按**有效**边界判，不按声明边界 —— 后者会给出一个在现实里为假的绿灯
+  //（002 load.mjs 那条注释记的就是这件事）。
+  if (membership?.domainOverLimit?.over) {
+    const d = membership.domainOverLimit;
+    out.push(incident(
+      'topology-limit',
+      `故障边界 ${d.domains.map((g) => `${g.ids.join('+')}（${g.validators} 个）`).join('、')}`
+      + ` 承载的验证者数超过上限 ${d.limit}（${membership.chainCount} 个等权成员 → ⌊n/4⌋）——`
+      + '那台机器一旦整体失效，一次就会失去超过可容忍的数量。'
+      + '这不是节点故障，是**声明本身**越界了',
+    ));
+  }
+
+  // 「链上有、声明里没有」（FR-030 的第三种漂移）。
+  //
+  // 这一侧**没有行可挂** —— 逐行的 membership 分类只看得见声明里的节点，
+  // 而这种漂移恰恰是声明里没有的那个。不单独报的话，它在面板上只剩一个数字差
+  // （"链上 7 / 声明 6"），没有处置方向。
+  if (membership && membership.chainCount > membership.declaredCount) {
+    out.push(incident(
+      'membership',
+      `链上有 ${membership.chainCount} 个成员，声明里只有 ${membership.declaredCount} 个 ——`
+      + '**有成员没写进声明**。它照样在共识里带权重、照样算进容错分母，'
+      + '但面板列不出它是谁（因为节点清单来自声明）'
+      + (membership.unidentified ? `；其中 ${membership.unidentified} 个连 nodeID 都认不出` : ''),
+    ));
+  }
+
+  // 权重不等 → 上面那些余量数字的前提不成立。
+  // 不报的话，面板会给出一个**看着确定的错数** —— 那比不给更坏。
+  if (membership && membership.toleranceTrustworthy === false) {
+    out.push(incident(
+      'tolerance-basis',
+      `链上成员的权重不一致（${(membership.weights ?? []).join(' / ') || '取值未知'}）——`
+      + ' ⌊n/4⌋ 成立的前提是等权，所以本页面的两个余量与门槛**此刻都不可信**。'
+      + '档位与百分比仍按权重计算的共识规则成立，但"还能掉几个"这句话不成立',
+    ));
   }
 
   return out;
@@ -518,6 +566,82 @@ export function enrichRows({ rows, networkHeight, baselineGenesisHash }) {
  * `collectedAt` 由**调用方在探测完成时**打戳后传入 —— 不是请求到达时，
  * 也不在本文件里取时钟（纯函数）。页面的新鲜度判定依赖它反映数据年龄。
  */
+/**
+ * 成员维度的呈现数据（功能 005 / T049 / T051、FR-025 / FR-029 / FR-030）。
+ *
+ * ## 为什么需要这一块，而不是让视图自己算
+ *
+ * `scopeToChainMembers()` 已经把 `declaredValidatorCount` 与 `equalWeights` 算好了，
+ * 但 `buildSnapshot` 一直返回**未收敛**的那份 faultTolerance —— 算出来了却没传出去。
+ * 于是视图拿不到"声明 6 / 链上 5"这个差额，只能看见一个没有来历的数字。
+ *
+ * ## FR-025 要的那句话，落地成什么
+ *
+ * 面板不知道"刚刚发生了一次成员变化"（它只看得见当下的状态）。能说、且必须说的是
+ * **当下这个 n 的邻域**：
+ *
+ *   加一个 → f 变不变     减一个 → f 变不变     要让 f 提高，n 得到几
+ *
+ * 这三句合起来就回答了"这次变化有没有改变容错"，而且**不给"节点更多了就更抗"
+ * 留下解释空间** —— n=5→6→7 时第一句的答案都是"不变"。
+ *
+ * ⌊n/4⌋ 的前提是等权。权重不等时那条推导不成立，此处照实标记
+ * （`toleranceTrustworthy: false`），让呈现层能说"前提不成立"，
+ * 而不是给一个看着确定的错数。
+ */
+export function buildMembership({ faultTolerance, memberSet }) {
+  const f = (n) => Math.floor(n / 4);
+  const n = faultTolerance.validatorCount;
+  const declared = faultTolerance.declaredValidatorCount ?? n;
+  const current = faultTolerance.maxOfflineValidators;
+
+  // 要让 f 提高，n 至少得到几 —— 说"加到 7 也还是 1"不如直接说"要到 8"
+  let nextIncreaseAt = null;
+  for (let m = n + 1; m <= n + 8; m += 1) {
+    if (f(m) > current) { nextIncreaseAt = m; break; }
+  }
+
+  // T-5：某个**有效**边界的验证者数超过 f。按有效边界算 ——
+  // 按声明边界算会得到一个在现实里为假的绿灯（002 load.mjs:259 的那条注释）。
+  const domains = faultTolerance.effectiveDomains ?? [];
+  const worstDomain = Math.max(0, ...domains.map((g) => g.validators ?? 0));
+  const overLimit = domains
+    .filter((g) => (g.validators ?? 0) > current)
+    .map((g) => ({ ids: g.ids, validators: g.validators }));
+
+  return {
+    source: memberSet?.source ?? 'unknown',
+    // 三个数分开报。它们相等是常态，不等的那一刻恰恰是最需要看清的
+    //（加入走到第三步、第四步没做完时，链上有而合约/声明还没有）。
+    declaredCount: declared,
+    chainCount: n,
+    unidentified: memberSet?.unidentified ?? 0,
+    inSync: declared === n,
+
+    maxOffline: current,
+    /** 加一个成员之后的上限，以及它**变不变**（FR-025 的正面回答）。 */
+    ifAdded: { n: n + 1, maxOffline: f(n + 1), changed: f(n + 1) !== current },
+    /** 减一个成员之后的上限。减少**可能砍半**（8→7 是 2→1），必须在动手前说出来。 */
+    ifRemoved: n > 0
+      ? { n: n - 1, maxOffline: f(n - 1), changed: f(n - 1) !== current }
+      : null,
+    /** 要让上限提高，n 得到几。null 表示往上八格之内都不会变。 */
+    nextIncreaseAt,
+
+    /** ⌊n/4⌋ 的前提是等权；不等时上面这些数都不可信。undefined 表示这一侧没给权重。 */
+    toleranceTrustworthy: memberSet?.equalWeights !== false,
+    weights: memberSet?.weights ?? null,
+
+    /** T-5（FR-029）：不静默通过 —— 超限的边界逐个报出来。 */
+    domainOverLimit: {
+      over: overLimit.length > 0,
+      limit: current,
+      worst: worstDomain,
+      domains: overLimit,
+    },
+  };
+}
+
 export function buildSnapshot({
   collectedAt, pollIntervalMs, deployment, networkHeight,
   rows, faultTolerance, observer, chain, baselineGenesisHash,
@@ -534,8 +658,9 @@ export function buildSnapshot({
   });
   // 恢复能力在档位**之后**算，且 deriveTier 不读它 —— 单向依赖，档位不受影响（FR-013）
   const recoveryCapability = deriveRecoveryCapability({ rows: enriched, tier: tierInfo.tier });
+  const membership = buildMembership({ faultTolerance: scope.faultTolerance, memberSet });
   const incidents = buildIncidents({
-    rows: enriched, tier: tierInfo.tier, observer, chainIdentity, recoveryCapability,
+    rows: enriched, tier: tierInfo.tier, observer, chainIdentity, recoveryCapability, membership,
   });
 
   return {
@@ -548,7 +673,13 @@ export function buildSnapshot({
     // 附加字段：既有字段的语义与取值一律不变；**不进**对外精简视图（FR-022）。
     recoveryCapability,
     primariesRequiredForRejoin: PRIMARIES_REQUIRED_FOR_REJOIN,
-    faultTolerance,
+    // **收敛后的那份**，不是声明的那份。
+    // 此前这里返回未收敛的 faultTolerance，而 tier / 两个余量是按收敛后算的 ——
+    // 注册进行中（链上 5、声明 6）时，视图里的解释文字会和它上面的数字互相矛盾。
+    // 声明侧的数字没有丢：它在 declaredValidatorCount 里，也在 membership 块里。
+    faultTolerance: scope.faultTolerance,
+    /** 成员维度（005 / FR-025 / FR-029 / FR-030）。 */
+    membership,
     observer,
     chainIdentity,
     nodes: enriched,

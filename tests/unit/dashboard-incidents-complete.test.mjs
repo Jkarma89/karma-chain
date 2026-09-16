@@ -7,6 +7,9 @@
 // 全部组合喂进去，断言产出的每一条都带合法分类、可读消息与处置方向。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { buildIncidents, incidentClass, INCIDENT_CLASSES, TIERS } from '../../tools/dashboard/snapshot.mjs';
 import { INCIDENT_COPY } from '../../tools/dashboard/public/copy.mjs';
 
@@ -118,5 +121,42 @@ describe('异常条目挂在正确的对象上', () => {
       tier: TIERS.NORMAL,
     });
     assert.deepEqual(incidents, []);
+  });
+});
+
+describe('每个分类都有颜色 —— 否则"显目报出"落成一个灰框（FR-029）', () => {
+  // ## 为什么补这条（2026-09-16）
+  //
+  // `recovery-blocked`（004）与 `membership`（005）加进枚举时都**没有加样式**，
+  // 于是它们渲染成 `border-left-color: var(--line)` 的中性灰框。
+  // 文案表那条双向守卫抓不到这个：它只管有没有文字。
+  //
+  // 后果不对称，两个方向都坏：
+  //   `recovery-blocked` 是"恢复能力已丧失"，看着却和普通提示一样
+  //   005 的 `topology-limit` 若也这样，FR-029 的"**显目**报出"就落空了
+  //
+  // 所以这一条只问一件事：枚举里的每一类，style.css 里都有一条对应规则。
+  // 颜色**该是什么**由人定（membership 刻意是中性，因为它不是故障）——
+  // 守卫不替人做那个判断，只保证没人忘了做。
+  // 选择器与 `{` 之间的空白抹平之后做子串比对 —— 不走正则。
+  // 起初这里用的是模板字面量拼的 RegExp，而模板里的 `\.` 只剩一个反斜杠：
+  // 正则变成了 `.incident-group--observations*{`，于是**九条全红**。
+  // 红得很显眼所以立刻发现了；但若当时只有一条分类，它会红得像「样式真的缺了」。
+  const css = readFileSync(resolve(REPO_ROOT, 'tools/dashboard/public/style.css'), 'utf8')
+    .replace(/\s+\{/g, '{');
+
+  for (const cls of INCIDENT_CLASSES) {
+    test(`.incident-group--${cls} 有样式`, () => {
+      assert.ok(css.includes(`.incident-group--${cls}{`),
+        `分类 ${cls} 在 style.css 里没有对应规则 —— 它会渲染成默认的灰框。\n`
+        + `  加一条：.incident-group--${cls} { border-left-color: var(--…); background: var(--…-wash); }\n`
+        + '  颜色该是什么要想清楚：不是故障的那一类（如 membership）**刻意**保持中性，\n'
+        + '  染成红色会让人去修一台没坏的机器。');
+    });
+  }
+
+  test('**反向断言**：缺规则时这条真的会红', () => {
+    assert.ok(!css.includes('.incident-group--definitely-not-a-class{'),
+      '一个不存在的分类竟然匹配上了 —— 说明上面那些断言可能恒真');
   });
 });

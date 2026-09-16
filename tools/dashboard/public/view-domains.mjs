@@ -60,6 +60,60 @@ function renderMarginExplain(s, root) {
   }
 }
 
+/**
+ * T049：**这次成员变化有没有改变容错**（FR-025）。
+ *
+ * ## 为什么必须把"加一个会怎样"写在页面上
+ *
+ * 面板看不见"刚刚发生了一次变更"，它只看得见当下。能说且必须说的是这个 n 的邻域：
+ * 加一个 → 上限变不变、减一个 → 变不变、要提高得到几。
+ *
+ * 不写的后果不是少一句话，是**默认解读会是错的**：人看到"验证者从 5 个变成 6 个"
+ * 几乎一定会以为更抗了。而 n=5→6→7 的上限一直是 1 —— 那三次扩容买到的是零提升。
+ * 所以 `changed === false` 时要**明说"没有变化"**，不能只把两个数字并排放着。
+ */
+function renderToleranceChange(s, root) {
+  const m = s.membership;
+  if (!m) return;
+
+  const box = el('div', 'margin-explain');
+  root.append(box);
+
+  const head = el('p', 'note');
+  head.append(el('b', null, `链上成员 ${m.chainCount} 个，可离线上限 ${m.maxOffline} 个`));
+  if (!m.inSync) {
+    head.append(el('span', 'dim',
+      `　（声明 ${m.declaredCount} 个 —— 差额不是故障，见下面的异常分类）`));
+  }
+  box.append(head);
+
+  // **正面回答"变不变"**，而不是把两个数字摆出来让人自己推
+  const add = m.ifAdded;
+  box.append(el('p', 'note',
+    add.changed
+      ? `再加一个成员（${m.chainCount} → ${add.n}）上限会提高到 ${add.maxOffline} 个。`
+      : `再加一个成员（${m.chainCount} → ${add.n}）上限**仍然是** ${add.maxOffline} 个 ——`
+        + '加节点买不到容错提升。'
+        + (m.nextIncreaseAt
+          ? `要提高到 ${m.maxOffline + 1} 个，成员数得到 ${m.nextIncreaseAt}。`
+          : '')));
+
+  if (m.ifRemoved) {
+    const rm = m.ifRemoved;
+    box.append(el('p', 'note',
+      rm.changed
+        ? `退掉一个成员（${m.chainCount} → ${rm.n}）上限会**掉到** ${rm.maxOffline} 个 ——`
+          + '名册少一个看着无关紧要，实际把容错砍下去一格。'
+        : `退掉一个成员（${m.chainCount} → ${rm.n}）上限仍是 ${rm.maxOffline} 个。`));
+  }
+
+  if (m.toleranceTrustworthy === false) {
+    box.append(el('p', 'note bad',
+      `**上面这些数字此刻不可信**：链上成员权重不等（${(m.weights ?? []).join(' / ')}）——`
+      + '⌊n/4⌋ 成立的前提是等权。'));
+  }
+}
+
 /** T053：逐边界视图 —— 平台、地址、承载节点、验证者数、共享因素。 */
 function renderDomains(s, root) {
   // 按边界把节点归拢。地址与承载节点全部取自快照（源自 protocol.json）。
@@ -139,6 +193,7 @@ function renderIncidents(s, root) {
 export function render(snapshot, root) {
   root.replaceChildren();
   renderMarginExplain(snapshot, root);
+  renderToleranceChange(snapshot, root);
   root.append(el('h3', 'group-title',
     `故障边界（声明 ${snapshot.faultTolerance.domainCount} / 有效 ${snapshot.faultTolerance.effectiveDomainCount}）`));
   renderDomains(snapshot, root);
