@@ -44,14 +44,18 @@ const SCRIPTS = [
   { file: 'scripts/devnet-verify.ps1', helper: 'Get-ContainerRpcUrl' },
   { file: 'scripts/devnet-contracts.sh', helper: 'devnet_container_rpc_url' },
   { file: 'scripts/devnet-contracts.ps1', helper: 'Get-ContainerRpcUrl' },
+  // 005 的成员管理入口：三个子命令都要读链（看集合 / 注册 / 退出）
+  { file: 'scripts/devnet-member.sh', helper: 'devnet_container_rpc_url' },
+  { file: 'scripts/devnet-member.ps1', helper: 'Get-ContainerRpcUrl' },
 ];
 
-/** ② **起工具容器**的全部脚本 —— 挂载相关的守卫必须覆盖这八个，一个都不能漏。 */
+/** ② **起工具容器**的全部脚本 —— 挂载相关的守卫必须覆盖这十个，一个都不能漏。 */
 const CONTAINER_SCRIPTS = [
   'scripts/devnet-dashboard.sh', 'scripts/devnet-dashboard.ps1',
   'scripts/devnet-verify.sh', 'scripts/devnet-verify.ps1',
   'scripts/devnet-status.sh', 'scripts/devnet-status.ps1',
   'scripts/devnet-contracts.sh', 'scripts/devnet-contracts.ps1',
+  'scripts/devnet-member.sh', 'scripts/devnet-member.ps1',
 ];
 
 describe('两份清单本身的自洽性', () => {

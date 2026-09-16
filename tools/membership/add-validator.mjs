@@ -49,10 +49,10 @@ import {
 // 容错算术在 tolerance.mjs —— 加与退用同一套，两份会各自漂移（见那个文件顶部）
 import { toleranceChange, toleranceAfterAdd } from './tolerance.mjs';
 
-export const EXIT_OK = 0;
-export const EXIT_PRECHECK = 13;      // 前置检查不过 —— **一步都没动链**
-export const EXIT_STEP_FAILED = 14;   // 某一步失败 —— 报出停在哪一步，可重试
-export const EXIT_ABORTED = 20;       // 人工中止
+// 退出码在 exit-codes.mjs —— 加入、退出、只读报告三个工具共用一套。
+// 各挑各的号会让"退出码 12"在一处是"节点数据不属于这条链"、在另一处是"P 链交易失败"。
+export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 
 /** 链上成员的状态码：2 = Active（research V-24 实测确认）。 */
 const STATUS_ACTIVE = 2;

@@ -325,11 +325,11 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       所以滚动配置变更时一律用 `up -d --force-recreate`，不要用 `restart`：
       代价一样（都要停一下），而 restart 在这台机器上会额外引入一个网络故障
 
-- [ ] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步
+- [X] T027 [US2] 新建 `tools/membership/add-validator.mjs`：ACP-77 四步
       （合约 → Warp → P 链 → 合约确认），**每一步的失败可见、可重试、能报出停在哪一步**（FR-016）
-- [ ] T028 [US2] 新建 `scripts/devnet-member.sh` 与 `.ps1` **两份等价实现**，
+- [X] T028 [US2] 新建 `scripts/devnet-member.sh` 与 `.ps1` **两份等价实现**，
       退出码有语义，与既有 `scripts/devnet-*` 同形（FR-017）
-- [ ] T029 [US2] 前置检查接进入口脚本：任一不过则**拦下且不动链**
+- [X] T029 [US2] 前置检查接进入口脚本：任一不过则**拦下且不动链**
 - [X] T030 [US2] 写明新验证者 staking 三件（证书 / 私钥 / BLS signer key）的生成与分发：
       **私钥在目标机器上生成、不离开那台机器**；只有公开材料参与注册（宪法第四条 / FR-019）
 

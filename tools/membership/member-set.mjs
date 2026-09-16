@@ -28,6 +28,7 @@
 // 这样三种漂移的分类可以**离线**测（tests/unit/member-set.test.mjs），
 // 而不必起一条链才能验证「链上有、声明里没有」这种情形 ——
 // 那种情形恰恰最难在真实环境里造出来。
+import { EXIT_DRIFT } from './exit-codes.mjs';
 import { decodeEventLog, keccak256, toHex } from 'viem';
 import { readJson, REPO_ROOT, loadProtocol, deriveTopology } from '../protocol/load.mjs';
 import { identityOf, cb58Encode, cb58Decode } from '../verify/lib/identity.mjs';
@@ -523,7 +524,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   } else {
     console.log(`\n⚠ ${cls.drifts.length} 处漂移：`);
     for (const d of cls.drifts) console.log(`  [${d.kind}] ${d.nodeId ?? ''}\n      ${d.detail}`);
-    process.exitCode = 13;
+    process.exitCode = EXIT_DRIFT;
   }
 
   // ── 第二个事实来源：P 链（T070 / research V-28）──────────────────────────
@@ -552,7 +553,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   } catch (err) {
     console.log(`\n⚠ **读不到 P 链侧**（经 ${primary.id}）：${err.message}`);
     console.log('  于是"停在第四步"这个中间态本次无法判断 —— 不是"没有问题"，是"没看"。');
-    process.exitCode = 13;
+    process.exitCode = EXIT_DRIFT;
   }
 
   if (pset) {
@@ -570,7 +571,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       }
       console.log(`\n⚠ ${split.splits.length} 处两侧分歧：`);
       for (const s of split.splits) console.log(`  [${s.kind}] ${s.nodeId ?? ''}\n      ${s.detail}`);
-      process.exitCode = 13;
+      process.exitCode = EXIT_DRIFT;
     }
   }
 }

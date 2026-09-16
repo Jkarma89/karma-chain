@@ -62,10 +62,10 @@ import {
   packWarpPredicate, WARP_PRECOMPILE_ADDRESS, memberCandidates,
 } from './add-validator.mjs';
 
-export const EXIT_OK = 0;
-export const EXIT_ABORTED = 3;
-export const EXIT_PRECHECK = 11;
-export const EXIT_STEP_FAILED = 12;
+// 与加入共用同一套退出码（exit-codes.mjs）。此前这里是 3 / 11 / 12，
+// 而 11 / 12 在本仓库另有含义（端口冲突、数据与声明不一致）。
+export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 
 /**
  * 从链上观测退出进度。**不读任何状态文件。**

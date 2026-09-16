@@ -320,12 +320,25 @@ docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate <�
 
 ## 5.4 成员增删的运维要点（US2）
 
-加入流程由 `node tools/membership/add-validator.mjs --node-id NodeID-…` 驱动：
-它**从链上读进度**、每步之前停下来给你看要花什么，做完一步就停。
-`npm run membership:status` 列出声明 / 合约 / P 链三侧的成员并标出分歧。
+入口是 `scripts/devnet-member.{sh,ps1}`，三个子命令：
 
-退出由 `node tools/membership/remove-validator.mjs --node-id NodeID-…` 驱动，
-**两条路径**（契约第 4 节 / FR-018）：
+| 子命令 | 做什么 |
+|---|---|
+| `status` | 列出声明 / 合约 / P 链三侧的成员并标出分歧（只读） |
+| `add --node-id …` | ACP-77 四步，**从链上读进度**，每步之前停下来给你看要花什么，做完一步就停 |
+| `remove --node-id … [--emergency]` | 退出，两条路径见下表 |
+
+退出码：`0` 成功 / `10` 前置依赖缺失 / `30` 前置检查未过（**一步都没动链**）/
+`31` 某步失败（可重跑）/ `32` 人工中止 / `33` 只读报告发现漂移。
+**刻意避开 `11`/`12`/`13`/`20`** —— 那四个在本仓库另有含义（端口冲突、
+数据与声明不一致、拓扑违反容错约束、启动失败），复用会让靠退出码分流的调用方
+把两件毫不相干的事当成同一件。
+
+脚本把工具跑在容器里，因此**宿主只要有 Docker**。宿主装了 Node 时也可以直接敲
+`node tools/membership/add-validator.mjs …` 或 `npm run membership:status`，
+两条路走的是同一份代码。
+
+退出的**两条路径**（契约第 4 节 / FR-018）：
 
 | | 优雅退出（默认） | 紧急摘除（`--emergency`） |
 |---|---|---|
@@ -1300,8 +1313,11 @@ curl -s http://127.0.0.1:8646/health     # 必须是 "up"
 **④ 走四步**
 
 ```bash
-node tools/membership/add-validator.mjs --node-id NodeID-…
+scripts/devnet-member.sh add --node-id NodeID-…      # Windows: scriptsdevnet-member.ps1 add …
 ```
+
+入口脚本把工具跑在容器里，所以**宿主只要有 Docker**。它会先确认聚合器在节点网络上 ——
+不在就报出那条 `docker network connect` 命令，因为容器按名字连它，宿主的 8646 不是它的 8646。
 
 反复跑它，每次做一步：
 
@@ -1322,8 +1338,8 @@ node tools/membership/add-validator.mjs --node-id NodeID-…
 两条路径，**走哪条由机器的实际状态决定**（详见 §5.4 那张对照表）：
 
 ```bash
-node tools/membership/remove-validator.mjs --node-id NodeID-…              # 优雅退出
-node tools/membership/remove-validator.mjs --node-id NodeID-… --emergency  # 紧急摘除
+scripts/devnet-member.sh remove --node-id NodeID-…              # 优雅退出
+scripts/devnet-member.sh remove --node-id NodeID-… --emergency  # 紧急摘除
 ```
 
 **顺序不能反：先从集合移除 → 等确认 → 再停进程。** 反过来是制造一段
