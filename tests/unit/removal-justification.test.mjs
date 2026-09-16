@@ -12,7 +12,7 @@
 //   不给                         → `invalid justification type: <nil>`
 //   裸 warp 字节                 → `proto: cannot parse invalid wire-format data`  ⇒ 它是 protobuf
 //   字段2 ← 216B AddressedCall   → `packer has insufficient length for input`
-//   字段2 ← 258B 整条消息        → `unknown type ID 1337`  ⇒ 把 networkID 当成了 typeID
+//   字段2 ← 258B 整条消息        → `unknown type ID <networkID 的值>` ⇒ 把 networkID 当成了 typeID
 //   字段2 ← **182B 内层注册消息** → **解析通过**，改报 `validation "…" exists`
 //
 // 最后那句才是应有的拒签理由（l1-6 确实还是成员，所以 registered:false 是假陈述）。

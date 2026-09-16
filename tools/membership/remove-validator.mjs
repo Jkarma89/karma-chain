@@ -316,7 +316,7 @@ export async function step3Remove({
  *   给裸的 warp 字节              → `failed to parse justification: proto: cannot parse invalid wire-format data`
  *                                   —— 于是知道它是 **protobuf**，不是裸字节
  *   protobuf 字段2 ← 216B AddressedCall → `packer has insufficient length for input`
- *   protobuf 字段2 ← 258B 整条消息       → `unknown type ID 1337` —— 它把 networkID 当成了 typeID
+ *   protobuf 字段2 ← 258B 整条消息       → `unknown type ID <networkID 的值>` —— 它把 networkID 当成了 typeID
  *   protobuf 字段2 ← **182B 内层注册消息** → **解析通过**，改报 `validation "…" exists`
  *
  * 最后那句才是应有的拒签理由：l1-6 确实还是成员，`registered: false` 是假陈述。
@@ -407,7 +407,7 @@ export function genesisValidationIndex({ subnetId, validationID, maxIndex = 64 }
  *
  * 实测的三个尺寸：整条 258 / AddressedCall 216 / 内层 182。
  * 切错一层的后果都试过：给 216 报 `packer has insufficient length`，
- * 给 258 报 `unknown type ID 1337`（把 networkID 当成了 typeID）。
+ * 给 258 报 `unknown type ID <networkID 的值>`（把 networkID 当成了 typeID）。
  */
 export function innerMessageOf(unsignedWarpMessageHex) {
   const b = Buffer.from(String(unsignedWarpMessageHex).replace(/^0x/i, ''), 'hex');
