@@ -421,7 +421,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 
 ## Phase 9: Polish & Cross-Cutting
 
-- [ ] T057 [P] 建 `docs/adr/0012-deployment-is-not-protocol.md`（宪法第十四/十五/十六条）：
+- [X] T057 [P] 建 `docs/adr/0012-deployment-is-not-protocol.md`（宪法第十四/十五/十六条）：
       划分判据（**一个问题**而非字段清单）、**三次不必要重置的历史**、
       与第十五条的关系（协议变更流程一字不改）、与第十六条的关系
       （成员事实来源移到链上为何不违宪）、以及被否方案。进 `docs/adr/README.md` 索引
