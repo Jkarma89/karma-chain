@@ -1,7 +1,7 @@
 // T041 / quickstart 场景 C（V-01）：单个验证者被强制终止时链继续出块，重启后自动追平。
 //
 // 这是「冗余」从纸面变成事实的证明。判据有两层：
-//   1. 少一个验证者时链**照常出块**（5 个等权验证者，容错上限 1 —— 001 研究 R-05）
+//   1. 少一个验证者时链**照常出块**（等权验证者，容错上限 ⌊n/4⌋ —— 001 研究 R-05）
 //   2. 该节点重启后**自己追上来**，而且追赶期间不被健康检查判为故障、反复重启
 // 第 2 条最容易实现错：把追赶当成不健康，容器就会在节点正常恢复时打断它，恢复变成死循环。
 import { test, describe, before } from 'node:test';
@@ -10,6 +10,7 @@ import { execFileSync } from 'node:child_process';
 import {
   pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip, spreadProblems,
 } from './lib/devnet.mjs';
+import { maxOffline } from '../../tools/membership/tolerance.mjs';
 
 // 不挑承载 RPC 代理上游首位的那个，避免把"入口失效"和"验证者失效"混为一谈
 // 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
@@ -29,14 +30,22 @@ describe('场景 C —— 单个验证者挂掉，链照常出块',
   { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
-    assert.equal(VALIDATOR_IDS.length, 5, '本场景假定 5 个等权验证者');
+    // 此前这里是 `assert.equal(VALIDATOR_IDS.length, 5)` —— 加了第六个验证者之后
+    // 整个套件在钩子里就死了，四条子测试全部 cancelled。
+    //
+    // 但这个前提**不该写成"恰好 5 个"**：本场景问的是"杀掉一个之后链还出不出块"，
+    // 那要的只是 ⌊n/4⌋ ≥ 1，也就是 n ≥ 4。写成 5 是把一个**当时的取值**
+    // 当成了场景的前提 —— 005 让 n 可变之后，这类写法每一处都会变成一次假红。
+    assert.ok(maxOffline(VALIDATOR_IDS.length) >= 1,
+      `声明了 ${VALIDATOR_IDS.length} 个验证者，⌊n/4⌋ = ${maxOffline(VALIDATOR_IDS.length)} ——`
+      + ' 一个都不能掉，本场景（杀一个还要继续出块）不成立。n 至少要 4。');
   });
 
   test(`强制杀死 ${VICTIM} 后，链继续接受交易并出块`, async (t) => {
     const before = Number(await pub.getBlockNumber());
     node('kill', VICTIM);
     assert.equal(inspect('{{.State.Status}}'), 'exited', `${VICTIM} 应当已被杀死`);
-    t.diagnostic(`${VICTIM} 已强制终止，剩余 ${VALIDATOR_IDS.length - 1}/5 个验证者`);
+    t.diagnostic(`${VICTIM} 已强制终止，剩余 ${VALIDATOR_IDS.length - 1}/${VALIDATOR_IDS.length} 个验证者`);
 
     // 连发几笔，确认不是靠缓存蒙混过关
     let height = before;
