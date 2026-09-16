@@ -455,7 +455,52 @@ partial sync should not be configured for a validator
 | `delegationFee` | ≥ 20000（2%） | `minDelegationFee` |
 | uptime 要求 | 0.8 | `uptimeRequirement` |
 
-**仍未测**：整条流程的实际耗时。
+#### ④b 实测耗时（2026-09-16，用户授权，l1-1，质押取最小、时长取最短）
+
+做法：质押 **2000 AVAX**（耗时与质押额无关，取 `minValidatorStake` 以减少暴露）、
+时长 **24 小时 + 600 秒余量**（到期自己退出，不需要人工收拾）。
+`txID = 4ayzeAFWtprzoWwidsARm6V8qpr1WPKcioBZEHbTQrjc494NU`。
+手续费 **0.000013691 AVAX**。
+
+| 阶段 | 耗时 |
+|---|---|
+| 签名 + 提交 | 0.05 s |
+| 提交 → `Committed` | **0.53 s** |
+| `Committed` → 出现在 `getCurrentValidators` | 0.02 s |
+| → **节点自己承认**（health 的 `bls` 项翻成 `"node has the correct BLS key"`） | **20.09 s** |
+| **合计** | **20.69 s** |
+
+**链上那一段只花 0.6 秒，96% 的时间在等节点自己发现。** 那 20 秒与
+`healthCheckFreq: 30s` 同量级 —— 是下一个心跳落下来的时间，不是工作量。
+这与 V-14 是同一个形状：**这条链上的成员操作，耗时几乎都由心跳节拍决定，不由链决定。**
+
+BLS 公钥与 proof of possession **问节点自己要**（`info.getNodeID` 的 `nodePOP`）——
+`identityOf()` 对创世验证者只从密钥派生 nodeId 与 blsPublicKey，**不给 PoP**；
+而 PoP 必须与那台机器上真实的 signer key 对得上。脚本同时交叉核对了
+"节点自报的 BLS 公钥 == 声明派生出来的"，不一致就拒绝动链。
+
+**顺带对 T046 做了一次活链验证。** 这一下把 P 链变成三个持有者
+（1,000,000 / 1,000,000 / 2,000 = 49.95% / 49.95% / 0.0999%），
+`assessRejoinCapability()` 的四种情形逐一对上：
+
+| 情形 | 判定 | 已连权益 |
+|---|---|---|
+| 全部在服务 | `ok` | 100% |
+| 掉那个小的（l1-1，0.0999%） | `ok` | 99.9% |
+| 掉一个大的（Primary，49.95%） | `blocked` | 50.04% |
+| 两个大的都掉 | `blocked` | 0.09% |
+
+这个分布下"按权益算"与 004 的"数个数"给出**相同结论**，但前者多给了理由
+（`50.04% < 80%`），而且**它把 l1-1 的权益算进去了，旧代码不会** ——
+旧代码只数 `role === 'primary'` 的行。l1-1 现在只握 0.1% 所以不影响结论；
+若它握的是大份，旧代码就会漏掉。这正是 T046 修的那个"有到期日的代理"。
+
+> ⚠ 核对时我一度把结果读反了：`getCurrentValidators` 的返回序是 l1-1 在前，
+> 而我按位置假定了"第一个是 Primary"，于是报出"掉一个 Primary → ok 99.9%"。
+> **判定本身是对的，错在我假设了顺序。** 改成按实际权重分类后才对上。
+> 记在这里是因为这类错误在读链上数据时反复出现（bitset 位序那次同源）。
+
+**仍未测**：无。V-15 完成。
 
 > ⚠ **这一项是单向门，不能像 ②b 那样"量完改回去"。**
 > `minStakeDuration = 86400s`，即**质押最少 24 小时** —— 把一个 L1 验证者加进
@@ -692,9 +737,15 @@ primary genesis has N initial stakers but topology declares M primary nodes
   初始化到 `bootstrapped` **30.08 秒**。真正的引导工作从 4.7 秒降到 **0.305 秒**
   （带 flag 那次含约 4 秒等对等），而两次都被 `healthCheckFreq: 30s` 的心跳节拍盖住。
   去掉 flag 后引导 **4 条链**（P、X、C、karmachain），X 与 C 各执行 **0 个区块**。
-- **V-15** ⚠ **流程已查清、耗时未测，且不建议单独为取数去测（见 R-07a③④）**：
-  `minStakeDuration = 24 小时` —— 加进 P 链验证者集合之后 24 小时内无法撤回，
-  而那个节点从此也不能再带 `partial-sync` 启动。**它是单向门，实际上就是 T045 的第一步。**
+- **V-15** ✅ **已实测（2026-09-16，l1-1，见 R-07a④b）**：**合计 20.69 秒**，
+  而其中**链上那一段只有 0.6 秒**（提交→`Committed` 0.53 s、→ 出现在集合 0.02 s），
+  剩下 **20.09 秒是等节点自己发现**（与 `healthCheckFreq: 30s` 同量级）。
+  手续费 0.000013691 AVAX。**与 V-14 同一个形状：这条链上的成员操作，
+  耗时几乎都由心跳节拍决定，不由链决定。**
+  取数用最小质押（2000 AVAX）与最短时长（24 小时 + 600 秒余量），
+  **到期自动退出**，`endTime = 2026-09-17T14:58:39Z`。
+  ⚠ 仍要记住它是单向门：`minStakeDuration = 24 小时`，期间那个节点
+  不能再带 `partial-sync` 启动。真正实施（T045）时时长要设长，并接受"到期要续"。
   顺序被 avalanchego 的错误常量 `partial sync should not be configured for a validator`
   强制 —— **必须先去 flag 重建、再加进 P 链验证者集合**，反过来会让节点下次启动失败。
   `AddPermissionlessValidatorTx` 的参数与约束（质押 2000…3,000,000 AVAX、
