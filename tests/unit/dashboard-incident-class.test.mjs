@@ -80,10 +80,14 @@ describe('incidentClass —— 逐状态映射', () => {
   // 它仍然是一条精确列表，只是契约变了；而且正是它（连同
   // dashboard-incidents-complete 的双向断言）在 004 实施时立刻抓到
   // "加了 recovery-blocked 的文案却忘了登记进枚举"。
-  test('INCIDENT_CLASSES 恰好是契约里的六类', () => {
+  // 003 立这条时是六类；功能 005 加了 `membership`（FR-028 / T038），
+  // 契约表同步扩充（specs/003-…/data-model.md）。
+  // 这条守卫的意义不变：**新增分类必须是一次刻意的决定** ——
+  // 它同时逼着改文案表（否则界面显示原始 slug）与处置方向互不相同那条。
+  test('INCIDENT_CLASSES 恰好是契约里的七类', () => {
     assert.deepEqual(
       [...INCIDENT_CLASSES].sort(),
-      ['chain-identity', 'consensus-margin', 'node-infra', 'observation',
+      ['chain-identity', 'consensus-margin', 'membership', 'node-infra', 'observation',
         'recovery-blocked', 'sync-lag'],
     );
   });

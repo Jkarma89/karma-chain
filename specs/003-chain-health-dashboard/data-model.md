@@ -191,6 +191,22 @@ healthPercent = round(participating / validatorCount * 100)
 | `sync-lag` | `catching-up`、`bootstrapping`、`starting` | **等**。不是故障，不得触发处置 |
 | `consensus-margin` | 档位为 `zero-margin` 或 `stopped` | 恢复验证者数量，不是修单个节点 |
 | `chain-identity` | `genesisMatchesBaseline === false` | 该机器跑在另一条链上 —— 比下线严重，**且不表现为健康度下降** |
+| `membership` | `registeredOnChain === false`（**先于所有状态判据**） | 它不是当前共识成员，**不是故障** —— 分清正在加入还是已退出，再决定续注册还是清理声明 |
+
+> `membership` 由**功能 005**（FR-028 / T038）加入，是这张表唯一的一次扩充。
+>
+> 原因：成员集合在 005 之后运行期可变，于是出现了一类"声明里有、链上没有"的节点 ——
+> 它可能**正在加入**（注册没走完），也可能**已被主动移除**（按规程，移除之后才停进程、
+> 才改声明）。两种都不是故障。
+>
+> 不加这一类的后果是实在的：一个刚被移除、进程已停的节点会落进 `stopped` →
+> `node-infra`，而那一类的处置是"去那台机器看节点进程/卷/密钥" —— 那台机器上
+> **没什么可查**。更坏的是这条红灯会一直亮到有人去改 `deployment.json`，
+> 而一个不会自己消失的假故障会训练人忽略整个清单。
+>
+> **必须先于所有状态判据**，且**只认显式的 `false`**：`null` 意味着"读不到成员集合"
+> 或"这一行不计入容错"（Primary），那时不能断言它不是成员 ——
+> 把"不知道"说成"已退出"会在成员集合读不到时把全部故障都藏起来。
 
 `healthy` 状态不产生异常条目。`incidentClass` 为 `null` 表示无异常。
 

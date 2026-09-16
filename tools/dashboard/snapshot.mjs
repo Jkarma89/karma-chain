@@ -34,6 +34,8 @@ export const TIERS = Object.freeze({
 export const INCIDENT_CLASSES = new Set([
   'observation', 'node-infra', 'sync-lag', 'consensus-margin', 'chain-identity',
   'recovery-blocked',
+  // 声明里有、链上没有 —— 正在加入或已退出。**都不是故障**（FR-028 / T038）
+  'membership',
 ]);
 
 /** 已引导且在服务 L1 —— 只有这两个状态本身就代表"在提供连接权益"。 */
@@ -352,6 +354,25 @@ export function deriveTier({ rows, faultTolerance, observer, memberSet }) {
  * 不能只靠既有 `detail` 的自由文本 —— 页面要按分类分组，测试要按分类断言。
  */
 export function incidentClass(row) {
+  // **不是共识成员的节点，一律不算故障**（FR-028 / T038）。必须最先判。
+  //
+  // 声明里有、链上没有的节点有两种来历，而**两种都不是故障**：
+  //   正在加入 —— 还没走完注册（ACP-77 四步里的某一步）
+  //   已退出   —— 被主动移除，按规程接下来才停进程、才改声明
+  //
+  // 放到后面判的后果：一个刚被移除、进程已停的节点会落进 `stopped` →
+  // NODE_INFRA_STATES → `node-infra`，而那一类的处置是
+  // "到那台机器上查节点进程、数据卷与挂载的密钥" —— 那台机器上**没什么可查**，
+  // 它是被有意摘掉的。FR-028 要的正是这个区分：两者处置完全不同。
+  //
+  // 而且这条红灯会一直亮到有人去改 deployment.json —— 一个不会自己消失的
+  // 假故障，比没有告警更坏（它会训练人忽略清单）。
+  //
+  // **只认显式的 `false`。** `null` 意味着"读不到成员集合"或"这一行不计入容错"
+  // （Primary），那时不能断言它不是成员 —— 把"不知道"说成"已退出"会
+  // 在成员集合读不到时把全部故障都藏起来。
+  if (row.registeredOnChain === false) return 'membership';
+
   if (row.state === 'healthy') return null;
   // 同一个状态名，两种含义，两种处置：修本机网络 vs 去那台机器
   if (row.state === 'unreachable') return row.countsAsOffline ? 'node-infra' : 'observation';
@@ -375,6 +396,13 @@ const ACTIONS = Object.freeze({
   //  当时的处理是改文案而不是改守卫）。这里正面说"恢复后自动继续"。
   'recovery-blocked': '先启动两个 Primary —— 只起一个不够；在那之前不要重启任何验证者。'
     + '两个都回来后，卡住的验证者约半分钟自行追上',
+  // **不要写成"查一下那台机器"**。这一类的全部意义就是把它与 node-infra 分开：
+  // 那台机器上没什么可查，链上的成员集合才是事实来源。
+  // 两种来历（正在加入 / 已退出）从这一行分不出来，所以指向能分出来的工具 ——
+  // 它们从链上读进度，会直接说停在第几步。
+  membership: '它不是当前的共识成员，**不是故障**。'
+    + '跑 npm run membership:status 看它是正在加入还是已退出；'
+    + '加入没走完用 add-validator 续，已退出则停掉它的进程并从 deployment.json 里移除',
 });
 
 const incident = (cls, message, nodeId) => ({
