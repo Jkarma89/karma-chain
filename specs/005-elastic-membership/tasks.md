@@ -292,7 +292,7 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
       而那恰恰是最需要看清的中间态。注意两侧 validationID 编码不同
       （P 链 CB58 / 合约 hex），比对前要归一化
 
-- [ ] T071 守卫：`@avalabs/avalanchejs` **只许出现在 `tools/membership/`**。
+- [X] T071 守卫：`@avalabs/avalanchejs` **只许出现在 `tools/membership/`**。
       扫全部受跟踪的 .mjs/.js，导入它的文件必须在那个目录下（测试除外）；
       并断言 package.json 里它是**精确版本**（`--save-exact`）。
       反向断言：至少有一处真的导入它 —— 否则 T027 被删掉之后这条守卫会变成空跑。
