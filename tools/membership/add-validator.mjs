@@ -46,6 +46,8 @@ import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, TOPICS, STATUS,
   readMemberSet, classifyDrift, nodeIdFromBytes20, readPChainMembers, classifyPChainDrift,
 } from './member-set.mjs';
+// 容错算术在 tolerance.mjs —— 加与退用同一套，两份会各自漂移（见那个文件顶部）
+import { toleranceChange, toleranceAfterAdd } from './tolerance.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_PRECHECK = 13;      // 前置检查不过 —— **一步都没动链**
@@ -1075,65 +1077,6 @@ export async function step4({
   return { ...plan, dryRun: false, txHash: hash, blockNumber: receipt.blockNumber };
 }
 
-/**
- * 可离线数 f = ⌊n/4⌋，来自 `minConnectedStakeToQuery = 15/20 = 75%`（研究 R-05 / F-5）。
- * 本文件只有这一处定义，`toleranceChange` 与 `toleranceAfterAdd` 共用。
- */
-const maxOffline = (n) => Math.floor(n / 4);
-
-/** 容错会不会变？加成员时 n 增大，⌊n/4⌋ **可能不变** —— 这一条必须说出来（FR-037 / F-5）。 */
-export function toleranceChange(before, after) {
-  return {
-    before: { n: before, f: maxOffline(before) },
-    after: { n: after, f: maxOffline(after) },
-    changed: maxOffline(before) !== maxOffline(after),
-  };
-}
-
-/**
- * 注册这一下**会不会把链推过容错上限**。
- *
- * ## 为什么必须有这一条
- *
- * 2026-09-15 停电之后：链上 5 个成员、win-2（l1-2）断电离线 ——
- * 正好在 ⌊5/4⌋ = 1 的边界上，链照常出块。而要注册的 l1-6 在 ubuntu-4 上，
- * **那台也断着电**。
- *
- * 若此时注册：n = 5 → 6，而 ⌊6/4⌋ **仍然是 1**（F-5：5→7 买不到任何提升）；
- * 离线的却变成 l1-2 与 l1-6 两个 > 1 —— **链会真的停止出块**。
- *
- * 也就是说"加一个成员"这个动作本身能把一条正在出块的链停掉，
- * 而且停的原因不是故障，是**容错分母涨了、门槛没跟着涨**。
- * 我差一步就这么干了；拦住我的是人工核对，不是工具。所以它现在是工具的一部分。
- *
- * ## 两条判断分开
- *
- *   `newMemberOffline`  新成员自己的机器没起来 —— 注册完它立刻是个缺席成员
- *   `wouldStopChain`    注册前在容错内、注册后越界 —— 这一下就是停摆的原因
- *
- * 前者不必然导致后者（比如 n 从 7 到 8，f 从 1 变 2，多一个缺席仍在内），
- * 所以不能用一条代替另一条。
- *
- * @param {{membersBefore: number, offlineIds: string[], newMemberOnline: boolean}} args
- */
-export function toleranceAfterAdd({ membersBefore, offlineIds, newMemberOnline }) {
-  const offBefore = offlineIds.length;
-  const nAfter = membersBefore + 1;
-  const offAfter = offBefore + (newMemberOnline ? 0 : 1);
-  const fBefore = maxOffline(membersBefore);
-  const fAfter = maxOffline(nAfter);
-  const withinBefore = offBefore <= fBefore;
-  const withinAfter = offAfter <= fAfter;
-  return {
-    before: { n: membersBefore, f: fBefore, offline: offBefore, within: withinBefore },
-    after: { n: nAfter, f: fAfter, offline: offAfter, within: withinAfter },
-    offlineIds,
-    newMemberOffline: !newMemberOnline,
-    // **注册这一下造成的**停摆：之前在容错内，之后不在。
-    // 之前就已越界的情况不算在这里 —— 那时链已经停了，要报的是另一件事。
-    wouldStopChain: withinBefore && !withinAfter,
-  };
-}
 
 // ── 以下是命令行部分 ────────────────────────────────────────────────────────
 

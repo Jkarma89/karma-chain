@@ -19,7 +19,7 @@
 // 或者在不该拦的时候拦。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { toleranceAfterAdd, toleranceChange } from '../../tools/membership/add-validator.mjs';
+import { toleranceAfterAdd, toleranceChange } from '../../tools/membership/tolerance.mjs';
 
 describe('那个真实现场：5 个成员、1 个离线、新成员也离线', () => {
   const real = () => toleranceAfterAdd({
