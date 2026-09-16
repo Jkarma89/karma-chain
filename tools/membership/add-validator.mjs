@@ -808,6 +808,204 @@ export async function step3({
 
 
 /**
+ * subnet-evm 的 Warp 预编译地址。
+ *
+ * 这是 **subnet-evm 的协议常量**（激活的预编译落在固定地址上），不是本部署的取值 ——
+ * 和 PROXY_ADDRESS 一样属于"链上摆在那儿的东西"，没有第二个来源可以推导。
+ */
+export const WARP_PRECOMPILE_ADDRESS = '0x0200000000000000000000000000000000000005';
+
+/**
+ * P 链发回的**注册确认消息**（第四步的输入）。
+ *
+ * ## 结构是实测逼出来的，不是照着规范猜的
+ *
+ * 第一版把 `L1ValidatorRegistration`（typeID 2）直接当作 Warp 消息的 payload。
+ * 两个 Primary 都拒签，回的是同一句：
+ *
+ *   `failed to parse warp addressed call: couldn't unmarshal interface: unknown type ID 2`
+ *
+ * 也就是说 P 链用 `warp/payload` 那套编解码器解析 payload，而那里只注册了
+ * `Hash(0)` 与 `AddressedCall(1)` —— ACP-77 的消息必须**包在 AddressedCall 里**。
+ * 与第一步那条入站消息同构（AddressedCall(1) 套 RegisterL1Validator(1)），
+ * 区别只是 P 链没有源地址，所以地址长度为 0。
+ *
+ * 实测尺寸：内层 39 字节 → AddressedCall 53 字节 → 整条 95 字节。
+ * 拿这三个数当断言，比"按规范应该是这样"可靠。
+ *
+ * @param {{validationID: string, networkId: number, registered?: boolean}} args
+ * @returns {string} 0x 前缀的未签名 Warp 消息
+ */
+export function registrationConfirmationMessage({ validationID, networkId, registered = true }) {
+  const vid = Buffer.from(validationID.replace(/^0x/, ''), 'hex');
+  if (vid.length !== 32) throw new Error(`validationID 是 ${vid.length} 字节，应当是 32 字节`);
+  if (!Number.isInteger(networkId) || networkId <= 0) {
+    throw new Error(`networkId 不是正整数：${networkId}`);
+  }
+
+  const u32 = (n) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
+  const CODEC = Buffer.from([0, 0]);
+
+  // 内层：L1ValidatorRegistration（ACP-77 消息命名空间的 typeID 2）
+  const inner = Buffer.concat([CODEC, u32(2), vid, Buffer.from([registered ? 1 : 0])]);
+
+  // AddressedCall（warp/payload 的 typeID 1）。P 链没有源地址 → 长度 0
+  const addressedCall = Buffer.concat([CODEC, u32(1), u32(0), u32(inner.length), inner]);
+
+  // 未签名消息：codec + networkID + sourceChainID + payload
+  // sourceChainID 是 P 链的 blockchainID，解码后正是 **32 个零字节**
+  const unsigned = Buffer.concat([
+    CODEC, u32(networkId), Buffer.alloc(32), u32(addressedCall.length), addressedCall,
+  ]);
+
+  // 三个尺寸都是实测值。对不上说明布局理解变了，**那时不要继续**：
+  // 带着结构不对的消息去要签名，Primary 只会拒签，而拒签的理由要翻它们的日志才看得到。
+  if (inner.length !== 39 || addressedCall.length !== 53 || unsigned.length !== 95) {
+    throw new Error(`消息尺寸与实测不符：内层 ${inner.length}（期望 39）、`
+      + `AddressedCall ${addressedCall.length}（期望 53）、整条 ${unsigned.length}（期望 95）`);
+  }
+  return `0x${unsigned.toString('hex')}`;
+}
+
+/**
+ * 向签名聚合器要 **Primary Network** 的签名。
+ *
+ * 为什么非要一个外部进程：收这个签名**没有 HTTP 路可走**（2026-09-16 逐个实测）——
+ * L1 节点的 `warp_getMessageAggregateSignature` 只能聚合它自己库里有的消息（`not found`），
+ * P 链的 `platform.*` 没有对应方法，avalanchego 级端点全是 404。签名请求只走 P2P。
+ * 见 docker/aggregator/。
+ */
+export async function aggregatePrimarySignatures({
+  aggregatorUrl, unsignedMessage, quorumPercentage = 67, timeoutMs = 90_000,
+}) {
+  const PRIMARY_NETWORK_ID = '11111111111111111111111111111111LpoYY';
+  let r;
+  try {
+    r = await fetch(`${aggregatorUrl.replace(/\/$/, '')}/aggregate-signatures`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        message: unsignedMessage.replace(/^0x/, ''),
+        'signing-subnet-id': PRIMARY_NETWORK_ID,
+        'quorum-percentage': quorumPercentage,
+      }),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (err) {
+    throw new Error(`连不上签名聚合器 ${aggregatorUrl}：${err.message}。`
+      + ' 它是按需起的，没在跑就先起来：见 docker/aggregator/entrypoint.sh 顶部的用法。');
+  }
+  const body = await r.json();
+  if (body.error) {
+    throw new Error(`聚合器没能收齐签名：${body.error}\n`
+      + '  两个 Primary 各握 50% P 链权益，门槛 67% —— **两个都得签**（研究 V-32）。\n'
+      + '  常见成因：某个 Primary 不在线；或聚合器连不上它们'
+      + '（日志里 connectedWeight 为 0 时，多半是配置缺 allow-private-ips —— 实测过）。');
+  }
+  const signed = body['signed-message'];
+  if (!signed) {
+    throw new Error(`聚合器的回包里没有 signed-message：${JSON.stringify(body).slice(0, 200)}`);
+  }
+  return `0x${signed.replace(/^0x/, '')}`;
+}
+
+/**
+ * 把签名后的 Warp 消息编码成 access list 的 storage key（subnet-evm 的**谓词**）。
+ *
+ * 消息不是普通参数 —— `completeValidatorRegistration(uint32)` 收的是**下标**，
+ * 消息本身通过交易的 access list 交给 Warp 预编译。编码规则：
+ * 追加一个 `0xff` 分隔符，右补零到 32 的整数倍，再切成 32 字节一段。
+ *
+ * 分隔符不可省：补的零与消息末尾的零无法区分，没有它就不知道消息到哪儿结束。
+ */
+export function packWarpPredicate(signedMessageHex) {
+  const raw = Buffer.from(signedMessageHex.replace(/^0x/, ''), 'hex');
+  if (!raw.length) throw new Error('packWarpPredicate: 消息是空的');
+  const withDelimiter = Buffer.concat([raw, Buffer.from([0xff])]);
+  const padded = Buffer.alloc(Math.ceil(withDelimiter.length / 32) * 32);
+  withDelimiter.copy(padded);
+  const keys = [];
+  for (let i = 0; i < padded.length; i += 32) {
+    keys.push(`0x${padded.subarray(i, i + 32).toString('hex')}`);
+  }
+  return keys;
+}
+
+/**
+ * 第四步：把 P 链的确认消息交给合约（`completeValidatorRegistration`）。
+ *
+ * ## 它比第三步安全，但不是没有代价
+ *
+ * 这一步是**合约交易**：失败就是回滚，链上不留新的中间态。真正的风险在它**之前** ——
+ * 第三步做完而这一步没做完时，链上是「P 链认了、合约没认」。本步就是去消掉那个状态。
+ * 失败可以直接重试；消息还能重新聚合（聚合不写链），也可以用
+ * `resendRegisterValidatorMessage` 让合约重发第一步那条消息。
+ *
+ * `dryRun` 只做模拟（`simulateContract`），不发交易 —— 于是"会不会 revert"
+ * 可以在批准之前知道。
+ */
+export async function step4({
+  client, validationID, networkId, aggregatorUrl, ownerAccount, dryRun = false,
+}) {
+  const unsignedMessage = registrationConfirmationMessage({ validationID, networkId });
+  const signedMessage = await aggregatePrimarySignatures({ aggregatorUrl, unsignedMessage });
+  const counted = countSigners(signedMessage, unsignedMessage);
+  const storageKeys = packWarpPredicate(signedMessage);
+
+  const accessList = [{ address: WARP_PRECOMPILE_ADDRESS, storageKeys }];
+  const plan = {
+    unsignedBytes: (unsignedMessage.length - 2) / 2,
+    signedBytes: (signedMessage.length - 2) / 2,
+    primarySigners: counted.signers,
+    bitsetHex: counted.bitsetHex,
+    storageKeys: storageKeys.length,
+    signedMessage,
+  };
+
+  // 模拟只能排除**一部分**失败，不能证明会成功。
+  //
+  // 2026-09-16 实测：模拟通过，真实交易照样 revert。追踪那笔失败交易看到，
+  // 合约 STATICCALL Warp 预编译拿回的是 `valid = false` —— 也就是**谓词验证没过**。
+  // 而 `eth_call` 会自行为这次调用准备谓词结果，真实出块时则要按区块的
+  // P 链高度去验签名，两条路不是同一件事。
+  //
+  // 更坏的是那次模拟还跑在一个**落后两个块**的节点上（本机代理指向的 l1-1 卡在 991，
+  // 其余五个已到 993）—— 于是"模拟通过"同时踩了两个坑。
+  // 所以这里**不说**"不会 revert"，只说"合约调用本身的形状没问题"。
+  // messageIndex = 0：谓词里只放了这一条消息。
+  await client.simulateContract({
+    address: PROXY_ADDRESS,
+    abi: VALIDATOR_MANAGER_ABI,
+    functionName: 'completeValidatorRegistration',
+    args: [0],
+    account: ownerAccount,
+    accessList,
+  });
+
+  if (dryRun) return { ...plan, dryRun: true, txHash: null };
+
+  const { createWalletClient, http } = await import('viem');
+  const wallet = createWalletClient({
+    account: ownerAccount,
+    transport: http(client.transport.url ?? client.transport.value?.url),
+  });
+  const hash = await wallet.writeContract({
+    address: PROXY_ADDRESS,
+    abi: VALIDATOR_MANAGER_ABI,
+    functionName: 'completeValidatorRegistration',
+    args: [0],
+    accessList,
+    chain: null,
+  });
+  const receipt = await client.waitForTransactionReceipt({ hash, timeout: 120_000 });
+  if (receipt.status !== 'success') {
+    throw new Error(`交易被回滚（${hash}）—— 第四步未完成。`
+      + ' 链上仍是「P 链认了、合约没认」，可以直接重试。');
+  }
+  return { ...plan, dryRun: false, txHash: hash, blockNumber: receipt.blockNumber };
+}
+
+/**
  * 可离线数 f = ⌊n/4⌋，来自 `minConnectedStakeToQuery = 15/20 = 75%`（研究 R-05 / F-5）。
  * 本文件只有这一处定义，`toleranceChange` 与 `toleranceAfterAdd` 共用。
  */
@@ -1127,6 +1325,67 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     console.error('  再跑一次本命令即可继续。');
     process.exit(EXIT_OK);
   }
+  if (progress.step === 3) {
+    // 第四步：合约交易。**失败就是回滚，不留新的中间态** —— 风险在它之前那一步。
+    const accounts = readJson('blockchain/accounts/dev-accounts.json').accounts;
+    const entry = accounts.find((a) => a.label === config.validators.ownerAccount);
+    if (!entry) {
+      console.error(`dev-accounts.json 里没有 label = ${config.validators.ownerAccount} 的账户`);
+      process.exit(EXIT_PRECHECK);
+    }
+    const ownerAccount = privateKeyToAccount(entry.privateKey);
+    const aggregatorUrl = process.env.KARMACHAIN_AGGREGATOR_URL ?? 'http://127.0.0.1:8646';
+
+    const args4 = {
+      client,
+      validationID: progress.validationID,
+      networkId: config.avalanche.networkId,
+      aggregatorUrl,
+      ownerAccount,
+    };
+
+    let plan;
+    try {
+      plan = await step4({ ...args4, dryRun: true });
+    } catch (err) {
+      console.error(`\n✗ 第四步的**准备**阶段失败（还没发交易）：${err.message}`);
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    console.error(`\n签名聚合器 ${aggregatorUrl}`);
+    console.error('干跑（已聚合、已模拟，**尚未发交易**）：');
+    console.error(`  确认消息    ${plan.unsignedBytes} → ${plan.signedBytes} 字节`);
+    console.error(`  Primary 签名 ${plan.primarySigners}/2（bitset ${plan.bitsetHex}）`
+      + ` —— 两个各握 50%，门槛 67%，${plan.primarySigners >= 2 ? '达标' : '**不够**'}`);
+    console.error(`  谓词        ${plan.storageKeys} 个 storage key（access list 交给 Warp 预编译）`);
+    console.error('  合约模拟    ✓ 调用形状没问题');
+    console.error('              **但模拟不能证明会成功** —— eth_call 会自行准备谓词结果，'
+      + '而真实出块要按区块的 P 链高度验签名。');
+    console.error('              2026-09-16 实测：模拟通过、交易照样 revert'
+      + '（预编译返回 valid = false）。');
+    console.error('\n**这一步做完，成员才算真正生效** —— 合约与 P 链两侧一致，'
+      + '面板与容错判据也会跟着变（n 从 5 到 6，可离线数仍是 1，见 F-5）。');
+
+    if (!autoYes && !(await ask('\n发出这笔合约交易？'))) {
+      console.error('已中止 —— 只做了聚合与模拟，链未改动。');
+      process.exit(EXIT_ABORTED);
+    }
+
+    let r;
+    try {
+      r = await step4(args4);
+    } catch (err) {
+      console.error(`\n✗ 第四步失败：${err.message}`);
+      console.error('  链上仍是「P 链认了、合约没认」—— 可以直接重跑本命令重试。');
+      process.exit(EXIT_STEP_FAILED);
+    }
+
+    console.error('\n✅ 第四步完成 —— 注册流程走完');
+    console.error(`  交易        ${r.txHash}（区块 ${r.blockNumber}）`);
+    console.error('\n再跑一次本命令会报出"这个成员已经注册完成"。');
+    process.exit(EXIT_OK);
+  }
+
   console.error(`\n第 ${progress.step + 1} 步的实现尚未落地（T027 进行中）。`);
   console.error('这条路径刻意不"先跑起来再说"：写链的代码没有经过变红检查之前，'
     + '不该有机会真的发出交易。');
