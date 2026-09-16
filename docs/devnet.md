@@ -1359,3 +1359,138 @@ chainId、networkId、创世、gas、代币、共识参数），还是**部署�
 
 成员集合是后者里最特别的一项：它的事实来源**在链上**，声明只是"我们打算有几个"。
 所以它的变化甚至不需要改文件就已经发生了 —— 文件是跟着链走的，不是反过来。
+
+---
+
+## 12. 两条流程：协议变更 vs 部署变更（功能 005 / FR-038）
+
+### 12.1 分界是**一个问题**，不是一张字段清单
+
+> **这次改的，是"这条链是什么"，还是"它跑在哪儿"？**
+
+前者是**协议变更**：chainId、networkId、创世分配、gas 参数、代币、共识参数 ——
+改了它就是另一条链。后者是**部署变更**：机器、地址、端口、故障边界、成员集合 ——
+改了它还是同一条链，只是换了地方跑或换了人跑。
+
+用问题而不是清单，是因为清单会过期而问题不会。新增字段时问一遍这个问题就知道它该进哪边；
+照清单查则会在清单没更新时给出错误答案 —— 而那种错误的方向是**把部署当成协议**，
+代价是一次不必要的全链重置。
+
+**本仓库犯过这个错。** `configVersion` 从 1.2.0 升到 **1.3.0 就是为了新增 `topology`**
+（功能 002），而 `topology` 是纯粹的部署描述。由于 `configVersion` 在出生证明之列，
+那次递增让全部节点的链数据作废。功能 005 把 `topology` 迁出 `protocol.json`
+就是在改这个分类错误。
+
+> 完整的历史论据与被否方案将记入 `docs/adr/0012-deployment-is-not-protocol.md`
+> —— **该 ADR 尚未写**（T057）。本节只给判据与流程。
+
+### 12.2 两条流程并排
+
+| | 协议变更 | 部署变更 |
+|---|---|---|
+| 改哪个文件 | `blockchain/protocol.json` | `blockchain/deployment.json` |
+| 版本号 | `configVersion` **必须**递增 | `deploymentVersion` 递增（**不进出生证明**） |
+| 出生证明 | 六项中至少一项会变 | 六项**逐字节不变** |
+| 既有节点 | **退出 12，链数据作废** | 不重启、不退出、数据不动 |
+| 要不要重置 | **要**（`devnet-reset`） | **不要** |
+| 依据 | 宪法第十五条，流程见 §8 | 本节与 §11 |
+
+**出生证明就是那六项**（`docker/node/entrypoint.sh` 的 `stamp_fields()`）：
+
+```
+configVersion · chain.chainId · avalanche.networkId · chain.blockchainName
+创世文件 sha256 · 创世区块哈希
+```
+
+判断一次改动要不要重置，**只看这六项会不会变**，不看改了多少东西。
+往 `deployment.json` 里加一整台机器，这六项一项都不动。
+
+### 12.3 部署变更的流程
+
+```bash
+vi blockchain/deployment.json      # 改机器 / 地址 / 端口 / 故障边界；递增 deploymentVersion
+npm run render                     # 重新生成 compose、flags、代理配置等
+npm test                           # 守卫会拦下 T-5 越界、地址冲突、生成物漂移等
+git commit -am "..." && git push   # 各机器 git pull 同步
+```
+
+然后**在受影响的机器上**重建容器：
+
+```bash
+docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate
+```
+
+> **必须 `--force-recreate`，不能只 `restart` 或 `up -d`。** Linux 宿主上
+> 单文件 bind mount 绑的是 inode，`git pull` 的原子替换会让容器仍指向旧 inode ——
+> 详见 §9.2 那段 ⚠️。Windows 上还有另一层理由：`restart` 会弄坏容器网络（§5.3）。
+
+**未受影响的机器不需要动。** 加一台机器时，既有节点的 flags 逐字节不变 ——
+这一点有守卫（`tests/unit/add-machine-noop.test.mjs`）。
+
+### 12.4 成员变更：第三种，事实来源在链上
+
+成员集合（谁是验证者）**既不是协议参数，也不是普通的部署描述**：
+
+- 它**不进**出生证明 —— 与部署变更一样，不重置
+- 但它的**事实来源在链上**，不在文件里。`deployment.json` 里那份只是"我们打算有几个"
+
+所以顺序与前两者相反：**先改链，再改文件**。`add-validator` / `remove-validator`
+走完链上流程之后，才把声明改成与链一致。文件是跟着链走的。
+
+两者不一致时不是"文件写错了"，而是一条**可见的漂移**：
+`npm run membership:status` 会把声明、合约、P 链三侧都列出来并标出分歧，
+面板把"声明里有、链上没有"的节点归入 `membership`（非故障）而不是故障类。
+详见 §11.3 与 §5.4。
+
+---
+
+## 13. 只加一台观察/入口机：零改动（功能 005 / FR-036）
+
+**一台只跑 nginx 代理 + 面板、不参与共识的机器，不需要任何协议或拓扑改动。**
+不用改 `protocol.json`，不用改 `deployment.json`，不用重置，既有节点不用重启。
+
+写下这一条是因为不写的代价很具体：有人为了加一台面板机去重置链 —— 那是纯粹的损失。
+
+### 13.1 为什么零改动成立
+
+两条独立的理由，各自都已实测：
+
+**① 代理把 Host 头统一改写成 `localhost`。** 生成的 `rpc-proxy.conf` 两个 `location`
+都有 `proxy_set_header Host "localhost"`，而 `localhost` 在每个节点的
+`http-allowed-hosts` 里。所以经代理转发的请求，节点那边看到的 Host 与请求来自哪台机器无关。
+
+**② 面板直连各节点时用的是 IP 字面量。** avalanchego 对 **IP 字面量的 Host 头无条件放行**
+（research V-19，2026-09-14 实测）—— 这与白名单无关：节点的 `http-allowed-hosts`
+其实只有 `127.0.0.1` 与 `localhost`，而面板发的 `Host: 192.168.1.3:21660` 照样通过。
+
+> **这一条有个边界。** 无条件放行只对 IP 字面量成立。若日后把边界地址改成**主机名**，
+> 那时它确实需要被列进 `http-allowed-hosts` —— 渲染器为此保留了只滤掉 IP 字面量、
+> 保留名字的逻辑。现在全是 IP，所以那份清单里一个地址都没有，这不是遗漏。
+
+### 13.2 怎么加
+
+在新机器上：
+
+```bash
+git clone <仓库> && cd karma-chain
+# 代理：用任一既有边界的配置即可 —— 它只是转发，不绑定身份
+docker run -d --name karmachain-rpc -p 8545:8545 \
+  -v "$PWD/blockchain/nodes/lan/rpc-proxy.conf:/etc/nginx/conf.d/karmachain.conf:ro" \
+  nginx:alpine
+# 面板
+npm ci && npm run dashboard
+```
+
+放行入站 8545（若要别的机器经它访问）与面板端口。**不需要**放行 21650–21671 ——
+那些是共识端口，这台机器不参与共识。
+
+### 13.3 怎么确认它真的零改动
+
+```bash
+git status            # 必须是干净的 —— 有改动就说明你做的不是"只加观察机"
+npm run render:check  # 生成物与 protocol.json 一致
+```
+
+`git status` 干净是这一条的判据：**只加观察/入口机不产生任何仓库改动**。
+一旦你发现要改 `deployment.json` 才能让它工作，那就不是观察机 ——
+回头看它是不是在参与共识。
