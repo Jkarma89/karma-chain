@@ -37,10 +37,36 @@ NODE="${2:-}"
   exit 10
 }
 
-# 节点必须属于本故障边界 —— 跨边界的节点在另一台机器上，这里管不着
+# ① 拼写检查：这个 id 在**整张网络**里存在吗
 case " ${KARMACHAIN_NODE_IDS} " in
   *" ${NODE} "*) ;;
   *) echo "devnet-node: 未知节点 '${NODE}' —— 可选: ${KARMACHAIN_NODE_IDS}" >&2; exit 10 ;;
+esac
+
+# ② 它必须由**本机**承载 —— 跨边界的节点在另一台机器上，这里管不着。
+#
+# 此前只有 ① 而注释写着"节点必须属于本故障边界" ——
+# **一条声称存在的检查并不存在**（与 FR-014 那次同形）。
+# 后果在**非默认机器**上显形：win-2 上没设 KARMACHAIN_DOMAIN 时边界回落成 win-1，
+# 于是 `stop l1-2` 去 lan-win-1.yml 里找 l1-2（那份只定义 l1-1），
+# compose 报 `no such service: l1-2` —— 而 .ps1 那版照报"已停止"。
+# 2026-09-17 在 win-2 上实地撞到：**l1-2 根本没停，而命令说停了。**
+#
+# 判据取本机 compose 真正定义的服务，而不是再写一份会过期的清单。
+LOCAL_SERVICES="$(docker compose -f "$COMPOSE" config --services 2>/dev/null | tr '\n' ' ')"
+case " ${LOCAL_SERVICES} " in
+  *" ${NODE} "*) ;;
+  *)
+    echo "devnet-node: 本机（边界 ${DOMAIN}）不承载节点 '${NODE}'" >&2
+    echo "  本机承载: ${LOCAL_SERVICES}" >&2
+    if [ -n "${KARMACHAIN_DOMAIN:-}" ]; then
+      echo "  当前边界取自 KARMACHAIN_DOMAIN=${DOMAIN} —— 若本机不是它，改成本机的边界 id。" >&2
+    else
+      echo "  当前边界 '${DOMAIN}' 来自**默认值**（KARMACHAIN_DOMAIN 未设）。" >&2
+      echo "  若本机不是 '${DOMAIN}'，先指定本机的边界：" >&2
+      echo "    KARMACHAIN_DOMAIN=<本机边界 id> scripts/devnet-node.sh ${ACTION} ${NODE}" >&2
+    fi
+    exit 10 ;;
 esac
 
 CONTAINER="karmachain-${NODE}"
