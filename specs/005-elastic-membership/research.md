@@ -746,7 +746,14 @@ primary genesis has N initial stakers but topology declares M primary nodes
 - **V-09** ⚠ **仅离线验证**：`tolerance.mjs` 的 `removalImpact()` 把
   「f 下降 → 要确认」与「跌破门槛 → 拦下」**刻意分成两件事**，
   `membership-removal.test.mjs` 逐格断言。活链未走（依赖 V-08）。
-- **V-10** ❌ 多步流程在每一步人为注入失败都能报出停在哪一步并可重试 —— T031
+- **V-10** ⚠ **一半离线验证、一半在活链上间接成立**：
+  离线（`membership-step-resume.test.mjs`）逐格钉住「链上状态 → 停在第几步」的映射，
+  并穷举断言 **step 的值域恰好是 {0,1,3,4}、永不为 2** —— 第二步不写链。
+  活链上这个机制**反复用对过**：l1-6 的四步分四次跑完，中间夹着一次停电与一次
+  P 链拒绝（`NumFilteredValidators (0)`），每次重跑都自己找对了位置，
+  因为它不读状态文件、只读链。
+  **缺的是"人为注入失败"那一轮**（T031）：合约 revert / P 链拒绝 / 聚合器超时
+  各长什么样，是外部系统的真实行为 —— 离线造出来的只是我对它们的想象。
 - **V-11** ⚠ **仅离线验证**（T023 / FR-014）：`membership-preflight.test.mjs`
   断言创世哈希不一致、chainId 不一致、**以及读不到**三种情形都被拦下。
   **注意这条判定在 2026-09-16 之前根本不存在** —— 函数头写着 FR-014 而实现里没有。
