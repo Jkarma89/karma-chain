@@ -71,7 +71,16 @@ export const TOPICS = Object.freeze({
 // 但它带着退出第二步要用的 `validatorWeightMessageID`，所以被真正解析（见上面那段）。
 // 「不改变集合」不等于「不需要记下来」。
 const NON_MEMBERSHIP_TOPICS = new Map(
-  ['OwnershipTransferred', 'Initialized']
+  // `InitiatedValidatorWeightUpdate` 由 2026-09-17 那次真实退出暴露出来：
+  // `initiateValidatorRemoval` **同时**发它（退出在底层就是"把权重更新为 0"），
+  // 而当时的 ABI 里没有它 —— 于是"不认识的 topic"那个列表第一次变成非空。
+  // **那条告警正是为此设的**（member-set 的注释写着"恒定非空的告警等于没有告警"），
+  // 它履职了：一个我们没登记的合约事件被指名报了出来。
+  //
+  // 归进本表而不是进 history：退出要用的消息 ID 来自 `InitiatedValidatorRemoval`
+  // 的 `validatorWeightMessageID`，这一条是同一件事的另一种表述，不额外提供什么。
+  // （对照上面那条教训：`InitiatedValidatorRemoval` **不能**归进来，它带着流程要用的 ID。）
+  ['OwnershipTransferred', 'Initialized', 'InitiatedValidatorWeightUpdate']
     .filter((name) => VALIDATOR_MANAGER_ABI.some((x) => x.type === 'event' && x.name === name))
     .map((name) => [topicOf(name), name]),
 );
@@ -396,7 +405,29 @@ export function classifyPChainDrift({ contractMembers, pchainMembers }) {
  * @param {object[]} onChain  memberSetFromLogs().members
  * @param {object[]} declared loadProtocol().validators.nodes
  */
-export function classifyDrift(onChain, declared) {
+export function classifyDrift(onChain, declared, history = []) {
+  // 「声明里有、链上没有」有**两种截然不同的成因**，而它们的处置相反：
+  //
+  //   ① 流程没走完（加入卡住，或退出只做了一半）→ 去重试停住的那一步
+  //   ② **退出已经走完**，只是声明还没清理           → 去改声明，**别重试任何一步**
+  //
+  // 分不开的后果不是"话说得不准"：2026-09-17 真退掉 l1-2 之后，工具对一次
+  // **圆满完成**的退出报的是"重试那一步" —— 照着做是白费功夫，而且会让人以为
+  // 退出失败了。这与 FR-028 是同一条要求的两面：被主动移除的节点不该被呈现成
+  // 出了问题，**它的处置方向也不该指向"去修"**。
+  //
+  // 分辨的依据在链上：合约为那个 validationID 发过 `CompletedValidatorRemoval`。
+  const removedValidationIds = new Set(
+    history.filter((h) => h.eventName === 'CompletedValidatorRemoval').map((h) => h.validationID),
+  );
+  // validationID → nodeId 要靠发起事件补（Completed 那条不带 nodeID）
+  const nodeIdOfValidation = new Map(
+    history.filter((h) => h.nodeId && h.validationID).map((h) => [h.validationID, h.nodeId]),
+  );
+  const fullyRemoved = new Set(
+    [...removedValidationIds].map((v) => nodeIdOfValidation.get(v)).filter(Boolean),
+  );
+
   const declaredById = new Map();
   for (const v of declared) {
     // identityOf：创世成员从密钥派生，创世后加入的凭声明的公开材料（T069）
@@ -424,8 +455,15 @@ export function classifyDrift(onChain, declared) {
       kind: DRIFT.DECLARED_ONLY,
       nodeId,
       validatorIndex: v.index,
-      detail: '声明里是成员，链上不是 —— 加入流程没走完，或退出只做了一半。'
-        + '处置：看多步流程停在哪一步（FR-016），重试那一步。',
+      // 已退完时 `removalCompleted: true`，呈现层据此不把它说成"要去修的东西"
+      removalCompleted: fullyRemoved.has(nodeId),
+      detail: fullyRemoved.has(nodeId)
+        ? '声明里是成员，链上不是 —— **退出已经走完**（合约发过 CompletedValidatorRemoval）。'
+          + '这不是故障，也**不需要重试任何一步**。'
+          + '处置：停掉那台机器上的节点进程，并把它从 blockchain/deployment.json 的'
+          + ' validators.nodes[] 与 topology 里移除，然后重新渲染 —— 漂移就消失了。'
+        : '声明里是成员，链上不是 —— 加入流程没走完，或退出只做了一半。'
+          + '处置：看多步流程停在哪一步（FR-016），重试那一步。',
     });
   }
 
@@ -551,7 +589,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   const client = createPublicClient({ transport: http(url) });
 
   const set = await readMemberSet({ client });
-  const cls = classifyDrift(set.members, p.validators.nodes);
+  const cls = classifyDrift(set.members, p.validators.nodes, set.history);
 
   console.log(`链上成员 ${cls.onChainCount}，声明成员 ${cls.declaredCount}（扫到高度 ${set.toBlock}）\n`);
   for (const m of set.members.sort((a, b) => (a.nodeId ?? '').localeCompare(b.nodeId ?? ''))) {

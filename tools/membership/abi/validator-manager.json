@@ -332,6 +332,32 @@
     },
     {
       "type": "event",
+      "name": "InitiatedValidatorWeightUpdate",
+      "inputs": [
+        {
+          "name": "validationID",
+          "type": "bytes32",
+          "indexed": true
+        },
+        {
+          "name": "nonce",
+          "type": "uint64",
+          "indexed": false
+        },
+        {
+          "name": "weightUpdateMessageID",
+          "type": "bytes32",
+          "indexed": false
+        },
+        {
+          "name": "weight",
+          "type": "uint64",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "type": "event",
       "name": "CompletedValidatorRemoval",
       "inputs": [
         {

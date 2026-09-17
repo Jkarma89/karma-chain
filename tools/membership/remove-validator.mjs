@@ -141,14 +141,17 @@ export async function assessRemovalProgress({ client, pchain, nodeId, subnetId }
  * 告知（要人确认，但决定权在人）：
  *   - f 下降（FR-011）
  */
-export async function removalPrecheck({ client, pchain, nodeId, config, subnetId }) {
+export async function removalPrecheck({
+  client, pchain, nodeId, config, subnetId, resumingAfterPChainRemoval = false,
+  fetchImpl = fetch,
+}) {
   if (!subnetId) throw new Error('removalPrecheck 需要 subnetId —— P 链那一侧读不到就判不了门槛');
   const problems = [];
   const d = deriveTopology(config);
 
   const reachable = async (n) => {
     try {
-      const r = await fetch(`http://${n.address}:${n.httpPort}/ext/info`, {
+      const r = await fetchImpl(`http://${n.address}:${n.httpPort}/ext/info`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: '{"jsonrpc":"2.0","id":1,"method":"info.getNodeID","params":[]}',
@@ -178,7 +181,22 @@ export async function removalPrecheck({ client, pchain, nodeId, config, subnetId
     return { ok: false, problems, impact: null, split: null };
   }
 
-  if (!pset.members.some((m) => m.nodeId === nodeId)) {
+  // 「它在不在 P 链集合里」这条检查**必须知道现在走到第几步**。
+  //
+  // 退出的第三步做的正是"把它从 P 链摘掉"。所以第三步之后它**本来就不在**了 ——
+  // 而那恰恰是第四步（让合约认下这次摘除）唯一该跑的时刻。
+  // 不区分进度的话，这条检查会把第四步**永远堵死**：
+  //
+  //   第三步成功 → 目标离开 P 链 → 前置检查报"不在集合里，无可退" → 第四步进不去
+  //
+  // 而链上此时是「P 链摘了、合约没认」的中间态 —— 工具自己在第三步的输出里
+  // 写着"可直接重跑本命令重试"，却被自己的前置检查拦住。
+  // 2026-09-17 跑 T041 时实地撞到，链正停在那个中间态。
+  //
+  // 加入那一侧没有这个毛病，因为方向相反：它的成员检查读**合约事件**，
+  // 而加入的第三步动的是 **P 链** —— 两者不打架。
+  const removedFromPChain = !pset.members.some((m) => m.nodeId === nodeId);
+  if (removedFromPChain && !resumingAfterPChainRemoval) {
     problems.push(`${nodeId} **不在 P 链的成员集合里** —— 它没有在共识里带权重，无可退。`
       + ' 若合约侧仍认它，那是「合约认了、P 链没认」的分歧，跑 npm run membership:status 看清楚。');
   }
@@ -561,8 +579,18 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   console.error(`L1 RPC: ${rpcUrl}`);
   console.error(`P 链: http://${primary.address}:${primary.httpPort}/ext/bc/P（经 ${primary.id}）\n`);
 
+  // **先读进度，再做前置检查。** 顺序不能反：有一条检查（"它还在不在 P 链集合里"）
+  // 的正确答案取决于走到第几步 —— 第三步之后它本来就不在了，而那正是第四步该跑的时刻。
+  // 读进度是只读的，放前面没有代价。
+  const progress0 = await assessRemovalProgress({
+    client, pchain, nodeId, subnetId: identity.subnetId,
+  });
+
   console.error('前置检查…');
-  const pre = await removalPrecheck({ client, pchain, nodeId, config, subnetId: identity.subnetId });
+  const pre = await removalPrecheck({
+    client, pchain, nodeId, config, subnetId: identity.subnetId,
+    resumingAfterPChainRemoval: progress0.step >= 3,
+  });
   for (const p of pre.problems) console.error(`  ✗ ${p}`);
   if (pre.split && !pre.split.ok) {
     console.error(`  ⚠ 两侧分歧：合约 ${pre.split.contractCount} / P 链 ${pre.split.pchainCount}`);
@@ -629,7 +657,16 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   }
 
   // ── 代价告知（FR-011）──────────────────────────────────────────────────────
+  //
+  // **代价可能已经付过了。** 第三步一提交，那个成员就在 P 链上失去了权重、
+  // n 当场变成 5 —— 此时 `impact` 为 null（"退掉一个不在集合里的成员"算不出代价）。
+  // 续做第四步时照实说"代价已发生"，而不是拿一个 null 去取字段
+  //（2026-09-17 跑 T041 时就是在这里抛了 TypeError，退出码 1 —— 非语义码）。
   const im = pre.impact;
+  if (!im) {
+    console.error('\n这次退出的代价**已经发生**：第三步提交时该成员就在 P 链上失去了权重，'
+      + 'n 当时就降了。第四步只是让合约认下这件事，不再改变容错。');
+  } else {
   console.error(`\n这次退出的代价：n = ${im.before.n} → ${im.after.n}，`
     + `可离线数 ${im.before.f} → ${im.after.f}`
     + (im.toleranceDrops ? '（**下降了**）' : '（没有变化）'));
@@ -644,10 +681,11 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       process.exit(EXIT_ABORTED);
     }
   }
+  }
 
-  const progress = await assessRemovalProgress({
-    client, pchain, nodeId, subnetId: identity.subnetId,
-  });
+  // 复用上面那次读取 —— 中间没有任何写链动作，再读一次只是多一轮网络往返，
+  // 而两次读之间链若真变了，下面每一步自己还会重新核对。
+  const progress = progress0;
   if (progress.step === null) {
     console.error(`\n${progress.notes[0]}`);
     process.exit(EXIT_PRECHECK);

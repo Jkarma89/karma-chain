@@ -296,7 +296,7 @@ export async function precheck({
   }
 
   // ── 其它漂移要先说清（不阻断，但必须看见）────────────────────────────────
-  const drift = classifyDrift(set.members, config.validators.nodes);
+  const drift = classifyDrift(set.members, config.validators.nodes, set.history);
   const others = drift.drifts.filter((x) => x.nodeId !== nodeId);
 
   // ── 第二个事实来源：合约侧 vs P 链侧（T070）──────────────────────────────
