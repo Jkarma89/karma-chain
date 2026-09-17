@@ -149,7 +149,7 @@ services:
     container_name: karmachain-primary-1
     networks:
       karmachain:
-        ipv4_address: 172.28.0.16
+        ipv4_address: 172.28.0.41
     volumes:
       - karmachain-primary-1-data:/data
       - ../../blockchain/validators/dev/primary-1/:/keys:ro
@@ -169,7 +169,7 @@ services:
     container_name: karmachain-primary-2
     networks:
       karmachain:
-        ipv4_address: 172.28.0.17
+        ipv4_address: 172.28.0.42
     volumes:
       - karmachain-primary-2-data:/data
       - ../../blockchain/validators/dev/primary-2/:/keys:ro
@@ -189,7 +189,7 @@ services:
     container_name: karmachain-l1-6
     networks:
       karmachain:
-        ipv4_address: 172.28.0.18
+        ipv4_address: 172.28.0.16
     depends_on:
       primary-1:
         condition: service_healthy

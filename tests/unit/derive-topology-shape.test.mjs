@@ -18,6 +18,21 @@
 // 要连同这份夹具一起改，并在提交信息里写明改了什么、为什么** ——
 // 不要因为它红了就重新生成一份盖过去。那等于把照片换成现场，
 // 然后宣布现场与照片一致。
+//
+// ## 夹具的有意改动记录（照上面那条规矩办）
+//
+// **2026-09-17 / T068**：`local` 形态里 `primary-1` 与 `primary-2` 的地址
+// 从 `.16` / `.17` 改为 `.41` / `.42`。**只改了这两行**（`git diff` 是 2 加 2 减），
+// 不是重新生成。
+//
+// 原因：单机形态的容器地址原先由 `topology.nodes` 的**数组下标**派生，
+// 于是把新节点插在中间会让后面每个节点改号。改成按角色分块、
+// 块内用该角色自己的稳定序号（验证者用 `validatorIndex`，Primary 用声明的
+// `primaryFirstHost` 加它在 Primary 里的序号）。
+//
+// **五个验证者的地址一个都没变**（`validatorIndex` 1…5 → `.11`…`.15`）——
+// 动的只有两个 Primary，因为它们得从验证者的号段里挪出来。
+// 跨机形态（`lan`，也就是真实部署）**逐字节未变**，本文件的 lan 那半个套件全绿。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';

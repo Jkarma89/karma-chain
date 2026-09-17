@@ -343,7 +343,13 @@
               "pattern": "^(?:[0-9]{1,3}\\.){3}[0-9]{1,3}/[0-9]{1,2}$"
             },
             "firstHost": {
-              "description": "第一个节点的主机号；其余按 topology.nodes 顺序递增。",
+              "description": "**L1 验证者块**的第一个主机号。验证者的主机号 = firstHost + validatorIndex − 1，由它自己的 validatorIndex 派生，**与 topology.nodes 的数组位置无关**（功能 005 / T068：原先按数组下标派生，把新节点插在中间会让后面每个节点改号，那一台机器上所有容器都要重建）。",
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 250
+            },
+            "primaryFirstHost": {
+              "description": "**Primary 块**的第一个主机号。必须单独声明而不是接在验证者块后面：接在后面的话，加一个验证者就会让全部 Primary 改号（validators.count 变了），而「加节点不动既有节点」正是本特性的主张。两块之间留出的空档就是验证者的扩容余量。",
               "type": "integer",
               "minimum": 2,
               "maximum": 250

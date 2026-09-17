@@ -68,7 +68,7 @@
         "stakingPort": 21651,
         "keyDir": "blockchain/validators/dev/primary-1/",
         "domain": "local",
-        "address": "172.28.0.16",
+        "address": "172.28.0.41",
         "hostAddress": "127.0.0.1",
         "platform": "linux"
       },
@@ -79,7 +79,7 @@
         "stakingPort": 21653,
         "keyDir": "blockchain/validators/dev/primary-2/",
         "domain": "local",
-        "address": "172.28.0.17",
+        "address": "172.28.0.42",
         "hostAddress": "127.0.0.1",
         "platform": "linux"
       }

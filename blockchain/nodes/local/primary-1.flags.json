@@ -13,7 +13,7 @@
   "index-enabled": "true",
   "network-allow-private-ips": "true",
   "network-id": "1337",
-  "public-ip": "172.28.0.16",
+  "public-ip": "172.28.0.41",
   "staking-port": "21651",
   "staking-signer-key-file": "/keys/signer.key",
   "staking-tls-cert-file": "/keys/staker.crt",

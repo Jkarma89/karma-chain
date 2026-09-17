@@ -112,7 +112,7 @@
 | `topology.activeDeployment` | "lan" | 当前生效的部署形态。它是**唯一**决定"节点用哪套地址启动"的开关：生成物按形态分目录（blockchain/nodes/<deployment>/），改这一个字段再重新生成即可切换，不必改动任何其他声明。取 local（单机全部节点）：阶段一形态，只有 1 个故障边界，不做整机失效容错承诺。 |
 | `topology.nodes` | 共 8 个 | 声明有哪些节点及其角色。验证者的端口与 staking 材料目录不在此重复，唯一出处仍是 validators.nodes[]（此处只用 validatorIndex 引用）；Primary 节点的端口与 keyDir 在仓库中无其他出处，故在此声明。 |
 | `topology.deployments` | 2 个形态：local、lan | 每个部署形态声明一套"节点 → 故障边界"的归属。故障边界 = 会同时失效的一组节点。容错上限 f ≤ ⌊n/4⌋ 由共识参数推导（001 研究 R-05）；边界数 > 1 时任一边界内的验证者不得超过该上限（约束 T-5，违规即退出码 13）。sharedFailureFactors 必填且可为空数组，但空必须是**有意识的**空："独立失效"无法由代码验证，只能要求部署者显式声明共享的供电、交换机、更新窗口与虚拟化宿主（研究 R-12）。共享同一因素的边界会被合并为一个**有效边界**，整域失效容忍按合并后判定 ——否则"5 个边界各 1 个验证者"这种声明会在真实宿主只有 2 台时依然显示绿灯（研究 R-12 的 2026-09-07 修正）。 |
-| `topology.deployments.local.containerNetwork` | {"subnet":"172.28.0.0/24","firstHost":11} | 单机形态下 7 个容器需要**稳定且可预测**的地址：节点的 --public-ip 与 --bootstrap-ips 必须在容器启动前就能算出来，而 Docker 默认网络的地址分配不保证顺序。因此声明一个专用网段，按节点序号确定性地分配（firstHost 起）。跨机形态不声明本项 —— 那里用各机器的真实地址。 |
+| `topology.deployments.local.containerNetwork` | {"subnet":"172.28.0.0/24","firstHost":11,"primaryFirstHost":41} | 单机形态下 7 个容器需要**稳定且可预测**的地址：节点的 --public-ip 与 --bootstrap-ips 必须在容器启动前就能算出来，而 Docker 默认网络的地址分配不保证顺序。因此声明一个专用网段，按节点序号确定性地分配（firstHost 起）。跨机形态不声明本项 —— 那里用各机器的真实地址。 |
 
 **节点**（端口与 keyDir 解析自 `validators.nodes[]` 与 `topology.nodes[]`，此处只是展示解析结果）
 

@@ -514,9 +514,63 @@ export function deriveTopology(p) {
   // 单机形态：每个节点是独立容器，必须有各自的地址 —— 共用边界地址会让节点连向自身。
   // 多机形态：节点分处不同机器，地址即所属边界的机器地址，靠端口区分同机节点。
   const net = deployment.containerNetwork;
-  const containerIp = (index) => {
+
+  /**
+   * 单机形态的容器地址 —— **由稳定值派生，不由数组位置**（功能 005 / T068）。
+   *
+   * ## 为什么不能用数组下标
+   *
+   * 原先是 `firstHost + i`，`i` 是 `topology.nodes` 的下标。于是把新节点插在中间
+   * （"验证者排在前面"是最自然的改法）会让**后面每个节点的地址 +1** ——
+   * 全部验证者的 `bootstrap-ips` 与两个 Primary 的 `public-ip` 一起变，
+   * 那一台机器上所有容器都要重建。
+   *
+   * **声明里的数组顺序是给人读的，不该是一个地址分配依据。**
+   *
+   * ## 稳定值从哪来
+   *
+   * 按角色分成两块，**两块的起点都是声明里写死的**：
+   *
+   *   L1 验证者 → `firstHost + validatorIndex − 1`（声明保证 index 恰好覆盖 1..count）
+   *   Primary   → `primaryFirstHost + 它在全部 Primary 里的序号`
+   *
+   * **Primary 块的起点为什么必须单独声明。** 第一版把它接在验证者块后面
+   * （`firstHost + validators.count + j`）—— 于是**加一个验证者就让两个 Primary 改号**，
+   * 守卫里那条本来通过的"追加是零改动"当场变红。改一个数组下标依赖换成一个
+   * `validators.count` 依赖，问题原样保留。**slot 必须是该节点自身声明属性的纯函数。**
+   * 两块之间留出的空档就是验证者的扩容余量。
+   *
+   * Primary 用"它在全部 Primary 里的序号"而不是某个声明字段，是因为
+   * `topology.nodes` 里的 Primary 没有 index 字段。这不引入新的脆弱性：
+   * 那个顺序**已经是承重的** —— `render-node-flags.mjs` 正是按数组位置
+   * 把 Primary 映射到创世 `initialStakers`。要动它得先动 Primary 网络创世
+   *（见 research R-07b①），而那是另一回事。
+   *
+   * 跨机形态本来就不受影响（地址取自故障边界）—— 这个函数在那种形态下不被调用。
+   *
+   * ## 这一改动**一次性**改了 local 形态的生成物
+   *
+   * l1-6 声明在两个 Primary **之后**，所以按位置它拿 `.18`；按 validatorIndex
+   * 它拿 `.16`，而两个 Primary 顺移到 `.17` / `.18`。这是有意的生成物变动
+   * （T068 的任务描述里预告了"Primary 得挪出验证者的号段"），
+   * 代价是单机形态下那一台机器重建一次容器 —— **链数据不受影响**。
+   */
+  const primaryOrder = net
+    ? new Map(p.topology.nodes.filter((n) => n.role === 'primary').map((n, j) => [n.id, j]))
+    : null;
+  const containerIp = (n) => {
     const base = net.subnet.split('/')[0].split('.').slice(0, 3).join('.');
-    return `${base}.${net.firstHost + index}`;
+    const host = n.role === 'l1-validator'
+      ? net.firstHost + n.validatorIndex - 1
+      : net.primaryFirstHost + primaryOrder.get(n.id);
+    // 两块撞上就直接抛 —— 静默复用一个主机号会让两个容器抢同一个地址，
+    // 而那种故障在日志里长得像"节点连不上对等"，查起来毫无指向。
+    if (n.role === 'l1-validator' && host >= net.primaryFirstHost) {
+      throw new Error(`单机形态的验证者块已顶到 Primary 块：${n.id} 要用主机号 ${host}，`
+        + `而 primaryFirstHost = ${net.primaryFirstHost}。`
+        + ' 把 primaryFirstHost 调大（并接受那一次生成物变动），或缩小验证者数。');
+    }
+    return `${base}.${host}`;
   };
 
   const nodes = p.topology.nodes.map((n, i) => {
@@ -529,7 +583,7 @@ export function deriveTopology(p) {
       stakingPort: v ? v.stakingPort : n.stakingPort,
       keyDir: v ? v.keyDir : n.keyDir,
       domain: d?.id ?? null,
-      address: net ? containerIp(i) : (d ? addressOf(d) : null),
+      address: net ? containerIp(n) : (d ? addressOf(d) : null),
       hostAddress: d ? addressOf(d) : null,
       platform: d?.platform ?? null,
     };

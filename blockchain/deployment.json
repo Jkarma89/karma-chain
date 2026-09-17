@@ -54,7 +54,8 @@
         "description": "单机全部节点（阶段一）。只有 1 个故障边界，不做整机失效容错承诺。",
         "containerNetwork": {
           "subnet": "172.28.0.0/24",
-          "firstHost": 11
+          "firstHost": 11,
+          "primaryFirstHost": 41
         },
         "failureDomains": [
           {

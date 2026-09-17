@@ -177,11 +177,16 @@ describe('local 形态：追加是零改动，插在中间是已知限制（T068
     });
   }
 
+  // **T068 已修（2026-09-17），这组从 todo 升为硬断言。**
+  // 容器地址改为按角色分块、块内用该角色自己的稳定序号派生
+  //（验证者用 validatorIndex，Primary 用它在 Primary 里的序号），
+  // 于是数组位置不再参与地址分配 —— 声明里的顺序回归"给人读的"。
   for (const id of Object.keys(before)) {
-    test('插在中间时 ' + id + ' 的 flags 未变', {
-      todo: '已知限制 T068：单机形态的容器 IP 按数组位置派生，插在中间会给后面的节点改号',
-    }, () => {
-      assert.deepEqual(inserted[id], before[id]);
+    test('**插在中间**时 ' + id + ' 的 flags 未变', () => {
+      assert.deepEqual(inserted[id], before[id],
+        '单机形态下把新节点插在中间改到了既有节点 ' + id + '。\n'
+        + '  T068 修的就是这个：地址不得由 topology.nodes 的数组下标派生。\n'
+        + '  若这条红了，先看 load.mjs 的 containerIp() 是不是又回到了位置依赖。');
     });
   }
 
