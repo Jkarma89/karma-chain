@@ -1083,6 +1083,101 @@ primary genesis has N initial stakers but topology declares M primary nodes
   过门槛所以不阻塞，但这是个**未查明的观察**，不是"全好了"。
   若哪天门槛提到 80% 以上，它会变成阻塞项。
 
+### V-34 P 链验证 warp 消息用的是**前一格**的成员集合（2026-09-17，T033 实测）
+
+**这一条把上面 V-33 那句"若哪天门槛提到 80% 以上，它会变成阻塞项"变成了现实。**
+
+把 l1-2 加回来（T041 刚把它退掉）时，第三步被 P 链拒绝：
+
+```
+couldn't issue tx: failed verifying warp messages:
+  signature weight is insufficient: 67*600 > 100*400
+```
+
+而工具同一屏上刚打印过「签名者 4/5（80%，门槛 67%）」。**两句话都对，分母不同**：
+
+| | 集合 | 合计权重 | 4 个签名 |
+|---|---|---|---|
+| 聚合器（工具） | 当前 5 个成员 | 500 | 400 = 80% ≥ 67% ✅ |
+| P 链（验证方） | 6 个成员 | 600 | 400 < 402 ❌ |
+
+分母的来源查实了（`platform.getValidatorsAt`，subnetID = 本链）：
+
+| 高度 | 成员 | 合计权重 |
+|---|---|---|
+| 8 | 6（含 l1-2） | 600 |
+| **9（= `platform.getHeight`，退成员那一格）** | 5 | 500 |
+
+**P 链验证 warp 消息时用的是「当前高度**之前一格**」的集合。** 它比成员变更落后一格。
+
+#### 后果：退完成员紧接着的那次加入是**零容错**的
+
+门槛 67% × 600 = 402，而能签的只有 5 个 × 100 = 500 —— **必须五个全签**
+（4 个只有 400）。也就是那一次加入不容许任何一个节点的 P2P 签名不通。
+而 P2P 签名恰恰是本项目反复观察到会飘的那一环（见 V-33 与下面一段）。
+
+推进一格 P 链之后分母变成 500，门槛 335，**4/5 就够** —— 恢复到 f=1。
+
+#### P 链不会自己出块
+
+没有交易就没有新高度，所以"等一会儿"不管用。要推进得真发一笔。
+最无害的一种是 `BaseTx` 把一点 AVAX 转给**自己**：不碰任何成员、权益与合约，
+代价只有一笔手续费（实测 **5179 nAVAX = 0.0000052 AVAX**）。
+实现见 `tools/membership/add-validator.mjs` 的 `nudgePChainHeight`。
+
+#### 工具的改法：**跟链学，不猜**
+
+三处，都在 `add-validator.mjs`：
+
+1. `readVerificationWeights()` —— 事前把**两个分母**都读出来（当前高度与前一格），
+   `lagging` 是算出来的而不是常量。
+2. `quorumForChainTotal()` —— 按链的分母折算出该向聚合器要多少百分比：
+   `⌈quorumNum × chainTotal / localTotal⌉`。**向上取整是要害** ——
+   向下取整会得到 80%，而 80% × 500 = 400 正是被拒的那个数：
+   "门槛提高了却一点用没有"。`tests/unit/membership-quorum-denominator.test.mjs`
+   用穷举守这条性质，两次变红检查都过。
+3. `parseInsufficientWeight()` —— 万一事前那两个读数还是对不上（比如链换了
+   quorumDenominator），就**从报错里解出链用的分母**再重试一次。
+   分母不是 100 时返回 `null` 走原来的失败路径，不算出一个错的门槛。
+
+原先的门槛 `67` 现在是 `BASE_QUORUM_NUM`，并写明它**不是**读创世来的：
+创世 `warpConfig.quorumNumerator` 管的是 subnet-evm 预编译那一侧，
+而这里是 P 链验证 `RegisterL1ValidatorTx`，那个数在 avalanchego 里是常量。
+两边此刻都是 67，但工具不靠它。
+
+### V-35 P2P 签名会飘，而且**轮换**（2026-09-17）
+
+同一条消息，五个节点全都能用 HTTP `warp_getMessageSignature` 签出来 ——
+**经 P2P 就要不齐**：
+
+| 时刻 | 签到 | 没签 |
+|---|---|---|
+| 首次尝试 | 4/5 | l1-1 |
+| 20 分钟后（没动任何东西） | 3/5 | l1-1、l1-3 |
+| l1-1 真重启后 | 4/5 | **l1-3** |
+
+所以：**不是某个坏节点**，而且"HTTP 能签"不代表"P2P 能要到"。
+V-33 里那个"一直没签的第 1 位"是同一个现象，当时不阻塞所以只记了一句。
+
+**这也是为什么 V-34 那个零容错窗口非关不可**：把容错交给一个已知会飘的环节，
+等于把"能不能加成员"变成一次抽签。
+
+### V-36 `devnet-node.ps1 restart` 报了一次假成功（2026-09-17）
+
+`.\scripts\devnet-node.ps1 restart l1-1` 打印「l1-1 已重启」，而容器的
+`StartedAt` **一字未变**（`RestartCount = 0`）。随后在 `docker/compose/` 目录里
+手动跑 `docker compose -f lan-win-1.yml restart l1-1`，`StartedAt` 立刻变了。
+
+两处都退出 0，所以 `Invoke-NodeCompose` 的退出码检查（`a9718cb` 加的那个）拦不住它 ——
+**compose 自己"什么都没做"也算成功**。差别不在 project 名（两边都是 `compose`，
+从仓库根跑 `ps` 也能看见 l1-1 running），根因**尚未查明**。
+
+危害与 `a9718cb` 修掉的那条同级：这是一条会让人以为"我已经重启过了、问题不在这儿"
+的假成功 —— 我自己就被它误导了一轮，把签名者从 4 掉到 3 错算成"重启弄坏了"。
+
+**待办**：给 `stop/start/restart` 加一条真正的事后判定（比对 `StartedAt` /
+`State.Status`），而不是只看 compose 的退出码。一条不会变红的守卫比没有守卫更坏。
+
 ---
 
 ## 依赖偏离记录：`@avalabs/avalanchejs@5.1.0`（2026-09-14）

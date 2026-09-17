@@ -54,6 +54,18 @@ export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-c
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { ask } from './ask.mjs';
 
+/**
+ * P 链验证 L1 warp 消息时用的权重门槛分子（分母恒为 100）。
+ *
+ * 它**不是**读创世来的：创世 `warpConfig.quorumNumerator` 管的是 subnet-evm 里
+ * Warp 预编译的校验，而这里说的是 **P 链**验证 `RegisterL1ValidatorTx` 里那条消息 ——
+ * 那个数在 avalanchego 里是常量。两边此刻都是 67（2026-09-16 从节点 debug 日志的
+ * `signature weight is insufficient: 67*600 > 100*400` 实测确认），所以写 67，
+ * 但**不靠它**：真正的门槛在失败时从链的报错里解出来（见 parseInsufficientWeight），
+ * 工具跟链学，而不是拿一个常量去猜。
+ */
+const BASE_QUORUM_NUM = 67;
+
 /** 链上成员的状态码：2 = Active（research V-24 实测确认）。 */
 const STATUS_ACTIVE = 2;
 
@@ -132,13 +144,60 @@ export async function readNodeGenesis({ node, blockchainId, fetchImpl = fetch, t
 }
 
 /**
+ * 注册一个成员需要的**公开材料**，两个来源统一在这里（功能 005 / T033 实施期补）。
+ *
+ * ## 为什么需要第二个来源
+ *
+ * 加入流程当初只认**一个**来源：声明里 `origin=joined` 的那种成员（T069 的路子）。
+ * 那对"从未是成员的新机器"是对的，但它处理不了另一种真实情形：
+ *
+ *   **把一个被退掉的创世验证者加回来。**
+ *
+ * 创世那批（l1-1…l1-5）在声明里**没有 `identity` 块** —— 它们的身份从
+ * `keyDir` 里的密钥派生。于是 2026-09-17 把 l1-2 退掉之后再想加回来，
+ * 前置检查报的是「声明里没有 origin=joined 的 …」，
+ * 建议去 `gen-node-keys.sh` 生成材料 —— **而那会给它换一个新身份**，
+ * 那不是"加回来"，是"换一台新的进来"。
+ *
+ * 材料本来就在仓库里：建链制品 `chain-identity.bootstrapValidators[]`
+ * 带着创世那批的 `blsPublicKey` 与 `blsProofOfPossession`。
+ * 缺的只是"去那儿看一眼"。
+ *
+ * @returns {{source: 'declaration'|'genesis-bootstrap', blsPublicKey: string,
+ *            proofOfPossession: string}|null} 找不到返回 `null`
+ */
+export function publicMaterialFor({ nodeId, config, chainIdentity }) {
+  // ① 声明里显式报过公开材料的（创世后加入的成员）
+  const joined = joinedValidators(config.validators.nodes)
+    .find((x) => x.identity.nodeId === nodeId);
+  if (joined) {
+    return {
+      source: 'declaration',
+      blsPublicKey: joined.identity.blsPublicKey,
+      proofOfPossession: joined.identity.proofOfPossession,
+    };
+  }
+  // ② 创世那批 —— 身份从密钥派生，公开材料在建链制品里
+  const boot = (chainIdentity?.bootstrapValidators ?? []).find((x) => x.nodeId === nodeId);
+  if (boot?.blsPublicKey && boot?.blsProofOfPossession) {
+    return {
+      source: 'genesis-bootstrap',
+      blsPublicKey: boot.blsPublicKey,
+      proofOfPossession: boot.blsProofOfPossession,
+    };
+  }
+  return null;
+}
+
+/**
  * 前置检查（FR-013 / FR-014 / FR-015）。任一不过则**拦下且不动链**。
  *
  * 刻意在动链之前全部查完，而不是边做边查 —— 走到一半才发现拦不住的问题，
  * 留下的是一个需要人工收拾的中间态。
  */
 export async function precheck({
-  client, pchain, nodeId, config, subnetId, blockchainId, genesisHash, fetchImpl = fetch,
+  client, pchain, nodeId, config, subnetId, blockchainId, genesisHash, chainIdentity,
+  fetchImpl = fetch,
 }) {
   // **subnetId 必填。** 第一版漏了它：函数体里引用 `subnetId` 抛 ReferenceError，
   // 而那句话在 try 里，被当成"读不到 P 链"吞掉 —— 第二个事实来源**静默消失**，
@@ -149,6 +208,11 @@ export async function precheck({
   }
   // blockchainId / genesisHash 同样必填 —— 少了它们 FR-014 那条检查会**静默消失**，
   // 而前置检查照样报"全部通过"。这正是 subnetId 那次的教训，不重犯第二遍。
+  if (!chainIdentity) {
+    throw new Error('precheck 需要 chainIdentity —— 少了它，创世那批验证者的公开材料'
+      + '（bootstrapValidators）这个来源会静默消失，于是"把退掉的创世成员加回来"'
+      + '会被误报成"声明里没有这一项"');
+  }
   if (!blockchainId || !genesisHash) {
     throw new Error('precheck 需要 blockchainId 与 genesisHash —— 少了它们就核对不了'
       + '新节点跑的是不是同一条链（FR-014），而"没核对"不该长得像"核对通过"');
@@ -156,12 +220,13 @@ export async function precheck({
   const problems = [];
   const d = deriveTopology(config);
 
-  // ── 声明里必须有这个成员，且是 origin=joined ─────────────────────────────
-  const declared = joinedValidators(config.validators.nodes)
-    .find((x) => x.identity.nodeId === nodeId);
-  if (!declared) {
-    problems.push(`声明里没有 origin=joined 的 ${nodeId} —— 先把它写进 blockchain/deployment.json`
-      + '（公开材料由 tools/membership/gen-node-keys.sh 在目标机器上生成）');
+  // ── 必须能拿到这个成员的公开材料（两个来源，见 publicMaterialFor）─────────
+  const material = publicMaterialFor({ nodeId, config, chainIdentity });
+  if (!material) {
+    problems.push(`拿不到 ${nodeId} 的公开材料 —— 两个来源都没有它：`
+      + ' 声明里没有 origin=joined 的这一项，建链制品的 bootstrapValidators 里也没有。'
+      + ' 若这是一台新机器，先在**那台机器上**跑 tools/membership/gen-node-keys.sh，'
+      + ' 把它输出的 identity 块贴进 blockchain/deployment.json 的 validators.nodes[]。');
   }
 
   // ── T-5：每个故障边界的验证者数不得超过 ⌊n/4⌋（FR-013）──────────────────
@@ -340,13 +405,15 @@ export async function precheck({
  * 新成员的持续费用与停用权限跟既有的一致，而不是另起一个。
  * 不一致的后果不是报错，是几个月后没人知道该去哪儿续费。
  */
-export async function step1Inputs({ client, pchain, nodeId, config, subnetId }) {
-  const declared = joinedValidators(config.validators.nodes).find((v) => v.identity.nodeId === nodeId);
-  if (!declared) throw new Error(`声明里没有 ${nodeId}`);
+export async function step1Inputs({ client, pchain, nodeId, config, subnetId, chainIdentity }) {
+  // 两个来源（见 publicMaterialFor）：声明里 origin=joined 的，或创世那批。
+  // 把一个被退掉的**创世**验证者加回来时走的是后者。
+  const material = publicMaterialFor({ nodeId, config, chainIdentity });
+  if (!material) throw new Error(`拿不到 ${nodeId} 的公开材料（声明与建链制品里都没有）`);
 
   // 20 字节 nodeID：cb58Decode 会验 4 字节校验和与 20 字节长度
   const nodeIdBytes = `0x${nodeIdToBytes(nodeId).toString('hex')}`;
-  const blsPublicKey = declared.identity.blsPublicKey;
+  const blsPublicKey = material.blsPublicKey;
 
   // 权重取既有成员的值，并要求它们**本来就等权** ——
   // ⌊n/4⌋ 那套推导的前提是等权（research V-22 实测五个各 100）。
@@ -382,8 +449,10 @@ export async function step1Inputs({ client, pchain, nodeId, config, subnetId }) 
  * **签名密钥必须就是合约的 owner** —— 先读 `owner()` 与本地密钥的地址比对，
  * 不符就停。不比的话，交易会被合约 revert，而 revert 的原因要去读 trace 才知道。
  */
-export async function step1({ client, pchain, nodeId, config, subnetId, ownerAccount }) {
-  const inputs = await step1Inputs({ client, pchain, nodeId, config, subnetId });
+export async function step1({
+  client, pchain, nodeId, config, subnetId, ownerAccount, chainIdentity,
+}) {
+  const inputs = await step1Inputs({ client, pchain, nodeId, config, subnetId, chainIdentity });
 
   const onChainOwner = await client.readContract({
     address: PROXY_ADDRESS, abi: VALIDATOR_MANAGER_ABI, functionName: 'owner',
@@ -642,6 +711,53 @@ export function meetsQuorum({ signers, registeredCount, quorumNum }) {
  * @param {string} messageID 链上那条 Warp 消息的 ID（合约事件给出，bytes32 或 CB58）
  * @param {number} quorumNum 权重门槛的分子，取自链配置的 `quorumNumerator`（实测 67）
  */
+/**
+ * 从 P 链的「签名权重不足」报错里**解出它用的分母**（功能 005 / T033 实施期）。
+ *
+ * ## 为什么需要这件事
+ *
+ * 聚合器与 P 链可以用**不同的分母**，而两边都没错：
+ *
+ *   聚合器按 **当前** L1 验证者集合算（2026-09-17：5 × 100 = 500）
+ *   P 链按它**回看的那个高度**上的集合算（那时是 6 × 100 = 600）
+ *
+ * 于是 4 个签名 = 400：聚合器说 80% ≥ 67%（够），P 链说 400/600 = 66.7%（不够）。
+ * 报出来是 `signature weight is insufficient: 67*600 > 100*400`，
+ * 而工具那一行还写着"4/5（80%，门槛 67%）" —— **两句话都对，分母不同。**
+ *
+ * 一个刚退过成员的集合正处在这种状态里，所以这不是罕见情形。
+ *
+ * **不猜一个更高的门槛**：链已经把它的分母写在报错里了，读出来算就行。
+ *
+ * @returns {{quorumNum: number, total: bigint, got: bigint}|null} 解不出返回 null
+ */
+export function parseInsufficientWeight(message) {
+  const m = /signature weight is insufficient:\s*(\d+)\*(\d+)\s*>\s*(\d+)\*(\d+)/.exec(String(message ?? ''));
+  if (!m) return null;
+  const [, qNum, total, qDen, got] = m;
+  if (Number(qDen) !== 100) return null;            // 分母不是 100 时这套折算不成立
+  return { quorumNum: Number(qNum), total: BigInt(total), got: BigInt(got) };
+}
+
+/**
+ * 按**链的分母**折算出该向聚合器要多少百分比。
+ *
+ * 聚合器的百分比是对**它自己那份集合权重**（`localTotal`）算的，
+ * 而要满足的是 `got * 100 >= quorumNum * chainTotal`。所以：
+ *
+ *   needed% = ⌈ quorumNum × chainTotal / localTotal ⌉
+ *
+ * 2026-09-17 的那次：⌈67 × 600 / 500⌉ = 81 —— 81% × 500 = 405 ≥ 402 ✅，
+ * 而 4 个签名只有 400，于是聚合器会去多收一个。
+ */
+export function quorumForChainTotal({ quorumNum, chainTotal, localTotal }) {
+  if (!localTotal || localTotal <= 0n) return null;
+  const pct = (BigInt(quorumNum) * BigInt(chainTotal) + localTotal - 1n) / localTotal;
+  const n = Number(pct);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.min(100, n);
+}
+
 export async function step2({
   config, identity, messageID, registeredCount,
   // 超时从 45 秒收到 12 秒：实测成功的调用是 **0.05–2 秒**，45 秒只会让
@@ -754,19 +870,47 @@ export async function step2({
  * @param {Array<{remainingBalanceOwner?: {addresses?: string[]}, balance?: string|number}>} validators
  *        P 链 `platform.getCurrentValidators({subnetID})` 返回的既有成员
  */
-export function payerExpectation(validators) {
+export function payerExpectation(validators, { initialBalances } = {}) {
   const list = validators ?? [];
   if (!list.length) {
     throw new Error('P 链上这条 subnet 没有任何既有成员 —— 推不出新成员该用的续费地址与余额。'
       + ' 第一个成员的这两个值要由人来定，本工具不猜。');
   }
+
+  // 地址必须唯一 —— 这是**真不变量**：谁替这批成员付持续费用，只能有一个答案。
+  // 出现两个说明这套成员集合已经不同质了，"新成员该跟谁一致"要人来定。
   const owners = new Set(list.flatMap((v) => v.remainingBalanceOwner?.addresses ?? []));
-  const balances = new Set(list.map((v) => String(v.balance)));
-  if (owners.size !== 1 || balances.size !== 1) {
-    throw new Error(`既有成员的续费地址或余额不唯一（地址 ${owners.size} 个 / 余额 ${balances.size} 种）`
+  if (owners.size !== 1) {
+    throw new Error(`既有成员的续费地址不唯一（${owners.size} 个）`
       + ' —— 新成员该跟谁一致需要人来定，本工具不猜。');
   }
-  return { expectedPAddress: [...owners][0], balance: BigInt([...balances][0]) };
+
+  // 余额**不能**这样比。
+  //
+  // 第一版要求既有成员的**当前余额**也唯一，那是拿当前余额去代替"初始押金" ——
+  // 而当前余额必然分化：成员按各自加入的时长持续扣费。
+  // 注册 l1-6 那次五个创世成员同龄、余额相同，检查侥幸通过；
+  // **2026-09-17 第二次加入（把 l1-2 加回来）时它就永久触发了** ——
+  // 那时 l1-6 的余额与创世那批已经不同。
+  // 这是一个**只在"第二次加入"才会显形**的缺陷。
+  //
+  // 正确的不变量是「每个成员的**初始押金**相同」，而初始押金是**声明值**：
+  // 建链制品 chain-identity.bootstrapValidators[].balance（本仓库为 100000000）。
+  // 用它，每个成员的初始押金由构造保证相同 —— 那才是原检查想抓的东西。
+  // **先滤空再转字符串。** 反过来写会把 `null` 变成字符串 `"null"`（真值），
+  // 于是它通过过滤、一路走到 `BigInt("null")` 才抛 —— 报出来是
+  // `Cannot convert null to a BigInt`，看不出根因是"声明里有一项是空的"。
+  const declared = new Set(
+    (initialBalances ?? [])
+      .filter((b) => b !== null && b !== undefined && b !== '')
+      .map(String),
+  );
+  if (declared.size !== 1) {
+    throw new Error(`拿不到唯一的初始押金（声明里有 ${declared.size} 种取值）`
+      + ' —— 它来自建链制品的 bootstrapValidators[].balance。'
+      + ' 不唯一或缺失时不猜：新成员该存多少要人来定。');
+  }
+  return { expectedPAddress: [...owners][0], balance: BigInt([...declared][0]) };
 }
 
 /**
@@ -922,6 +1066,97 @@ export async function step3({
   return { ...plan, dryRun: false, txId: txID };
 }
 
+
+/**
+ * 读出**两个分母**：当前的 L1 集合权重，和 P 链**验证 warp 消息时实际用的**那个。
+ *
+ * ## 为什么它们会不一样
+ *
+ * 2026-09-17（T033）实测：退掉 l1-2 之后，
+ *
+ *   platform.getHeight               → 9
+ *   getValidatorsAt(9)  5 个 × 100  → 500   ← 当前集合
+ *   getValidatorsAt(8)  6 个 × 100  → 600   ← P 链验证时用的
+ *
+ * 而 P 链拒绝第三步的话是 `signature weight is insufficient: 67*600 > 100*400`。
+ * 也就是说**验证用的是"当前高度之前"那一格的集合** —— 它比成员变更落后一格。
+ *
+ * ## 后果：退成员之后，紧接着的那次加入门槛更高
+ *
+ * 退一个之后分母还是退之前的 600，而能出签名的只剩 5 个 × 100 = 500：
+ * 门槛 67% × 600 = 402，**必须五个全签**（4 个只有 400）——
+ * 也就是那一次加入**零容错**，任何一个节点的 P2P 签名不通就做不成。
+ *
+ * 推进一格 P 链（任何一笔 P 链交易）之后分母变成 500，门槛 335，4/5 就够。
+ * 见 nudgePChainHeight。
+ */
+export async function readVerificationWeights({ pchain, subnetId }) {
+  const totalAt = async (height) => {
+    const r = await pchain('platform.getValidatorsAt', { height, subnetID: subnetId });
+    const set = r?.validators ?? r ?? {};
+    let total = 0n;
+    let count = 0;
+    for (const k of Object.keys(set)) { total += BigInt(set[k].weight ?? set[k]); count += 1; }
+    return { total, count };
+  };
+  const { height } = await pchain('platform.getHeight', {});
+  const h = Number(height);
+  const now = await totalAt(h);
+  const verify = h > 0 ? await totalAt(h - 1) : now;
+  return {
+    height: h,
+    currentTotal: now.total,
+    currentCount: now.count,
+    verifyHeight: h > 0 ? h - 1 : h,
+    verifyTotal: verify.total,
+    verifyCount: verify.count,
+    lagging: verify.total !== now.total,
+  };
+}
+
+/**
+ * 把 P 链**推进一格** —— 一笔给自己的转账，只为了让上面那个落后一格的分母追上来。
+ *
+ * P 链**不会自己出块**：没有交易就没有新高度。所以"等一会儿"不管用，
+ * 必须真发一笔。这里用最无害的那种：`BaseTx`，把一点 AVAX 转给**自己**，
+ * 不碰任何成员、任何权益、任何合约。代价只有一笔手续费。
+ *
+ * **它写链。** 所以调用方必须先问过人 —— 与第三步同一条规矩。
+ */
+export async function nudgePChainHeight({
+  privateKeyHex, pchainUri, amount = 1_000_000n, dryRun = false,
+}) {
+  const { Context, pvm, utils, secp256k1, addTxSignatures, TransferableOutput } = await import('@avalabs/avalanchejs');
+  const priv = Buffer.from(privateKeyHex.replace(/^0x/, ''), 'hex');
+  const addrBytes = secp256k1.publicKeyBytesToAddress(secp256k1.getPublicKey(priv));
+  const api = new pvm.PVMApi(pchainUri);
+  const context = await Context.getContextFromURI(pchainUri);
+  // **这里没有 expectedPAddress，而这不是漏掉的。** 第三步要核对付款地址，
+  // 因为新成员的续费地址必须与既有成员一致 —— 那是一条外部期望，弄错要花钱收拾。
+  // 这一笔只是把 AVAX 转给**自己**：地址由我们手上的私钥导出，按构造就是对的，
+  // 没有可核对的期望值。带一个可空的参数反而会退回那条旧缺陷
+  //（忘了传就静默不检查）—— 所以这里干脆不收它。
+  const pAddress = utils.format('P', context.hrp, addrBytes);
+  const [feeState, utxoResp] = await Promise.all([
+    api.getFeeState(),
+    api.getUTXOs({ addresses: [pAddress] }),
+  ]);
+  const unsignedTx = pvm.newBaseTx({
+    feeState,
+    fromAddressesBytes: [addrBytes],
+    outputs: [TransferableOutput.fromNative(context.avaxAssetID, amount, [addrBytes])],
+    utxos: utxoResp.utxos,
+  }, context);
+  const inputs = unsignedTx.getInputUtxos()
+    .reduce((t, u) => t + BigInt(u.output.amount()), 0n);
+  const outputs = unsignedTx.getTx().baseTx.outputs
+    .reduce((t, o) => t + BigInt(o.output.amount()), 0n);
+  const plan = { pAddress, fee: inputs - outputs, amount, utxoCount: utxoResp.utxos.length };
+  if (dryRun) return { ...plan, dryRun: true, txId: null };
+  await addTxSignatures({ unsignedTx, privateKeys: [priv] });
+  const { txID } = await api.issueSignedTx(unsignedTx.getSignedTx());
+  return { ...plan, dryRun: false, txId: txID };
+}
 
 /**
  * subnet-evm 的 Warp 预编译地址。
@@ -1192,7 +1427,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     console.error(joined.length
       ? `声明里有 ${joined.length} 个 origin=joined 的成员，必须显式指定是哪一个：\n  `
         + joined.map((x) => x.identity.nodeId).join('\n  ')
-      : '声明里没有 origin=joined 的成员 —— 先在目标机器上生成材料并写进 deployment.json');
+      : '声明里没有 origin=joined 的成员。两种情形：\n'
+        + '  · 新机器 → 先在**那台机器上**跑 gen-node-keys.sh，把 identity 块写进 deployment.json\n'
+        + '  · 把一个**被退掉的创世验证者**加回来 → 用 --node-id 显式指定它，\n'
+        + '    它的公开材料在建链制品的 bootstrapValidators 里（见 publicMaterialFor）');
     process.exit(EXIT_PRECHECK);
   }
 
@@ -1229,6 +1467,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     subnetId: identity.subnetId,
     blockchainId: identity.blockchainId,
     genesisHash,
+    chainIdentity: identity,
   });
   for (const p of pre.problems) console.error(`  ✗ ${p}`);
   for (const dr of pre.otherDrifts) console.error(`  ⚠ 另有漂移 [${dr.kind}] ${dr.nodeId ?? ''}`);
@@ -1284,7 +1523,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
     let r;
     try {
-      r = await step1({ client, pchain, nodeId, config, subnetId: identity.subnetId, ownerAccount });
+      r = await step1({
+        client, pchain, nodeId, config, subnetId: identity.subnetId, ownerAccount,
+        chainIdentity: identity,
+      });
     } catch (err) {
       console.error(`\n✗ 第一步失败：${err.message}`);
       console.error('  链上没有留下中间态 —— 修好原因后直接重跑本命令即可。');
@@ -1352,13 +1594,100 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     //
     // 先干跑（构造 + 算费，不提交），把费用打出来再问一次 —— 「它会花钱」
     // 和「它会花多少」是两句不同的话，而只有后者能让人做判断。
-    const declared = joinedValidators(config.validators.nodes)
-      .find((v) => v.identity.nodeId === nodeId);
+    const material = publicMaterialFor({ nodeId, config, chainIdentity: identity });
+    if (!material) {
+      console.error(`拿不到 ${nodeId} 的公开材料 —— 前置检查本该拦下这种情况`);
+      process.exit(EXIT_PRECHECK);
+    }
     const accounts = readJson('blockchain/accounts/dev-accounts.json').accounts;
     const entry = accounts.find((a) => a.label === config.validators.ownerAccount);
     if (!entry) {
       console.error(`dev-accounts.json 里没有 label = ${config.validators.ownerAccount} 的账户`);
       process.exit(EXIT_PRECHECK);
+    }
+
+    // ── 门槛的分母**跟链学，而不是用 67 这个常量** ──────────────────────────
+    //
+    // P 链验证 warp 消息用的是「当前高度之前一格」的 L1 集合（见
+    // readVerificationWeights）。刚退过成员时那个集合更大，于是同一条消息
+    // 需要的签名权重更高 —— 而聚合器按**当前**集合折算百分比，
+    // 会在"够了"的地方收手，带着一条 P 链必然拒绝的消息走到花钱那一步。
+    //
+    // 所以在收签名**之前**就把分母问清楚，把折算后的百分比交给第二步。
+    let weights = await readVerificationWeights({ pchain, subnetId: identity.subnetId });
+    const perMember = weights.currentCount > 0 ? weights.currentTotal / BigInt(weights.currentCount) : 100n;
+    const needWeight = (total) => (BigInt(BASE_QUORUM_NUM) * total + 99n) / 100n;
+    const needSigners = (total) => Number((needWeight(total) + perMember - 1n) / perMember);
+    let quorumNum = weights.lagging
+      ? (quorumForChainTotal({
+        quorumNum: BASE_QUORUM_NUM, chainTotal: weights.verifyTotal, localTotal: weights.currentTotal,
+      }) ?? BASE_QUORUM_NUM)
+      : BASE_QUORUM_NUM;
+
+    if (weights.lagging) {
+      console.error('\n⚠ **P 链验证用的集合比当前集合落后一格**（这是刚退过成员的正常状态）：');
+      console.error(`  当前集合    高度 ${weights.height}：${weights.currentCount} 个，合计权重 ${weights.currentTotal}`);
+      console.error(`  验证用集合  高度 ${weights.verifyHeight}：${weights.verifyCount} 个，合计权重 ${weights.verifyTotal}`);
+      console.error(`  于是门槛是 ${BASE_QUORUM_NUM}% × ${weights.verifyTotal} = ${needWeight(weights.verifyTotal)}，`
+        + `要 ${needSigners(weights.verifyTotal)}/${weights.currentCount} 个签名`
+        + `（按当前集合折算 = ${quorumNum}%）。`);
+      if (needSigners(weights.verifyTotal) >= weights.currentCount) {
+        console.error(`\n  **这一次零容错** —— ${weights.currentCount} 个成员必须全部签名，`
+          + '任何一个的 P2P 签名不通就做不成。');
+        console.error(`  推进一格 P 链之后分母变成 ${weights.currentTotal}，`
+          + `只要 ${needSigners(weights.currentTotal)}/${weights.currentCount} 个。`);
+        console.error('  P 链**不会自己出块**（没有交易就没有新高度），所以"等一会儿"不管用。');
+        console.error('  本命令可以发一笔最无害的交易把它推一格：转一点 AVAX **给自己**，');
+        console.error('  不碰任何成员、权益与合约，代价只有一笔手续费。');
+
+        const nudgeArgs = {
+          privateKeyHex: entry.privateKey,
+          pchainUri: `http://${primary.address}:${primary.httpPort}`,
+        };
+        let nudgePlan;
+        try {
+          nudgePlan = await nudgePChainHeight({ ...nudgeArgs, dryRun: true });
+        } catch (err) {
+          console.error(`\n  （推进一格的构造失败：${err.message} —— 跳过，按零容错继续）`);
+          nudgePlan = null;
+        }
+        if (nudgePlan) {
+          console.error(`\n  干跑：付款 ${nudgePlan.pAddress}，手续费 ${nudgePlan.fee} nAVAX，`
+            + `转给自己 ${nudgePlan.amount} nAVAX（动用 ${nudgePlan.utxoCount} 个 UTXO）`);
+          if (autoYes || await ask('  **先把 P 链推进一格？**')) {
+            let nudged;
+            try {
+              nudged = await nudgePChainHeight(nudgeArgs);
+            } catch (err) {
+              console.error(`\n✗ 推进失败：${err.message}`);
+              console.error('  这一笔与注册无关，失败不会留下任何中间态 —— 可直接重跑。');
+              process.exit(EXIT_STEP_FAILED);
+            }
+            console.error(`  ✓ 交易 ${nudged.txId}，手续费 ${nudged.fee} nAVAX`);
+            // **等它真的进块** —— 高度没涨就等于没推进，而那时门槛照旧。
+            let after = weights;
+            for (let i = 0; i < 30 && after.height <= weights.height; i += 1) {
+              await new Promise((r) => setTimeout(r, 2_000));
+              // eslint-disable-next-line no-await-in-loop
+              after = await readVerificationWeights({ pchain, subnetId: identity.subnetId });
+            }
+            if (after.height <= weights.height) {
+              console.error('  ✗ 等了 60 秒 P 链高度没涨 —— 交易还没被接受。稍后重跑本命令。');
+              process.exit(EXIT_STEP_FAILED);
+            }
+            console.error(`  ✓ 高度 ${weights.height} → ${after.height}，`
+              + `验证分母 ${weights.verifyTotal} → ${after.verifyTotal}`
+              + `（当前集合 ${after.currentTotal}）`);
+            weights = after;
+            quorumNum = after.lagging
+              ? (quorumForChainTotal({
+                quorumNum: BASE_QUORUM_NUM, chainTotal: after.verifyTotal, localTotal: after.currentTotal,
+              }) ?? BASE_QUORUM_NUM)
+              : BASE_QUORUM_NUM;
+            console.error(`  ✓ 门槛降到 ${quorumNum}%，要 ${needSigners(after.verifyTotal)}/${after.currentCount} 个签名`);
+          }
+        }
+      }
     }
 
     const set = await readMemberSet({ client });
@@ -1368,6 +1697,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
         config, identity, messageID: progress.registrationMessageID,
         registeredCount: set.members.length,
         members: memberCandidates({ config, memberSet: set }),
+        quorumNum,
       });
     } catch (err) {
       console.error(`\n✗ 第三步需要第二步的聚合签名，而它失败了：${err.message}`);
@@ -1376,9 +1706,12 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
     // 既有成员的续费地址 —— 新成员必须跟它一致（见 step3 里那条断言）
     const onP = await pchain('platform.getCurrentValidators', { subnetID: identity.subnetId });
+    const localTotalWeight = weights.currentTotal;
     let expectedPAddress; let balance;
     try {
-      ({ expectedPAddress, balance } = payerExpectation(onP.validators));
+      ({ expectedPAddress, balance } = payerExpectation(onP.validators, {
+        initialBalances: (identity.bootstrapValidators ?? []).map((v) => v.balance),
+      }));
     } catch (err) {
       console.error(`\n✗ ${err.message}`);
       process.exit(EXIT_PRECHECK);
@@ -1386,7 +1719,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
     const args = {
       config, identity, signedMessage: s2.signedMessage,
-      blsSignature: declared.identity.proofOfPossession,
+      blsSignature: material.proofOfPossession,
       privateKeyHex: entry.privateKey,
       balance, expectedPAddress,
       pchainUri: `http://${primary.address}:${primary.httpPort}`,
@@ -1423,10 +1756,67 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     try {
       r = await step3(args);
     } catch (err) {
-      console.error(`\n✗ 第三步失败：${err.message}`);
-      console.error('  若失败发生在**提交**阶段，去 P 链核一下这个 nodeID 有没有被收录：');
-      console.error('  再跑一次本命令，它会从链上读出真实进度。');
-      process.exit(EXIT_STEP_FAILED);
+      // ── P 链与聚合器用了**不同的分母** —— 自纠正一次（T033 实施期）──────────
+      //
+      // 这不是罕见情形：刚退过一个成员的链正处在这种状态里。报错长这样
+      //
+      //   signature weight is insufficient: 67*600 > 100*400
+      //
+      // 而上面那行干跑刚说过「签名者 4/5（80%，门槛 67%）」。**两句都对**：
+      // 聚合器按当前 5 个成员（本地总权重 500）算，P 链按它回看的那个高度上的
+      // 6 个成员（600）算。4 个签名 = 400，够 80% 但不够 402。
+      //
+      // 修法是**从链的报错里读出它的分母**，据此折算出该向聚合器要多少，
+      // 再重聚合、重提交。不猜一个更高的门槛 —— 猜出来的数下次就不对了。
+      const insuf = parseInsufficientWeight(err.message);
+      const needed = insuf
+        ? quorumForChainTotal({ quorumNum: insuf.quorumNum, chainTotal: insuf.total, localTotal: localTotalWeight })
+        : null;
+      if (!insuf || needed === null || needed <= s2.quorum.quorumNum) {
+        console.error(`\n✗ 第三步失败：${err.message}`);
+        if (insuf) {
+          console.error(`  链用的分母是 ${insuf.total}，而本地集合总权重是 ${localTotalWeight}，`);
+          console.error(`  折算下来需要 ${needed}% —— 提不上去（已经是 ${s2.quorum.quorumNum}%），`);
+          console.error('  说明**再多收签名也不够**：本地能出的签名上限低于链的门槛。');
+        }
+        console.error('  若失败发生在**提交**阶段，去 P 链核一下这个 nodeID 有没有被收录：');
+        console.error('  再跑一次本命令，它会从链上读出真实进度。');
+        process.exit(EXIT_STEP_FAILED);
+      }
+
+      // 这次提交**被 P 链在验证阶段拒了 —— 没有进块，一分钱没花**。
+      // （若是进块之后才失败，报错不会是 "failed verifying warp messages"。）
+      console.error(`\n⚠ P 链拒了这条消息：签名权重 ${insuf.got} 不足 ——`);
+      console.error(`  它按总权重 ${insuf.total} 的 ${insuf.quorumNum}% = `
+        + `${(insuf.quorumNum * Number(insuf.total) + 99) / 100 | 0} 判，`);
+      console.error(`  而聚合器按本地总权重 ${localTotalWeight} 算，${s2.quorum.percent}% 就收手了。`);
+      console.error('  **这笔交易没有进块，没有花钱。** 按链的分母重新折算门槛后重试一次：');
+      console.error(`  ${insuf.quorumNum}% × ${insuf.total} ÷ ${localTotalWeight} → 要 ${needed}%`);
+
+      let s2b;
+      try {
+        s2b = await step2({
+          config, identity, messageID: progress.registrationMessageID,
+          registeredCount: set.members.length,
+          members: memberCandidates({ config, memberSet: set }),
+          quorumNum: needed,
+        });
+      } catch (e2) {
+        console.error(`\n✗ 按 ${needed}% 重新聚合失败：${e2.message}`);
+        console.error('  本地集合凑不出链要求的权重 —— 先把没签的那些节点弄回在线。');
+        process.exit(EXIT_STEP_FAILED);
+      }
+      console.error(`  重新聚合：签名者 ${s2b.signers}/${s2b.quorum.registeredCount}`
+        + `（${s2b.quorum.percent}%，门槛 ${s2b.quorum.quorumNum}%）`);
+      if (s2b.signedBy) console.error(`  没签        ${s2b.missing.join('  ') || '无（全员签名）'}`);
+
+      try {
+        r = await step3({ ...args, signedMessage: s2b.signedMessage });
+      } catch (e3) {
+        console.error(`\n✗ 重试后第三步仍然失败：${e3.message}`);
+        console.error('  再跑一次本命令，它会从链上读出真实进度。');
+        process.exit(EXIT_STEP_FAILED);
+      }
     }
 
     console.error('\n✅ 第三步完成');

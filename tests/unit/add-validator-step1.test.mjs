@@ -19,7 +19,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { loadProtocol } from '../../tools/protocol/load.mjs';
+import { resolve } from 'node:path';
+import { loadProtocol, readJson, REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { cb58Encode, nodeIdToBytes, joinedValidators } from '../../tools/verify/lib/identity.mjs';
 import { step1Inputs, step1 } from '../../tools/membership/add-validator.mjs';
 
@@ -120,14 +121,34 @@ describe('**取不出一致答案时停下来**，不挑一个值继续', () => 
       '空集合时继续下去，权重与 owner 都只能凭空造 —— 那不是"加成员"，是在猜链的配置');
   });
 
-  test('声明里没有这个 nodeID → 抛', async () => {
+  // 措辞随 T033 改过：公开材料现在有**两个**来源（声明里 origin=joined 的，
+  // 以及创世那批的 bootstrapValidators），所以错误话术从"声明里没有"
+  // 变成"两个来源都没有"。**行为没变** —— 拿不到材料就抛。
+  test('两个来源都没有这个 nodeID → 抛', async () => {
     await assert.rejects(
       () => step1Inputs({
         client: null, pchain: fakePchain(fiveEqual()),
         nodeId: 'NodeID-111111111111111111116DBWJs', config: CONFIG, subnetId: 'x',
+        chainIdentity: { bootstrapValidators: [] },
       }),
-      /声明里没有/,
-      '不在声明里的 nodeID 被接受了 —— 那就绕过了 schema 与 CB58 校验和那两道关');
+      /拿不到.*公开材料/,
+      '拿不到公开材料的 nodeID 被接受了 —— 那就绕过了 schema 与 CB58 校验和那两道关');
+  });
+
+  test('创世那批**不在声明的 identity 块里**，但材料取自建链制品 → 不抛', async () => {
+    // 这一条是 T033 实施期补的：把一个被退掉的**创世**验证者加回来时走这条路。
+    // 少了它，"加入流程只认一个来源"这个缺陷会原样回来 ——
+    // 而它的表现是建议你去 gen-node-keys.sh 重新生成材料，
+    // **那会给那台机器换一个新身份**，不是"加回来"。
+    const boot = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
+    const genesisNode = boot.bootstrapValidators[0];
+    const out = await step1Inputs({
+      client: null, pchain: fakePchain(fiveEqual()),
+      nodeId: genesisNode.nodeId, config: CONFIG, subnetId: 'x',
+      chainIdentity: boot,
+    });
+    assert.equal(out.blsPublicKey, genesisNode.blsPublicKey,
+      'BLS 公钥应当取自建链制品里那一条 —— 它是那台机器的真身份');
   });
 });
 

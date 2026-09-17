@@ -44,9 +44,12 @@ const member = (addr, balance) => ({
 });
 
 describe('payerExpectation：新成员跟既有成员一致，不唯一时不猜', () => {
-  test('五个同质成员 → 取出那唯一的地址与余额', () => {
+  /** 声明的初始押金 —— 建链制品 bootstrapValidators[].balance，本仓库五个都是同一个值。 */
+  const declaredInitial = [REAL.balance, REAL.balance, REAL.balance, REAL.balance, REAL.balance];
+
+  test('五个同质成员 → 取出那唯一的地址，余额取**声明的初始押金**', () => {
     const vs = Array.from({ length: 5 }, () => member(REAL.pAddress, REAL.balance));
-    const got = payerExpectation(vs);
+    const got = payerExpectation(vs, { initialBalances: declaredInitial });
     assert.equal(got.expectedPAddress, REAL.pAddress);
     assert.equal(got.balance, REAL.balance);
     assert.equal(typeof got.balance, 'bigint',
@@ -56,15 +59,46 @@ describe('payerExpectation：新成员跟既有成员一致，不唯一时不猜
 
   test('**续费地址分叉 → 抛**（该跟谁一致要人来定）', () => {
     const vs = [member(REAL.pAddress, REAL.balance), member('P-custom1elseelseelse', REAL.balance)];
-    assert.throws(() => payerExpectation(vs), /不唯一/,
+    assert.throws(() => payerExpectation(vs, { initialBalances: declaredInitial }), /不唯一/,
       '两个不同的续费地址被放行了 —— 工具会替人挑一个，'
       + '而挑错的后果是新成员的续费地址与一部分既有成员分叉，且不会报错');
   });
 
-  test('**余额分叉 → 抛**', () => {
-    const vs = [member(REAL.pAddress, REAL.balance), member(REAL.pAddress, REAL.balance * 2n)];
-    assert.throws(() => payerExpectation(vs), /不唯一/,
-      '两种不同的余额被放行了 —— 新成员的续费节奏会与既有的不同，几个月后才暴露');
+  // ## 这条判据换过一次（2026-09-17 / T033 实施期）
+  //
+  // 原先要求既有成员的**当前余额**也唯一。那是拿当前余额去代替"初始押金" ——
+  // 而当前余额**必然分化**：成员按各自加入的时长持续扣费。
+  //
+  // 注册 l1-6 那次五个创世成员同龄、余额相同，检查侥幸通过；
+  // 第二次加入（把 l1-2 加回来）时它就**永久触发**了 —— 那时 l1-6 的余额
+  // 与创世那批已经不同。**一个只在"第二次加入"才显形的缺陷。**
+  //
+  // 正确的不变量是「每个成员的**初始押金**相同」，而初始押金是**声明值**。
+  test('既有成员的当前余额分化 → **不再抛**（它们必然分化）', () => {
+    const vs = [member(REAL.pAddress, REAL.balance), member(REAL.pAddress, REAL.balance - 415n)];
+    const got = payerExpectation(vs, { initialBalances: declaredInitial });
+    assert.equal(got.balance, REAL.balance,
+      '余额应当取声明的初始押金，而不是从当前余额里挑一个 —— '
+      + '当前余额随时长衰减，拿它当押金会让新成员的起点跟着"谁先加入"漂移');
+  });
+
+  test('**声明的初始押金不唯一 → 抛**（这才是该抓的那个不变量）', () => {
+    const vs = Array.from({ length: 5 }, () => member(REAL.pAddress, REAL.balance));
+    assert.throws(
+      () => payerExpectation(vs, { initialBalances: [REAL.balance, REAL.balance * 2n] }),
+      /初始押金/,
+      '两种声明的初始押金被放行了 —— 那说明建链制品本身不同质，'
+      + '新成员该存多少必须由人来定');
+  });
+
+  test('**拿不到初始押金 → 抛**，不回落到当前余额', () => {
+    // 回落会把刚修掉的那个缺陷从后门放回来：一旦声明读不到，
+    // 它又会去拿当前余额，而那个值是错的。
+    const vs = Array.from({ length: 5 }, () => member(REAL.pAddress, REAL.balance));
+    for (const missing of [undefined, [], [null]]) {
+      assert.throws(() => payerExpectation(vs, { initialBalances: missing }), /初始押金/,
+        `initialBalances=${JSON.stringify(missing)} 时没抛 —— 缺失必须停下来，不许回落`);
+    }
   });
 
   test('**一个成员都没有 → 抛**（推不出该用什么）', () => {
@@ -79,7 +113,10 @@ describe('payerExpectation：新成员跟既有成员一致，不唯一时不猜
     // 这一条是**边界说明**而不是纵容：缺字段的成员贡献不出地址，
     // 于是集合里仍只有一个 —— 判定按"出现过的地址"算，不按"成员数"算。
     const vs = [member(REAL.pAddress, REAL.balance), { balance: String(REAL.balance) }];
-    assert.equal(payerExpectation(vs).expectedPAddress, REAL.pAddress);
+    assert.equal(
+      payerExpectation(vs, { initialBalances: declaredInitial }).expectedPAddress,
+      REAL.pAddress,
+    );
   });
 });
 

@@ -82,6 +82,10 @@ const run = ({ config, fetchImpl }) => precheck({
   subnetId: IDENTITY.subnetId,
   blockchainId: BLOCKCHAIN_ID,
   genesisHash: GENESIS_HASH,
+  // 公开材料的第二个来源（创世那批的 bootstrapValidators）——
+  // 少了它，"把退掉的创世成员加回来"会被误报成"声明里没有这一项"，
+  // 所以 precheck 对它缺失直接抛（与 subnetId 同一条规矩）。
+  chainIdentity: IDENTITY,
   fetchImpl,
 });
 
@@ -145,7 +149,7 @@ describe('FR-014：新节点跑在另一条链上 → 拦下', () => {
     await assert.rejects(
       () => precheck({
         client: emptyClient, pchain: noPChain, nodeId: target(config), config,
-        subnetId: 'x', genesisHash: GENESIS_HASH, fetchImpl: fakeFetch(),
+        subnetId: 'x', genesisHash: GENESIS_HASH, chainIdentity: IDENTITY, fetchImpl: fakeFetch(),
       }),
       /blockchainId/,
       '少了 blockchainId 时必须抛 —— subnetId 那次就是被 try 吞掉、检查静默消失',
