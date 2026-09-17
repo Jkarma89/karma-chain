@@ -37,7 +37,6 @@ import { createPublicClient, createWalletClient, http, keccak256, toHex, decodeE
 import { privateKeyToAccount } from 'viem/accounts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { createInterface } from 'node:readline/promises';
 import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
 import {
   identityOf, joinedValidators, nodeIdToBytes, cb58Encode,
@@ -53,6 +52,7 @@ import { toleranceChange, toleranceAfterAdd } from './tolerance.mjs';
 // 各挑各的号会让"退出码 12"在一处是"节点数据不属于这条链"、在另一处是"P 链交易失败"。
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { ask } from './ask.mjs';
 
 /** 链上成员的状态码：2 = Active（research V-24 实测确认）。 */
 const STATUS_ACTIVE = 2;
@@ -1169,15 +1169,10 @@ export async function step4({
 
 // ── 以下是命令行部分 ────────────────────────────────────────────────────────
 
-const ask = async (question) => {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const a = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
-    return a === 'y' || a === 'yes';
-  } finally {
-    rl.close();
-  }
-};
+// ask() 在 ./ask.mjs —— 加入与退出共用一份。
+// 抽出去的理由不是"少几行"：原先两份拷贝都有同一个只在非交互环境显形的缺陷
+// （stdin 关闭时 rl.question() 永不落定 → Node 以 13 退出，而 13 是本仓库
+// 保留给「拓扑违反容错约束」的码）。两份拷贝会各自漂移。
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
   const args = process.argv.slice(2);

@@ -47,7 +47,6 @@ import { createPublicClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { createInterface } from 'node:readline/promises';
 import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
 import { identityOf, cb58Decode } from '../verify/lib/identity.mjs';
 import {
@@ -66,6 +65,7 @@ import {
 // 而 11 / 12 在本仓库另有含义（端口冲突、数据与声明不一致）。
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { ask } from './ask.mjs';
 
 /**
  * 从链上观测退出进度。**不读任何状态文件。**
@@ -519,15 +519,10 @@ export async function step4Remove({
 
 // ── 命令行 ──────────────────────────────────────────────────────────────────
 
-const ask = async (question) => {
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    const a = (await rl.question(`${question} [y/N] `)).trim().toLowerCase();
-    return a === 'y' || a === 'yes';
-  } finally {
-    rl.close();
-  }
-};
+// ask() 在 ./ask.mjs —— 加入与退出共用一份。
+// 抽出去的理由不是"少几行"：原先两份拷贝都有同一个只在非交互环境显形的缺陷
+// （stdin 关闭时 rl.question() 永不落定 → Node 以 13 退出，而 13 是本仓库
+// 保留给「拓扑违反容错约束」的码）。两份拷贝会各自漂移。
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
   const args = process.argv.slice(2);
