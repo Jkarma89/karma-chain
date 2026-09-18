@@ -14,10 +14,12 @@
 // 拿回来一个退出码 13。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { Readable, Writable } from 'node:stream';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { ask } from '../../tools/membership/ask.mjs';
 
 /** 立刻结束的输入流 —— 等价于 `< /dev/null`。 */
@@ -89,5 +91,66 @@ describe('两个工具都用这一份，没有谁自己再写一个', () => {
     assert.match(text, /once\('close'/,
       'EOF 的处理靠的是与 close 事件赛跑 —— 这一句没了，上面那两条会在一个'
       + '永远挂起的函数上超时，而超时读起来像"测试环境慢"');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// **连着问几问**（2026-09-17 T033 实测撞到的第二个缺陷）。
+//
+// 上面那些用例都注入了自己的 input/output，所以走不到真正出事的那条路：
+// 默认的 `process.stdin`。旧实现每次调用新建 readline 并在 finally 里 close()，
+// 而 close() 把底层 stdin 一起收掉 —— **只有第一问能被回答**，
+// 后面每一问都立刻走 EOF 分支被当成「否」。
+//
+// 走第三步时要连着答两问（推进 P 链、提交交易），于是第二问从来没被听见。
+// 缺陷的形状很坏：**默认否让它看起来像一次正常的拒绝**。
+//
+// 所以这一组**必须起子进程**：注入流测不到 process.stdin 的生命周期。
+// 一条测不到真实路径的用例，守的是另一件事。
+describe('连着问几问：每一问都要真的被听见（默认 process.stdin 路径）', () => {
+  const LF = String.fromCharCode(10);
+
+  // 子进程里问 n 问，把每一问的答案按逗号打到 stdout。
+  const askInChild = (answersText, questionCount) => {
+    const url = pathToFileURL(resolve(REPO_ROOT, "tools/membership/ask.mjs")).href;
+    const script = [
+      `const { ask } = await import(${JSON.stringify(url)});`,
+      `const out = [];`,
+      `for (let i = 0; i < ${questionCount}; i += 1) out.push(await ask("第 " + (i + 1) + " 问"));`,
+      `process.stdout.write(out.join(","));`,
+      `process.exit(0);`,
+    ].join(LF);
+    return execFileSync(process.execPath, ["--input-type=module", "-e", script], {
+      input: answersText, encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 30_000,
+    });
+  };
+
+  test("n / y / n 三问，答案必须是 false,true,false", () => {
+    // **刻意把第一问设成 n**：若第一问答 y，旧实现的"后面全按否"会与
+    // 正确答案 y,n,n 的后两项巧合相同 —— 那样这条用例就抓不住缺陷。
+    // 中间那一问必须是 y，它是唯一能区分"听见了"与"按否兜底"的位置。
+    const out = askInChild(["n", "y", "n", ""].join(LF), 3);
+    assert.equal(out, "false,true,false",
+      "第二问没有被听见 —— 旧实现在第一问之后 close() 了 readline，"
+      + "连底层 stdin 一起收掉，于是后面每一问都按 EOF 当成否。"
+      + `实际拿到：${out}`);
+  });
+
+  test("连着三个 y 都要是 true（不是只有第一个）", () => {
+    const out = askInChild(["y", "y", "y", ""].join(LF), 3);
+    assert.equal(out, "true,true,true", `实际拿到：${out}`);
+  });
+
+  test("答案用完之后的那一问按否，且**不挂住**（不能以 13 退出）", () => {
+    // 只喂一个答案却问三次：后两问是真 EOF。
+    // 要点是它必须**立刻**回答否并正常退出 —— 旧缺陷里"永不落定"的那条路
+    // 会让 Node 以 13 退出，而 13 是保留给「拓扑违反容错约束」的。
+    const out = askInChild(`y${LF}`, 3);
+    assert.equal(out, "true,false,false", `实际拿到：${out}`);
+  });
+
+  test("完全没有输入时三问全否", () => {
+    const out = askInChild("", 3);
+    assert.equal(out, "false,false,false", `实际拿到：${out}`);
   });
 });
