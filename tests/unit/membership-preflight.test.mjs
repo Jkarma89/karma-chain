@@ -18,6 +18,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProtocol, deriveTopology, readJson, REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { precheck } from '../../tools/membership/add-validator.mjs';
+import { encodeEventTopics, encodeAbiParameters, keccak256, toHex } from 'viem';
+import { VALIDATOR_MANAGER_ABI } from '../../tools/membership/member-set.mjs';
+import { nodeIdToBytes } from '../../tools/verify/lib/identity.mjs';
 
 // 这三个值一律**从事实来源读**，不在测试里抄一份 ——
 // 抄下来的那份会在换链之后变成一个悄悄失效的用例（SC-007 的守卫也不允许）。
@@ -74,7 +77,7 @@ function fakeFetch({ offline = [], genesis } = {}) {
   };
 }
 
-const run = ({ config, fetchImpl }) => precheck({
+const run = ({ config, fetchImpl, ...over }) => precheck({
   client: emptyClient,
   pchain: noPChain,
   nodeId: target(config),
@@ -87,6 +90,8 @@ const run = ({ config, fetchImpl }) => precheck({
   // 所以 precheck 对它缺失直接抛（与 subnetId 同一条规矩）。
   chainIdentity: IDENTITY,
   fetchImpl,
+  // 放在最后：让用例能**只**换掉一样东西（三组新用例各只翻一个开关）
+  ...over,
 });
 
 describe('基线：不动任何东西时前置检查通过（否则下面三组全部恒真）', () => {
@@ -165,5 +170,99 @@ describe('FR-015：恢复能力不可用（Primary 不全在线）→ 拦下', (
     assert.equal(pre.ok, false, 'Primary 不全在线必须拦下（FR-015）');
     assert.ok(pre.problems.some((p) => p.includes(primary.id) && /两个都必须在线/.test(p)),
       `拦下了，但没指名是哪个 Primary：\n  ${pre.problems.join('\n  ')}`);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 下面三组是 **T032 扫出来的覆盖缺口**（2026-09-17）。
+//
+// T032 的做法是逐条拿掉 precheck 里的一条判定，看对应用例是否变红。
+// FR-013 / FR-014（三个分支）/ FR-015 全都如期变红 —— 而另外三条判定
+// **拿掉之后一条测试都不红**：
+//
+//   公开材料拿不到          → 会去注册一个没有 BLS 公钥的成员
+//   precheck 缺 chainIdentity → 第二个材料来源静默消失（和当初漏 subnetId 同形）
+//   已经是链上成员          → 重复注册
+//
+// 三条都在 precheck 里真实存在、也都有注释说明为什么必须有 —— 但**没人验过**
+// 它们会不会变红。一条不会变红的守卫比没有守卫更坏，因为它让人以为守住了。
+// 所以 T032 的产出不只是"三条如期变红"，还包括这三组补齐的用例。
+
+describe('公开材料拿不到 → 拦下，且理由指向材料', () => {
+  test('两个来源都没有这个 nodeID 时，problems 里必须有"拿不到公开材料"那一条', async () => {
+    // **只断 pre.ok === false 是不够的**：一个不在拓扑里的 nodeID 本来就会因为
+    // "拓扑里找不到"而被拦。拿掉材料那条判定之后 pre.ok 照旧 false，
+    // 于是那种断言恒真。必须断**理由**。
+    const pre = await run({
+      config: loadProtocol(),
+      fetchImpl: fakeFetch(),
+      nodeId: 'NodeID-111111111111111111116DBWJs',
+      chainIdentity: { ...IDENTITY, bootstrapValidators: [] },
+    });
+    assert.equal(pre.ok, false);
+    assert.ok(pre.problems.some((x) => x.includes('拿不到') && x.includes('公开材料')),
+      '没有报出"拿不到公开材料" —— 那就会去注册一个没有 BLS 公钥的成员：'
+      + '链上多一个永远出不了有效签名的名字，而容错判据把它算成"该在线但掉了"。'
+      + `\n  实际报的是：\n  ${pre.problems.join('\n  ')}`);
+  });
+
+  test('反向：材料拿得到时不报这一条（不许恒报）', async () => {
+    const pre = await run({ config: loadProtocol(), fetchImpl: fakeFetch() });
+    assert.ok(!pre.problems.some((x) => x.includes('拿不到') && x.includes('公开材料')),
+      '基线也报"拿不到公开材料" —— 恒定非空的告警等于没有告警');
+  });
+});
+
+describe('precheck 缺 chainIdentity → **直接抛**，不静默少一个来源', () => {
+  test('不给 chainIdentity 时抛，并说明少了什么', async () => {
+    // 与当初漏 subnetId 是同一种事故：函数体里引用一个没传的东西，
+    // 后果不是报错而是**少了一整个来源**，而前置检查照样说"全部通过"。
+    await assert.rejects(
+      () => run({ config: loadProtocol(), fetchImpl: fakeFetch(), chainIdentity: undefined }),
+      /chainIdentity/,
+      '缺 chainIdentity 时没抛 —— 于是创世那批验证者的公开材料来源静默消失，'
+      + '"把退掉的创世成员加回来"会被误报成"声明里没有这一项"，'
+      + '而那条错误建议让人去重新生成密钥 —— 那会给那台机器换一个新身份。',
+    );
+  });
+});
+
+describe('已经是链上成员 → 拦下（不重复注册）', () => {
+  // 链上已有这个 nodeID 的"创世成员"事件。走的是同一份 ABI（合成端与解析端
+  // 一起错的情况由 validator-manager-abi.test.mjs 对着创世字节码挡着）。
+  const memberClient = (nodeId) => {
+    const ev = VALIDATOR_MANAGER_ABI.find((x) => x.type === 'event' && x.name === 'RegisteredInitialValidator');
+    assert.ok(ev, 'ABI 里没有 RegisteredInitialValidator');
+    const nonIndexed = ev.inputs.filter((i) => !i.indexed);
+    const args = {
+      validationID: keccak256(toHex('vid:already-a-member')),
+      nodeID: toHex(nodeIdToBytes(nodeId)),
+      weight: 100n,
+    };
+    const log = {
+      topics: encodeEventTopics({ abi: VALIDATOR_MANAGER_ABI, eventName: 'RegisteredInitialValidator', args }),
+      data: nonIndexed.length
+        ? encodeAbiParameters(nonIndexed, nonIndexed.map((i) => args[i.name]))
+        : '0x',
+      blockNumber: 4n,
+    };
+    return { getBlockNumber: async () => 1000n, getLogs: async () => [log] };
+  };
+
+  test('链上已有这个 nodeID 时拦下，理由是"已经是链上成员"', async () => {
+    const config = loadProtocol();
+    const nodeId = target(config);
+    const pre = await run({ config, fetchImpl: fakeFetch(), client: memberClient(nodeId) });
+    assert.equal(pre.ok, false);
+    assert.ok(pre.problems.some((x) => x.includes('已经是链上成员')),
+      '没有拦下重复注册 —— 第一步会再发一次 initiateValidatorRegistration，'
+      + '而合约那边要么 revert（要去读 trace 才知道为什么），'
+      + `要么造出第二个 validationID。\n  实际报的是：\n  ${pre.problems.join('\n  ')}`);
+  });
+
+  test('反向：链上没有它时不报这一条', async () => {
+    const pre = await run({ config: loadProtocol(), fetchImpl: fakeFetch() });
+    assert.ok(!pre.problems.some((x) => x.includes('已经是链上成员')),
+      '链上没有它却说"已经是成员" —— 那样加入流程永远开始不了');
   });
 });
