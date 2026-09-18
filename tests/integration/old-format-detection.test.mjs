@@ -25,6 +25,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, copyFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { findPosixShell, toPosixPath, skipReasonFor } from '../../tools/test/posix-shell.mjs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
@@ -52,16 +53,27 @@ const makeTree = ({ deployment, topologyInProtocol }) => {
   return dir;
 };
 
-const run = (dir) => spawnSync('bash', [join(dir, 'scripts', 'devnet-start.sh')], {
+// 这几条要真跑 `scripts/devnet-start.sh`，所以需要一个**看得见本仓库**的 POSIX shell。
+//
+// 2026-09-18：它们在 Windows 上一直是红的（127 / 空 stderr），而 DoD 里写的是
+// "125 通过"。根因不是路径转义 —— 我第一次那么归因，撤掉路径改动后照样 12/12 通过，
+// 说明猜错了。真因是**从 PowerShell 启动时 `bash` 是 WSL 的启动器**，
+// 它看到的是另一套文件系统。详见 tools/test/posix-shell.mjs 的文件头。
+//
+// 找不到合适的 shell 时**带理由跳过**，不以 127 收场 ——
+// 一个说不出原因的失败会被当成噪声。
+const SHELL = findPosixShell();
+
+const run = (dir) => spawnSync(SHELL.cmd, [toPosixPath(join(dir, 'scripts', 'devnet-start.sh'))], {
   encoding: 'utf8',
-  env: { ...process.env, KARMACHAIN_ENV_FILE: join(dir, 'docker', 'compose', 'active.env') },
+  env: { ...process.env, KARMACHAIN_ENV_FILE: toPosixPath(join(dir, 'docker', 'compose', 'active.env')) },
   timeout: 30_000,
 });
 
 before(() => { root = []; });
 after(() => { for (const d of root ?? []) rmSync(d, { recursive: true, force: true }); });
 
-describe('devnet-start.sh 对两种"旧格式"各给一句能照做的话', () => {
+describe('devnet-start.sh 对两种"旧格式"各给一句能照做的话', { skip: skipReasonFor(SHELL) }, () => {
   test('① 缺 deployment.json → 退出 10，并说清是**这台机器**的仓库旧了', () => {
     const dir = makeTree({ deployment: false, topologyInProtocol: false });
     root.push(dir);

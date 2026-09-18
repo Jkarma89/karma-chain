@@ -11,6 +11,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { findPosixShell, toPosixPath, skipReasonFor } from '../../tools/test/posix-shell.mjs';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -56,14 +57,17 @@ function stageEnv() {
   return file;
 }
 
+// 见 tools/test/posix-shell.mjs：Windows 上 `sh` 可能不在 PATH 里、
+// `bash` 可能是 WSL 的启动器 —— 两种都会让这几条永久红而不是报出原因。
+const SHELL = findPosixShell();
 /** 跑一次 devnet-start.sh，返回退出码与合并输出。 */
 function runStart(domain, envFile) {
   try {
-    const stdout = execFileSync('sh', ['scripts/devnet-start.sh'], {
+    const stdout = execFileSync(SHELL.cmd, ['scripts/devnet-start.sh'], {
       cwd: REPO_ROOT,
       encoding: 'utf8',
       timeout: 60_000,
-      env: { ...process.env, KARMACHAIN_ENV_FILE: envFile, KARMACHAIN_DOMAIN: domain },
+      env: { ...process.env, KARMACHAIN_ENV_FILE: toPosixPath(envFile), KARMACHAIN_DOMAIN: domain },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { code: 0, out: stdout };
@@ -73,7 +77,8 @@ function runStart(domain, envFile) {
 }
 
 describe('V-07 public-ip 与本机地址不符时明确失败（T062）', {
-  skip: lanName ? undefined : '唯一事实来源中没有多边界部署形态',
+  // 两个跳过条件：没有多边界形态（本来就有），以及没有可用的 POSIX shell（新加）。
+  skip: (lanName ? undefined : '唯一事实来源中没有多边界部署形态') ?? skipReasonFor(SHELL),
 }, () => {
   const envFile = lanName ? stageEnv() : null;
 

@@ -42,6 +42,18 @@ const child = spawn(process.execPath, ['--test', ...args], {
 
 /** 列首的 `not ok` = 一个套件或顶层测试失败。缩进的那些是子测试，由退出码覆盖。 */
 const silent = [];
+/**
+ * 被跳过的套件与测试。**不当失败，但必须列出来。**
+ *
+ * 2026-09-18 的教训：两个集成套件在 Windows 上一直是红的（127 / 空 stderr），
+ * 而 DoD 里写着"125 通过" —— 没人知道它们红了多久。修好之后它们会在缺少
+ * POSIX shell 的机器上转为**跳过**，而跳过同样会从总数里消失：
+ * node 对 `describe(…, {skip})` 报的是 `ok N - … # SKIP`，`# skipped` 仍是 0。
+ *
+ * 本文件头写的是"不放过被静默跳过的套件" —— 那句话此前只覆盖了
+ * `not ok` 却退出 0 那一种。跳过是另一种"断言消失"，一并列出来。
+ */
+const skipped = [];
 let carry = '';
 
 child.stdout.on('data', (chunk) => {
@@ -52,11 +64,21 @@ child.stdout.on('data', (chunk) => {
   for (const line of lines) {
     // `not ok N - 名字` 且**无前导空白**。TODO 标记的那些不算失败。
     if (/^not ok \d+ - /.test(line) && !/# TODO\b/.test(line)) silent.push(line);
+    if (/^ok \d+ - .*# SKIP/.test(line)) skipped.push(line.trim());
   }
 });
 
 child.on('close', (code) => {
   if (carry && /^not ok \d+ - /.test(carry) && !/# TODO\b/.test(carry)) silent.push(carry);
+  if (carry && /^ok \d+ - .*# SKIP/.test(carry)) skipped.push(carry.trim());
+
+  // 跳过**不是失败**，但要让人看见：一次跳过等于那些断言这轮没有执行。
+  // 放在失败判定之前打印 —— 失败时它照样该被看到。
+  if (skipped.length) {
+    console.error('');
+    console.error(`run-tests: 有 ${skipped.length} 个套件/测试被**跳过** —— 它们的断言这一轮没有执行：`);
+    for (const line of skipped) console.error(`  ${line}`);
+  }
 
   if (!silent.length) process.exit(code ?? 1);
 
