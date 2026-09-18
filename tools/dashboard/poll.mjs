@@ -163,6 +163,11 @@ export async function pollOnce({ nodes, blockchainId, prev = {}, intervalSeconds
   const heights = probes.map((p) => p.height).filter((h) => Number.isFinite(h));
   const networkHeight = heights.length ? Math.max(...heights) : null;
   const seenByPeers = new Set(probes.flatMap((p) => p.peerNodeIds ?? []));
+  // 见 classify 里那段：算"这个节点连上了几个成员"。**不请求 /ext/health** ——
+  // 面板那四条边界一条没动，这里用的是已经探到的 peer 列表。
+  const memberNodeIds = new Set(nodes
+    .map((n, i) => (n.role === 'l1-validator' ? (probes[i].nodeId ?? n.nodeId) : null))
+    .filter(Boolean));
 
   const byDomain = new Map();
   for (const [i, n] of nodes.entries()) {
@@ -180,6 +185,7 @@ export async function pollOnce({ nodes, blockchainId, prev = {}, intervalSeconds
       prevHeight: prev[n.id] ?? null,
       networkHeight,
       seenByPeers,
+      memberNodeIds,
       domainAllUnreachable: dom.down === dom.total,
       container: containers[n.id] ?? null,
       sampleSeconds: intervalSeconds,

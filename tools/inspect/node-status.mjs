@@ -28,6 +28,7 @@
 //
 // 用法：node tools/inspect/node-status.mjs [--json] [--deployment <name>] [--sample-seconds <n>]
 
+import { canQuery } from '../membership/tolerance.mjs';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -132,8 +133,40 @@ export function classify(node, ctx) {
         const eta = perMin > 0 ? Math.max(1, Math.ceil(behind / perMin)) : null;
         return out('catching-up', `落后 ${behind} 块，+${perMin}/min${eta ? `, ~${eta}m` : ''}`);
       }
+      // **它还连得上足够的成员吗** —— 这一问原先没人回答。
+      //
+      // 这一支此前把"是否卡住"全部委托给容器健康检查（只有它持有超时窗口），
+      // 而容器级事实**只有本机采得到**：别的机器上的节点，那个判定者根本不存在，
+      // 状态于是一直停在 catching-up —— 而按契约 catching-up 算"在服务 L1"（FR-011），
+      // 容错余量因此被报成满的。
+      //
+      // 2026-09-18 实测：l1-2 重新入集后与五个 L1 验证者全断、卡在落后 24 块，
+      // 而 devnet-verify 照报 `6/6 validators online, full margin`。
+      //
+      // 判据不新造：发起查询要求已连接权重 ≥ 75%，等价于**断开数 ≤ ⌊n/4⌋** ——
+      // 与 maxOffline 同一个算式（canQuery）。算出来的 1/6 = 16.67% 与那一刻
+      // l1-2 自己 /ext/health 报的 16.666667% 分毫不差。
+      //
+      // 用 peer 列表算而**不去读 /ext/health**：那个端点的综合健康位含 P 链可达性，
+      // 两个 Primary 全停时会全假而 L1 仍在出块（dashboard/README 的四条边界之一）。
+      // peer 列表只说 L1 这一层，正是 FR-013 要的那个口径。
+      const members = ctx.memberNodeIds;
+      if (members?.size && probe.peerNodeIds) {
+        const seen = new Set(probe.peerNodeIds);
+        const disconnected = [...members].filter((id) => id !== probe.nodeId && !seen.has(id)).length;
+        const q = canQuery({ n: members.size, disconnectedMembers: disconnected });
+        if (!q.ok) {
+          return out('stalled',
+            `落后 ${behind} 块且无进展；**只连上 ${q.connected}/${q.n} 个成员（${q.percent}%）**`
+            + ` —— 发起共识查询要 ≥75%，最多断 ${q.allowed} 个。它现在投不了票，`
+            + '不是在追赶。先查它到其余验证者的 P2P 连通性。');
+        }
+      }
       return out('catching-up',
-        `落后 ${behind} 块，${secs}s 采样窗口内无进展（是否卡住由容器健康检查判定，它持有超时窗口）`);
+        `落后 ${behind} 块，${secs}s 采样窗口内无进展`
+        + (members?.size
+          ? '（与成员的连接数够发起查询 —— 是否卡住由容器健康检查判定，它持有超时窗口）'
+          : '（**没有成员集合可比对**，也没有容器级事实 —— 卡没卡这件事此刻没有判定者）'));
     }
     return out('healthy', net != null ? `已追平（高度 ${probe.height}）` : `高度 ${probe.height}`);
   }
@@ -362,6 +395,11 @@ export async function collect(opts = parseArgs()) {
   const heights = second.map((x) => x.height).filter((h) => Number.isFinite(h));
   const networkHeight = heights.length ? Math.max(...heights) : null;
   const seenByPeers = new Set(second.flatMap((x) => x.peerNodeIds ?? []));
+  // L1 成员的 NodeID（观测优先、声明兜底，与下面 rows 里同一条理由）——
+  // classify 用它算"这个节点连上了几个成员"。
+  const memberNodeIds = new Set(nodes
+    .map((n, i) => (n.role === 'l1-validator' ? (second[i].nodeId ?? n.nodeId) : null))
+    .filter(Boolean));
 
   const unreachableByDomain = new Map();
   for (const [i, n] of nodes.entries()) {
@@ -378,6 +416,7 @@ export async function collect(opts = parseArgs()) {
       prevHeight: first[i].height ?? null,
       networkHeight,
       seenByPeers,
+      memberNodeIds,
       domainAllUnreachable: dom.down === dom.total,
       container: containers[n.id] ?? null,
       sampleSeconds: opts.sampleSeconds,

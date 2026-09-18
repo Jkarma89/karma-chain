@@ -1207,6 +1207,39 @@ curl -s -XPOST -d '{"jsonrpc":"2.0","id":1,"method":"platform.getHeight","params
 curl -s http://<l1>:2166x/ext/health   # checks.P.message.engine.consensus.lastAcceptedHeight
 ```
 
+### V-35 P2P 签名会飘，而且**轮换**（2026-09-17）
+
+同一条消息，五个节点全都能用 HTTP `warp_getMessageSignature` 签出来 ——
+**经 P2P 就要不齐**：
+
+| 时刻 | 签到 | 没签 |
+|---|---|---|
+| 首次尝试 | 4/5 | l1-1 |
+| 20 分钟后（没动任何东西） | 3/5 | l1-1、l1-3 |
+| l1-1 真重启后 | 4/5 | **l1-3** |
+
+所以：**不是某个坏节点**，而且"HTTP 能签"不代表"P2P 能要到"。
+V-33 里那个"一直没签的第 1 位"是同一个现象，当时不阻塞所以只记了一句。
+
+**这也是为什么 V-34 那个零容错窗口非关不可**：把容错交给一个已知会飘的环节，
+等于把"能不能加成员"变成一次抽签。
+
+### V-36 `devnet-node.ps1 restart` 报了一次假成功（2026-09-17）
+
+`.\scripts\devnet-node.ps1 restart l1-1` 打印「l1-1 已重启」，而容器的
+`StartedAt` **一字未变**（`RestartCount = 0`）。随后在 `docker/compose/` 目录里
+手动跑 `docker compose -f lan-win-1.yml restart l1-1`，`StartedAt` 立刻变了。
+
+两处都退出 0，所以 `Invoke-NodeCompose` 的退出码检查（`a9718cb` 加的那个）拦不住它 ——
+**compose 自己"什么都没做"也算成功**。差别不在 project 名（两边都是 `compose`，
+从仓库根跑 `ps` 也能看见 l1-1 running），根因**尚未查明**。
+
+危害与 `a9718cb` 修掉的那条同级：这是一条会让人以为"我已经重启过了、问题不在这儿"
+的假成功 —— 我自己就被它误导了一轮，把签名者从 4 掉到 3 错算成"重启弄坏了"。
+
+**待办**：给 `stop/start/restart` 加一条真正的事后判定（比对 `StartedAt` /
+`State.Status`），而不是只看 compose 的退出码。一条不会变红的守卫比没有守卫更坏。
+
 ### V-37 面板的 /api/snapshot 崩在 BigInt，而 263 个单元测试一个都没红（2026-09-17）
 
 T033 走完后起面板核判据，**第一个请求就把进程打掉**：
@@ -1235,6 +1268,13 @@ BigInt）—— 也就是说**只有在一切正常时才崩**。这比总是崩
 
 写这条守卫时自己也踩了一次同类错：先按 `"weight":"100"` 断言，红了 ——
 BigInt 全在 `rejoin` 下（成员权重并不进快照）。**按查到的字段断言，别按猜的字段。**
+
+### V-38 devnet-dashboard 的容器没有名字（2026-09-17，小）
+
+`scripts/devnet-dashboard.sh` 的 `docker run` 没有 `--name`，于是容器叫
+`interesting_booth` 这类随机名。脚本自己说"Ctrl-C 停止" —— 而终端一旦不在，
+就只能靠端口或镜像名去认它。`devnet-verify` 是 `--rm` 的短命进程，无所谓；
+面板是长驻的。**待办**：给它一个 `karmachain-dashboard` 的名字。
 
 ### V-39 变红检查扫出三条**没人验过**的前置判定（2026-09-17，T032）
 
@@ -1326,46 +1366,6 @@ n
 不改：前置依赖**早报**是刻意的（在动任何东西之前失败），而这点代价只是多打一行。
 记在这里，免得下次有人把它当成缺陷去"修"成延迟检查 —— 那会把失败点挪到
 已经开始做事之后。
-### V-38 devnet-dashboard 的容器没有名字（2026-09-17，小）
-
-`scripts/devnet-dashboard.sh` 的 `docker run` 没有 `--name`，于是容器叫
-`interesting_booth` 这类随机名。脚本自己说"Ctrl-C 停止" —— 而终端一旦不在，
-就只能靠端口或镜像名去认它。`devnet-verify` 是 `--rm` 的短命进程，无所谓；
-面板是长驻的。**待办**：给它一个 `karmachain-dashboard` 的名字。
-
-### V-35 P2P 签名会飘，而且**轮换**（2026-09-17）
-
-同一条消息，五个节点全都能用 HTTP `warp_getMessageSignature` 签出来 ——
-**经 P2P 就要不齐**：
-
-| 时刻 | 签到 | 没签 |
-|---|---|---|
-| 首次尝试 | 4/5 | l1-1 |
-| 20 分钟后（没动任何东西） | 3/5 | l1-1、l1-3 |
-| l1-1 真重启后 | 4/5 | **l1-3** |
-
-所以：**不是某个坏节点**，而且"HTTP 能签"不代表"P2P 能要到"。
-V-33 里那个"一直没签的第 1 位"是同一个现象，当时不阻塞所以只记了一句。
-
-**这也是为什么 V-34 那个零容错窗口非关不可**：把容错交给一个已知会飘的环节，
-等于把"能不能加成员"变成一次抽签。
-
-### V-36 `devnet-node.ps1 restart` 报了一次假成功（2026-09-17）
-
-`.\scripts\devnet-node.ps1 restart l1-1` 打印「l1-1 已重启」，而容器的
-`StartedAt` **一字未变**（`RestartCount = 0`）。随后在 `docker/compose/` 目录里
-手动跑 `docker compose -f lan-win-1.yml restart l1-1`，`StartedAt` 立刻变了。
-
-两处都退出 0，所以 `Invoke-NodeCompose` 的退出码检查（`a9718cb` 加的那个）拦不住它 ——
-**compose 自己"什么都没做"也算成功**。差别不在 project 名（两边都是 `compose`，
-从仓库根跑 `ps` 也能看见 l1-1 running），根因**尚未查明**。
-
-危害与 `a9718cb` 修掉的那条同级：这是一条会让人以为"我已经重启过了、问题不在这儿"
-的假成功 —— 我自己就被它误导了一轮，把签名者从 4 掉到 3 错算成"重启弄坏了"。
-
-**待办**：给 `stop/start/restart` 加一条真正的事后判定（比对 `StartedAt` /
-`State.Status`），而不是只看 compose 的退出码。一条不会变红的守卫比没有守卫更坏。
-
 ---
 
 ## 依赖偏离记录：`@avalabs/avalanchejs@5.1.0`（2026-09-14）

@@ -27,6 +27,47 @@
 /** 可离线数 f = ⌊n/4⌋。**本仓库 tools/membership 下只有这一处定义。** */
 export const maxOffline = (n) => Math.floor(n / 4);
 
+/**
+ * 这个成员**自己**还能不能发起共识查询 —— 按它与其余成员断开了几个算。
+ *
+ * ## 和 maxOffline 是同一个算式，只是换了个问法
+ *
+ * `minConnectedStakeToQuery = 75%`：发起查询要求**已连接权重 ≥ 75%**。
+ * 站在单个节点上看，它连着的是自己 + 它的对等成员，于是
+ *
+ *   (n − 断开数) / n ≥ 0.75  ⟺  断开数 ≤ ⌊n/4⌋ = maxOffline(n)
+ *
+ * 所以这里**不引入新常量**，复用同一处定义。
+ *
+ * ## 为什么需要它
+ *
+ * 2026-09-18 实测：l1-2 重新入集后与五个 L1 验证者全断，卡在落后 24 块。
+ * 从别的机器看它是 `catching-up` —— 而按契约 `catching-up` 算"在服务 L1"，
+ * 于是 `devnet-verify` 报 `6/6 validators online, full margin`。**余量其实是 0。**
+ *
+ * 它自己的 `/ext/health` 说得很清楚（`connected to 16.666667%; 需要 80%`），
+ * 但那个端点**刻意不许用**（dashboard/README：综合健康位含 P 链可达性，
+ * 两个 Primary 全停时会全假而 L1 仍在出块 —— 那是假红灯）。
+ *
+ * 而同一个结论**本来就能从已有观测算出来**：节点自报的 peer 列表 ∩ 成员集合。
+ * 1/6 = 16.67% 与它自报的数字分毫不差 —— 说明这就是 avalanchego 用的那个算式，
+ * 而且完全不碰 P 链。
+ *
+ * @param {number} n 成员总数（含本节点）
+ * @param {number} disconnectedMembers 本节点**没连上**的其余成员数
+ * @returns {{ok: boolean, connected: number, n: number, percent: number, allowed: number}}
+ */
+export function canQuery({ n, disconnectedMembers }) {
+  const allowed = maxOffline(n);
+  const connected = Math.max(0, n - disconnectedMembers);
+  return {
+    ok: disconnectedMembers <= allowed,
+    connected,
+    n,
+    percent: n > 0 ? Math.round((connected / n) * 10000) / 100 : 0,
+    allowed,
+  };
+}
 /** 容错会不会变？加成员时 n 增大，⌊n/4⌋ **可能不变** —— 这一条必须说出来（FR-037 / F-5）。 */
 export function toleranceChange(before, after) {
   return {

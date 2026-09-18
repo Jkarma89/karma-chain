@@ -170,6 +170,11 @@ describe('改动的范围确实只有这两处', () => {
       // snapshot.mjs **自身零 import**，所以引它不会带进任何传递依赖 ——
       // 这是能接受这个方向的前提，别在 snapshot.mjs 里加 import。
       '../dashboard/snapshot.mjs',
+      // 2026-09-18：classify 要回答"这个节点还连得上足够的成员吗"，
+      // 而那条判据（连接权重 ≥75% ⟺ 断开数 ≤ ⌊n/4⌋）在 tolerance.mjs 里已经有了 ——
+      // 在这里引用而不是重写第二份。准入理由与 snapshot.mjs 逐字相同：
+      // **tolerance.mjs 自身零 import**（下面有一条守卫钉住它）。
+      '../membership/tolerance.mjs',
     ];
     const extra = imports.filter((i) => !allowed.includes(i));
     assert.deepEqual(extra, [],
@@ -206,6 +211,17 @@ describe('改动的范围确实只有这两处', () => {
     assert.match(src, /memberSet:\s*\{\s*source:\s*memberSet\.source/,
       '输出里没有带上成员集合的来源 —— 调用方就分不清"按链上算"与"按声明算"，'
       + '而这两者在有成员加入时结论相反');
+  });
+
+  test('canQuery 的来源 tolerance.mjs 必须保持零 import', () => {
+    // 与下一条同一个理由。tolerance.mjs 的文件头本来就写着"零 import 是 node-status 能引用它的前提" ——
+    // 那句话此前没有守卫，2026-09-18 真的引用它时才补上。
+    // **一条写在注释里、没有守卫的前提，和没有前提一样。**
+    const src = readFileSync(resolve(REPO, 'tools/membership/tolerance.mjs'), 'utf8');
+    const imports = [...src.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
+    assert.deepEqual(imports, [],
+      `tolerance.mjs 有了 import（${imports.join('、')}）—— node-status 引它的前提就没了，`
+      + '后果是 devnet-verify / devnet-status 悄悄背上一串传递依赖。');
   });
 
   test('scopeToChainMembers 的来源 snapshot.mjs 必须保持零 import', () => {
