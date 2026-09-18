@@ -1174,6 +1174,75 @@ couldn't issue tx: failed verification: failed verifying warp messages:
 
 两次提交都在**验证阶段**被拒（`failed verification`），没有进块，没有花钱。
 
+### V-34② 第四步也有同一个"差一格"，但它会自愈（2026-09-17）
+
+推进 P 链一格之后第三步一次就过了（4/5 = 400 ≥ 67% × 500 = 335，位图也对得上）：
+
+```
+✓ 交易 dmM4gDey6E28JumUZbLgTmcKTGzia91Lb2G4v5qyh7FRwjxfN（推进，手续费 5179 nAVAX）
+✓ 高度 9 → 10，验证分母 600 → 500
+✅ 第三步完成  P 链交易 JbmhwyUMN4o6qZC5oPiBRUpxEEf3XYqTHmF4jmXUytZswcE9k
+```
+
+**紧接着的第四步 revert 了一次**（`0x2f53a7b7…`），干跑里的"模拟不能证明会成功"
+那句话又一次成立。第二次重试就过了（`0x4247f586…`，区块 1304），中间什么都没改。
+
+差别只有一个：`platform.getHeight` 此时是 11，而各 L1 节点**刚**把它接受下来。
+第一次提交时区块带的 P 链高度还是 10（那时 L1 集合是 5 个），而聚合器已按 6 个建位图 ——
+和第三步那次是**同一个"差一格"，方向相反**：
+
+| 谁在落后 | 症状 | 处置 |
+|---|---|---|
+| 第三步：**P 链**的验证集合落后一格 | `weight is insufficient` / `signature is invalid` | **必须推进一格**（P 链不自己出块，等没用） |
+| 第四步：**subnet-evm 侧**节点的 P 链视图落后 | 交易 revert（预编译 valid = false） | **等一下重试**（节点会自己接受新高度） |
+
+所以两边的处置**恰好相反**：一个等不来，一个等就好。工具当前对第四步的建议
+（"可以直接重跑本命令重试"）是对的；对第三步的旧建议（"多收签名"）是错的，已改。
+
+实操判据：重试第四步之前先核一下各 L1 节点的 P 链高度是否已等于 `platform.getHeight`：
+
+```
+curl -s -XPOST -d '{"jsonrpc":"2.0","id":1,"method":"platform.getHeight","params":{}}' \
+  http://<primary>:21650/ext/bc/P
+curl -s http://<l1>:2166x/ext/health   # checks.P.message.engine.consensus.lastAcceptedHeight
+```
+
+### V-37 面板的 /api/snapshot 崩在 BigInt，而 263 个单元测试一个都没红（2026-09-17）
+
+T033 走完后起面板核判据，**第一个请求就把进程打掉**：
+
+```
+TypeError: Do not know how to serialize a BigInt
+  at JSON.stringify (<anonymous>)
+  at json (tools/dashboard/server.mjs:80)
+```
+
+来源是 `member-set.mjs` 里**刻意**用的 BigInt：P 链成员权重，以及 Primary 的质押
+（10^15 量级，用 Number 在别的部署里会丢精度）。那个选择是对的。错的是
+**没人问过"这个对象能不能变成 JSON"**。
+
+已有的面板测试全都断言 `buildSnapshot` 返回的**对象** —— tier 对不对、余量算得对不对、
+文案里有没有那句话。一条都没经过序列化，而序列化恰恰是这个对象存在的理由：
+它是一个 HTTP API 的响应体。**检查器自己没有被检查。**
+
+它此前不显，是因为 `readPrimaryNetworkStake` 读不到时回 `source: 'unknown'`（不带
+BigInt）—— 也就是说**只有在一切正常时才崩**。这比总是崩更坏。
+
+修法：`server.mjs` 的 `json()` 加一个 replacer，BigInt 按**十进制字符串**出
+（与 P 链 API 自己的表示一致；转 Number 会静默丢精度，比崩溃更难发现）。
+守卫 `tests/unit/dashboard-snapshot-serializable.test.mjs` 同时钉两件事：
+①快照里**确实**有 BigInt（否则这条守卫恒绿）、②那条路径能序列化它。
+
+写这条守卫时自己也踩了一次同类错：先按 `"weight":"100"` 断言，红了 ——
+BigInt 全在 `rejoin` 下（成员权重并不进快照）。**按查到的字段断言，别按猜的字段。**
+
+### V-38 devnet-dashboard 的容器没有名字（2026-09-17，小）
+
+`scripts/devnet-dashboard.sh` 的 `docker run` 没有 `--name`，于是容器叫
+`interesting_booth` 这类随机名。脚本自己说"Ctrl-C 停止" —— 而终端一旦不在，
+就只能靠端口或镜像名去认它。`devnet-verify` 是 `--rm` 的短命进程，无所谓；
+面板是长驻的。**待办**：给它一个 `karmachain-dashboard` 的名字。
+
 ### V-35 P2P 签名会飘，而且**轮换**（2026-09-17）
 
 同一条消息，五个节点全都能用 HTTP `warp_getMessageSignature` 签出来 ——

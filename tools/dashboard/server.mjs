@@ -76,8 +76,22 @@ export function validateInterval(intervalSeconds) {
   return null;
 }
 
+// 快照里有 **BigInt**：P 链上的成员权重与 Primary 的质押（member-set.mjs 里
+// 刻意用 BigInt —— 质押是 10^15 量级，用 Number 会在别的部署里丢精度）。
+// 而 `JSON.stringify` 遇到 BigInt 直接抛 TypeError。
+//
+// 2026-09-17（T033 收尾）实测：面板一请求 /api/snapshot 就**整个进程崩掉**
+//   TypeError: Do not know how to serialize a BigInt
+// 而 263 个单元测试一个都没红 —— 它们断言的是 buildSnapshot 返回的**对象**，
+// 没有一条问过"这个对象能不能变成 JSON"。检查器自己没有被检查。
+// 守卫见 tests/unit/dashboard-snapshot-serializable.test.mjs。
+//
+// 按字符串出：P 链自己的 API 也是把 weight/balance 当字符串返回的，
+// 所以这与上游表示一致，而不是为了绕开报错而截断成 Number。
+const bigintSafe = (_key, value) => (typeof value === 'bigint' ? value.toString() : value);
+
 const json = (res, body, status = 200) => {
-  const text = JSON.stringify(body);
+  const text = JSON.stringify(body, bigintSafe);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(text),
