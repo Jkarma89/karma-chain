@@ -1416,6 +1416,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     return i === -1 ? undefined : (args[i + 1] ?? true);
   };
   const autoYes = args.includes('--yes');
+  // 推进 P 链那一格是**工具自己提议的额外交易**，不在用户要做的四步里。
+  // 所以它不吃 --yes：--yes 的意思是"我要做的这些步别再问我"，
+  // 不是"你可以替我多发一笔我没提过的交易"。要它就显式写 --nudge。
+  const allowNudge = args.includes('--nudge');
   const config = loadProtocol();
   const identity = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
 
@@ -1628,14 +1632,20 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       console.error('\n⚠ **P 链验证用的集合比当前集合落后一格**（这是刚退过成员的正常状态）：');
       console.error(`  当前集合    高度 ${weights.height}：${weights.currentCount} 个，合计权重 ${weights.currentTotal}`);
       console.error(`  验证用集合  高度 ${weights.verifyHeight}：${weights.verifyCount} 个，合计权重 ${weights.verifyTotal}`);
-      console.error(`  于是门槛是 ${BASE_QUORUM_NUM}% × ${weights.verifyTotal} = ${needWeight(weights.verifyTotal)}，`
-        + `要 ${needSigners(weights.verifyTotal)}/${weights.currentCount} 个签名`
-        + `（按当前集合折算 = ${quorumNum}%）。`);
-      if (needSigners(weights.verifyTotal) >= weights.currentCount) {
-        console.error(`\n  **这一次零容错** —— ${weights.currentCount} 个成员必须全部签名，`
-          + '任何一个的 P2P 签名不通就做不成。');
-        console.error(`  推进一格 P 链之后分母变成 ${weights.currentTotal}，`
-          + `只要 ${needSigners(weights.currentTotal)}/${weights.currentCount} 个。`);
+      console.error(`  于是门槛按 ${weights.verifyTotal} 算：${BASE_QUORUM_NUM}% × ${weights.verifyTotal} = ${needWeight(weights.verifyTotal)}`
+        + `（工具会按当前集合折算成 ${quorumNum}% 去要签名）。`);
+      // **落后一格就必须先推进 —— 多收签名过不去。** 2026-09-17 两次实测：
+      //   4/5 → signature weight is insufficient: 67*600 > 100*400
+      //   5/5 → signature is invalid
+      // 第二条才是根因：BitSetSignature 的位索引是对**验证高度那个集合**编号的，
+      // 而聚合方按**当前**集合建位图。两个集合不同，聚合公钥就对不上 ——
+      // 所以这跟"收几个签名"无关，收满也不合法。
+      {
+        console.error(`\n  **必须先把 P 链推进一格** —— 多收签名过不去：`);
+        console.error(`  位图是按当前 ${weights.currentCount} 个成员编号的，而链按 ${weights.verifyCount} 个验，`
+          + '两个集合不同，聚合公钥就对不上（实测：4 个报权重不够，5 个报 signature is invalid）。');
+        console.error(`  推进一格之后验证集合就是当前这 ${weights.currentCount} 个，`
+          + `门槛 ${needSigners(weights.currentTotal)}/${weights.currentCount}，位图也对得上。`);
         console.error('  P 链**不会自己出块**（没有交易就没有新高度），所以"等一会儿"不管用。');
         console.error('  本命令可以发一笔最无害的交易把它推一格：转一点 AVAX **给自己**，');
         console.error('  不碰任何成员、权益与合约，代价只有一笔手续费。');
@@ -1654,7 +1664,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
         if (nudgePlan) {
           console.error(`\n  干跑：付款 ${nudgePlan.pAddress}，手续费 ${nudgePlan.fee} nAVAX，`
             + `转给自己 ${nudgePlan.amount} nAVAX（动用 ${nudgePlan.utxoCount} 个 UTXO）`);
-          if (autoYes || await ask('  **先把 P 链推进一格？**')) {
+          if (!allowNudge) {
+            console.error('\n  要推进就带 --nudge 重跑本命令（它会先推掉这一格，再继续注册）：');
+            console.error(`  scripts/devnet-member.sh add --node-id ${nodeId} --nudge`);
+          } else {
             let nudged;
             try {
               nudged = await nudgePChainHeight(nudgeArgs);

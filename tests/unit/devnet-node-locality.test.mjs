@@ -60,10 +60,26 @@ describe('失败必须说失败 —— 两版在失败路径上要等价（FR-01
 
   test('.ps1 的 stop / start / restart 都走同一条检查', () => {
     // 三个动作共用 Invoke-NodeCompose；若有人给某一个"顺手简化"回去，这条会红。
+    //
+    // **按分支体找，不按单行找。** 初版三个分支各写成一行，于是这条断言实际
+    // 匹配的是"那一行里有 Invoke-NodeCompose"。2026-09-17 给三个动作补上事后
+    // 判定（研究 V-36）之后分支变成多行块，这条就因为**排版**变了而误报 ——
+    // 而它要守的"每个分支都经过退出码检查"其实一直成立。守意思，不守排版。
+    const sw = PS1.indexOf('switch ($Action)');
+    assert.ok(sw > 0, '.ps1 里找不到 switch ($Action)');
+    const body = PS1.slice(sw);
+    const LABELS = ['kill', 'stop', 'start', 'restart', 'status', 'wipe'];
+    const branchOf = (action) => {
+      const at = body.indexOf(`'${action}'`);
+      assert.ok(at > 0, `.ps1 里找不到 ${action} 分支`);
+      // 下一个分支标签之前的全部内容，就是这一支的分支体
+      const nexts = LABELS
+        .map((a) => body.indexOf(`'${a}'`, at + action.length + 2))
+        .filter((i) => i > at);
+      return body.slice(at, nexts.length ? Math.min(...nexts) : body.length);
+    };
     for (const action of ['stop', 'start', 'restart']) {
-      const line = PS1.split('\n').find((l) => l.includes(`'${action}'`) && l.includes('{'));
-      assert.ok(line, `.ps1 里找不到 ${action} 分支`);
-      assert.match(line, /Invoke-NodeCompose/,
+      assert.match(branchOf(action), /Invoke-NodeCompose/,
         `${action} 分支绕过了 Invoke-NodeCompose —— 它就失去了退出码检查`);
     }
   });

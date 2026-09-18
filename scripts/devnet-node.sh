@@ -16,6 +16,14 @@
 #
 # 002 起每个节点是独立容器，因此直接对容器操作即可；001 时七个节点挤在一个容器里，
 # 这条命令得先进容器再按 PID 操作（研究 R-01）。
+#
+# 退出码：0 动作已生效 | 10 前置依赖缺失 / 用法错误 | 20 **动作没有生效**
+#
+# 20 是 2026-09-17 加的（005 研究 V-36）：`restart l1-1` 打印了「已重启」，
+# 而容器的 StartedAt **一字未变** —— compose 自己退出 0，所以只看退出码拦不住。
+# 一条只看退出码的成功消息，在"什么都没做"时也照样打印；而它误导的正是
+# 那个手动介入的人（ADR-0006：两台 Windows 机器要人工恢复）。我自己被它骗过一轮。
+# 所以每个改状态的动作现在都**事后核对容器状态**，核不过就报 20。
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -72,22 +80,49 @@ esac
 CONTAINER="karmachain-${NODE}"
 VOLUME="karmachain-${NODE}-data"
 
+# 事后判定用的两个读数。**取不到时回 missing/空，而不是让 set -e 中止** ——
+# 容器不存在本身是一种要报出来的结论，不是脚本的错。
+container_state() { docker inspect --format '{{.State.Status}}' "$1" 2>/dev/null || echo missing; }
+container_started() { docker inspect --format '{{.State.StartedAt}}' "$1" 2>/dev/null || echo ''; }
+
+# 动作没有生效 —— 统一的报法（见头部对退出码 20 的说明）
+not_effective() {
+  echo "devnet-node: **${NODE} 的 '${ACTION}' 没有生效** —— $1" >&2
+  echo "  docker 命令自己退出 0，但容器状态说它什么都没发生。" >&2
+  echo "  不要把这次当成已生效。先跑 'status ${NODE}' 看它现在是什么状态。" >&2
+  exit 20
+}
+
 case "$ACTION" in
   kill)
     docker kill "$CONTAINER" >/dev/null
+    [ "$(container_state "$CONTAINER")" != running ]       || not_effective "它还是 running"
     echo "devnet-node: ${NODE} 已被 SIGKILL 强制终止（未给优雅退出机会）"
     ;;
   stop)
     docker compose -f "$COMPOSE" stop "$NODE" >/dev/null
+    [ "$(container_state "$CONTAINER")" != running ]       || not_effective "它还是 running"
     echo "devnet-node: ${NODE} 已停止"
     ;;
   start)
+    # start 的判据是**终态**而不是"时刻变了"：对已经在跑的节点，
+    # up -d 什么都不做是**对的**，"已启动"那句话依然为真。
     docker compose -f "$COMPOSE" up -d "$NODE" >/dev/null
+    state="$(container_state "$CONTAINER")"
+    [ "$state" = running ] || not_effective "它现在是 ${state}，不是 running"
     echo "devnet-node: ${NODE} 已启动"
     ;;
   restart)
+    # restart 的判据**必须是时刻变了**。这正是 V-36 那条假成功：
+    # 终态照旧 running，只有 StartedAt 能区分"重启过"与"压根没动"。
+    before="$(container_started "$CONTAINER")"
     docker compose -f "$COMPOSE" restart "$NODE" >/dev/null
-    echo "devnet-node: ${NODE} 已重启"
+    after="$(container_started "$CONTAINER")"
+    [ -n "$after" ] || not_effective "重启后读不到容器状态"
+    [ "$after" != "$before" ]       || not_effective "StartedAt 还是 ${before} —— 进程没有被重新拉起"
+    state="$(container_state "$CONTAINER")"
+    [ "$state" = running ] || not_effective "重启后它是 ${state}，不是 running"
+    echo "devnet-node: ${NODE} 已重启（StartedAt ${before} → ${after}）"
     ;;
   status)
     state="$(docker inspect --format '{{.State.Status}}' "$CONTAINER" 2>/dev/null || echo missing)"

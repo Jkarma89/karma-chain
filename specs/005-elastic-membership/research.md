@@ -1145,6 +1145,35 @@ couldn't issue tx: failed verifying warp messages:
 而这里是 P 链验证 `RegisterL1ValidatorTx`，那个数在 avalanchego 里是常量。
 两边此刻都是 67，但工具不靠它。
 
+#### 实测推翻了"多收签名就能过"（2026-09-17 当晚）
+
+先按"零容错"理解处置了一轮：重启节点把 P2P 签名凑齐到 **5/5（100%）**，再提交第三步。
+链换了一句话拒绝：
+
+```
+couldn't issue tx: failed verification: failed verifying warp messages:
+  signature is invalid
+```
+
+两次并排看，根因就露出来了：
+
+| 签名者 | 链的回话 |
+|---|---|
+| 4/5 | `signature weight is insufficient: 67*600 > 100*400` |
+| 5/5 | `signature is invalid` |
+
+第二条才是根本：**BitSetSignature 的位索引是对「验证高度那个集合」编号的**，
+而聚合方（L1 节点的 `warp_getMessageAggregateSignature`）是按**当前**集合建位图的。
+两个集合不同 → 按位图还原出的聚合公钥不等于实际签名者的公钥之和 → 签名不合法。
+
+`identifySigners` 对同一条聚合消息做密码学判定是 **5/5 全签**，
+也就是说那条聚合消息**对当前集合是有效的**，只对落后那一格无效。
+
+**所以推进一格不是"更省的做法"，是唯一的路。** 只要验证集合落后一格，
+收多少签名都过不去 —— 这一条把上面"这一次零容错"的说法纠正了。
+
+两次提交都在**验证阶段**被拒（`failed verification`），没有进块，没有花钱。
+
 ### V-35 P2P 签名会飘，而且**轮换**（2026-09-17）
 
 同一条消息，五个节点全都能用 HTTP `warp_getMessageSignature` 签出来 ——
