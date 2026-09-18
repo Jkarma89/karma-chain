@@ -2,14 +2,25 @@
 //
 // 这是触发整个功能 002 的那次故障的直接复现。对照组是 001：同样的操作会让链彻底起不来，
 // 唯一出路是丢弃全链状态；002 应当在数十秒内自己回来，且高度、余额、合约一字不差。
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pub, sendTx, killAll, start, waitReady, genesisHash, devnetAvailable, RECIPIENT, NODE_IDS,
   localNodeIds,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 
-describe('场景 A —— 强制终止后链自己回来', { concurrency: 1 }, () => {
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'crash-recovery';
+describe('场景 A —— 强制终止后链自己回来', { skip: SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   let available = false;
   before(async () => {
     available = await devnetAvailable();

@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import {
   RPC, pub, sh, sendTx, devnetAvailable, pickLocalVictims, localVictimSkip, proxyTail,
   spreadProblems,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 
 const MINUTES = Number(process.env.KARMACHAIN_SC003_MINUTES ?? 30);
@@ -42,7 +44,16 @@ const SKIP = !LOCAL ? localVictimSkip(1) : await devnetAvailable()
   ? undefined
   : `开发网未运行（${RPC}）—— 先执行 scripts/devnet-bootstrap 与 scripts/devnet-start`;
 
-describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { skip: SKIP, concurrency: 1 }, () => {
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'single-validator-window';
+describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { skip: SKIP ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   before(() => {
     assert.equal(containerState(VICTIM), 'running', `${VICTIM} 应当在运行，测试才有意义`);
   });

@@ -5,12 +5,15 @@
 // 要么自行清理重来，总之能自己走出去。
 //
 // 同时验证 FR-006 的一半：某个节点重建期间，其余节点与整条链不受影响。
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   pub, sendTx, waitReady, devnetAvailable, sh, VALIDATOR_IDS, RPC,
   pickLocalVictims, localVictimSkip,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 
 // 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
@@ -32,7 +35,7 @@ const CONTAINER = `karmachain-${VICTIM}`;
 //
 // devnet-node.sh 从 active.env 解析当前生效的 compose，两种形态都对；
 // 它的 `wipe` 正好是"停 + 删容器 + 删卷"，`start` 正好是"up -d 该服务"。
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 const state = () => {
   try {
     return execFileSync('docker', ['inspect', '--format', '{{.State.Status}}', CONTAINER], { encoding: 'utf8' }).trim();
@@ -40,8 +43,17 @@ const state = () => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'crash-during-bootstrap';
 describe('V-03 —— 引导中途被强制终止',
-  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
+  { skip: (LOCAL ? undefined : localVictimSkip(1)) ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });

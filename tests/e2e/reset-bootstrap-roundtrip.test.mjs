@@ -19,6 +19,11 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO_ROOT, loadProtocol } from '../../tools/protocol/load.mjs';
+import { findPosixShell, skipReasonFor } from '../../tools/test/posix-shell.mjs';
+
+// 本套件已有自己的闸门（KARMACHAIN_ALLOW_DESTRUCTIVE），但它跑的是 `.sh` ——
+// 开了闸门却没有可用的 POSIX shell 时，它会在毁坏之后**收不了场**（研究 V-44）。
+const SHELL = findPosixShell();
 
 const IDENTITY_PATH = resolve(REPO_ROOT, 'blockchain/chain-identity/karmachain.identity.json');
 const GENESIS_HASH_PATH = resolve(REPO_ROOT, 'blockchain/genesis/karmachain.genesis.hash');
@@ -48,7 +53,7 @@ const SKIP = process.env.KARMACHAIN_ALLOW_DESTRUCTIVE !== '1'
 
 /** 跑一个薄封装脚本。两个脚本都是非交互的，无需喂确认。 */
 const sh = (script, { args = [], env: extraEnv = {}, timeout = 900_000 } = {}) => {
-  const r = spawnSync('sh', [script, ...args], {
+  const r = spawnSync(SHELL.cmd, [script, ...args], {
     cwd: REPO_ROOT, encoding: 'utf8', timeout,
     env: { ...process.env, ...extraEnv },
   });
@@ -75,7 +80,7 @@ const rpc = async (method, params = []) => {
   return j.result;
 };
 
-describe('T091 —— reset → bootstrap → start 往返', { skip: SKIP }, () => {
+describe('T091 —— reset → bootstrap → start 往返', { skip: SKIP ?? skipReasonFor(SHELL) }, () => {
   // 往返前的制品：确定性断言的基准。它们在仓库里，reset 不会动它们。
   let before_;
 

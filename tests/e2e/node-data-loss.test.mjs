@@ -12,6 +12,9 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip, spreadProblems,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -22,7 +25,7 @@ const LOCAL = pickLocalVictims(1);
 const VICTIM = LOCAL?.[0];
 const CONTAINER = `karmachain-${VICTIM}`;
 const VOLUME = `karmachain-${VICTIM}-data`;
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const inspect = (fmt) => {
   try { return execFileSync('docker', ['inspect', '--format', fmt, CONTAINER], { encoding: 'utf8' }).trim(); } catch { return ''; }
@@ -31,8 +34,17 @@ const expectedNodeId = () => JSON.parse(
   readFileSync(resolve(REPO_ROOT, `blockchain/nodes/${VICTIM}.identity.json`), 'utf8'),
 ).nodeId;
 
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'node-data-loss';
 describe('场景 E —— 单节点数据损坏，故障不外溢',
-  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
+  { skip: (LOCAL ? undefined : localVictimSkip(1)) ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   let heightAtWipe;
 
   before(async () => {

@@ -19,10 +19,13 @@
 // 链真的继续出块"这件事实。
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pub, sendTx, sh, devnetAvailable, NODE_IDS, containerExists, localNodeIds } from './lib/devnet.mjs';
+import { pub, sendTx, sh, devnetAvailable, NODE_IDS, containerExists, localNodeIds , script,
+  SHELL_SKIP,
+  restoreOrReport,
+} from './lib/devnet.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
 
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 
 /** Primary 节点由角色相减得到，不写死名字（沿用 002 primary-network-loss 的做法）。 */
 const PRIMARIES = NODE_IDS.filter((id) => !/^l1-/.test(id));
@@ -40,7 +43,16 @@ if (!await devnetAvailable()) {
     + ' tests/unit/dashboard-boundaries.test.mjs；人工做法见 quickstart 场景 F。';
 }
 
-describe('面板 —— 两个 Primary 全停时 L1 健康度不受影响', { skip: SKIP, concurrency: 1 }, () => {
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'dashboard-primary-loss';
+describe('面板 —— 两个 Primary 全停时 L1 健康度不受影响', { skip: SKIP ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   let dash;
 
   before(async () => {

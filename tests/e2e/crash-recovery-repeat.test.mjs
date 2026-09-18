@@ -3,13 +3,24 @@
 // 单次恢复成功可能是运气；这组测试要的是**次次都成功**。SC-002 的目标是 50 轮，
 // 每轮约 15 秒，跑满约 13 分钟 —— 因此轮数可由环境变量调整，默认按 spec 取 50。
 // 日常回归可用 KARMACHAIN_CRASH_ROUNDS=5 快速验证，正式验收才跑满。
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { pub, sendTx, killAll, start, waitReady, devnetAvailable, RECIPIENT } from './lib/devnet.mjs';
+import { pub, sendTx, killAll, start, waitReady, devnetAvailable, RECIPIENT , SHELL_SKIP,
+  restoreOrReport,
+} from './lib/devnet.mjs';
 
 const ROUNDS = Number(process.env.KARMACHAIN_CRASH_ROUNDS ?? 50);
 
-describe(`场景 B —— ${ROUNDS} 轮强制终止后仍不丢状态`, { concurrency: 1 }, () => {
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'crash-recovery-repeat';
+describe(`场景 B —— ${ROUNDS} 轮强制终止后仍不丢状态`, { skip: SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });

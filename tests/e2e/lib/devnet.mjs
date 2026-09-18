@@ -8,6 +8,7 @@ import { resolve } from 'node:path';
 import { createPublicClient, createWalletClient, http, defineChain, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { REPO_ROOT, loadProtocol, deriveTopology } from '../../../tools/protocol/load.mjs';
+import { findPosixShell, skipReasonFor } from '../../../tools/test/posix-shell.mjs';
 
 const env = Object.fromEntries(
   readFileSync(resolve(REPO_ROOT, 'docker/compose/active.env'), 'utf8')
@@ -188,13 +189,47 @@ export const localVictimSkip = (count, { requireDomainPeers = false } = {}) =>
   + ' 在承载足够验证者的机器上跑本文件即可。';
 
 /** 强制杀死全部节点容器 —— 不给任何优雅退出的机会。 */
+// —— 跑仓库脚本要一个**看得见这个仓库**的 POSIX shell ——
+//
+// 2026-09-18（研究 V-44）：从 PowerShell 跑 `npm run test:e2e` 之后，win-1 的
+// l1-1 与代理停在退出码 137，而套件报的是"开发网不可用"。根因是一处**不对称**：
+//
+//   毁坏  killAll() / node kill → `docker`      ← 在 PATH 里，**总能跑**
+//   恢复  start()               → `sh scripts/…` ← `sh` 不在 PowerShell 的 PATH 里
+//
+// 于是它把节点打掉、又没法放回去。`bash` 在 Windows 上还常常是 WSL 的启动器
+//（另一套文件系统，跑不了仓库里的 .sh）—— 判据见 tools/test/posix-shell.mjs。
+const SHELL = findPosixShell();
+
+/**
+ * 破坏性套件的跳过理由。**没有恢复路径时，这些测试一条都不该跑。**
+ *
+ * 与"本机凑不出靶子"那种跳过是两回事：那种是环境不具备，这种是**我们收不了场**。
+ */
+export const SHELL_SKIP = skipReasonFor(SHELL);
+
+/** 跑仓库里的一个脚本（`scripts/<name>`）。没有可用 shell 时抛，不静默不做。 */
+export const script = (name, ...args) => {
+  if (!SHELL) throw new Error(`没有可用的 POSIX shell，跑不了 scripts/${name} —— ${SHELL_SKIP}`);
+  return sh(SHELL.cmd, [`scripts/${name}`, ...args]);
+};
+
+export const start = () => script('devnet-start.sh');
+
+/**
+ * **没有恢复路径时直接拒绝。**
+ *
+ * 2026-09-18（V-44）撞到的不对称：`docker kill` 能跑，不代表我们能把它起回来。
+ * 一个会改状态的动作必须自己负责把状态放回去；做不到就别动手
+ *（与 `--emergency` 那道双向闸门同一条道理）。
+ */
 export function killAll() {
+  if (!SHELL) throw new Error(`拒绝执行 killAll()：起不回来。${SHELL_SKIP}`);
   const ids = sh('docker', ['ps', '-q', '--filter', 'name=karmachain-']).trim().split(/\s+/).filter(Boolean);
   if (ids.length) sh('docker', ['kill', ...ids]);
   return ids.length;
 }
 
-export const start = () => sh('sh', ['scripts/devnet-start.sh']);
 
 /** 等 RPC 回到预期的 chainId，返回耗时（毫秒）。 */
 export async function waitReady(timeoutMs = 300_000) {
@@ -214,6 +249,29 @@ export async function waitReady(timeoutMs = 300_000) {
  * 注意返回值不是 receipt —— 回执非 success 时本函数自己抛异常，因此"拿到返回值"
  * 就等于"已确认"。别去读它的 `.status`（曾踩过：那是个数字，`.status` 恒为 undefined）。
  */
+/**
+ * **兜底恢复**：无论前面成功还是失败，都把本机的节点拉回来并等到就绪。
+ *
+ * 给每个破坏性套件的 `after` 用。它自己**不抛** —— 在 `after` 里抛会盖掉真正的
+ * 失败原因，而那个原因才是人要看的。恢复不成功时明说，让人知道要去收拾什么。
+ */
+export async function restoreOrReport(label = '') {
+  // **唯一"停着才对"的场景**：有人显式声明这一轮期望开发网是停的
+  //（`after devnet-stop the RPC endpoint refuses connections` 就靠它）。
+  // 那时候把它拉起来才是破坏 —— 兜底恢复也要认这个开关。
+  if (process.env.KARMACHAIN_EXPECT_STOPPED === '1') return null;
+  try {
+    start();
+    await waitReady(300_000);
+    return true;
+  } catch (err) {
+    const nl = String.fromCharCode(10);
+    process.stderr.write(`${nl}⚠ 恢复失败${label ? `（${label}）` : ''}：${err.message}${nl}`
+      + `  本机的节点可能仍停着。手动收拾：scripts/devnet-start.sh（或 .ps1）${nl}`);
+    return false;
+  }
+}
+
 export async function sendTxVia(clients, valueEth = '0.001') {
   const hash = await clients.wallet.sendTransaction({ to: RECIPIENT, value: parseEther(valueEth) });
   const rcpt = await clients.pub.waitForTransactionReceipt({ hash, timeout: 90_000, pollingInterval: 500 });

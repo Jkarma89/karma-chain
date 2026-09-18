@@ -40,6 +40,9 @@ import {
   DOMAIN, DOMAIN_COUNT, DOMAIN_ADDRESSES, MAX_OFFLINE_VALIDATORS,
   clientsFor, rpcOfDomain, nodesOfDomain, validatorsOfDomain,
   sendTxVia, sh, devnetAvailable,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 import { probeNode, classify } from '../../tools/inspect/node-status.mjs';
 import { CATEGORY_OF_RECOVERY_STATE } from '../../tools/verify/lib/categories.mjs';
@@ -126,8 +129,17 @@ if (DOMAIN_COUNT < 2) {
   }
 }
 
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'domain-failure';
 describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观测窗口`,
-  { skip: SKIP, concurrency: 1 }, () => {
+  { skip: SKIP ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
     before(() => {
       for (const id of LOCAL_NODES) {
         assert.ok(isRunning(id), `${id} 应当在运行，测试才有意义（当前 ${containerState(id)}）`);
@@ -136,7 +148,7 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
 
     after(() => {
       // 无论断言成败都把这个边界放回去：测试不该留下一个缺席的机器
-      try { sh('sh', ['scripts/devnet-start.sh']); } catch { /* 交给下一次启动 */ }
+      try { script('devnet-start.sh'); } catch { /* 交给下一次启动 */ }
     });
 
     test(`停掉 ${DOMAIN} 全部节点后，经 ${observer?.domain} 每分钟一笔交易连续 ${MINUTES} 分钟全部确认`,
@@ -146,7 +158,7 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
 
         const heightBefore = Number(await observer.pub.getBlockNumber());
 
-        sh('sh', ['scripts/devnet-stop.sh']);
+        script('devnet-stop.sh');
         for (const id of LOCAL_NODES) {
           assert.ok(!isRunning(id), `${id} 应已停止（当前 ${containerState(id)}）`);
         }
@@ -250,7 +262,7 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
       // 所以要容忍非零退出并仍读 stdout，否则 execFileSync 抛异常，看起来像工具坏了。
       let local;
       try {
-        local = sh('sh', ['scripts/devnet-status.sh', '--json', '--sample-seconds', '1']);
+        local = script('devnet-status.sh', '--json', '--sample-seconds', '1');
       } catch (e) {
         local = e.stdout ?? '';
         assert.equal(e.status, 1,
@@ -268,7 +280,7 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
     test(`${DOMAIN} 恢复后 2 分钟内追平，且期间不得被误报为故障（SC-012）`, async (t) => {
       // 用 devnet-node start 而不是 devnet-start：后者会阻塞到就绪，
       // 那样就错过了追赶过程 —— 而 SC-012 要看的正是这段。
-      for (const id of LOCAL_NODES) sh('sh', ['scripts/devnet-node.sh', 'start', id]);
+      for (const id of LOCAL_NODES) script('devnet-node.sh', 'start', id);
 
       const FAILURE_STATES = new Set(['stalled', 'data-corrupt', 'identity-mismatch']);
       const deadline = Date.now() + 120_000;
@@ -301,7 +313,7 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
         + (seen.has('catching-up') ? '（含 catching-up ✅ SC-012 正向观测）' : '（追平太快，未取到 catching-up 样本）'));
 
       // 收尾：链恢复满余量
-      sh('sh', ['scripts/devnet-start.sh']);
+      script('devnet-start.sh');
       assert.equal(await devnetAvailable(), true, '本机 RPC 代理应随边界一起回来');
       for (const id of LOCAL_NODES) assert.ok(isRunning(id), `${id} 应当在运行`);
     });

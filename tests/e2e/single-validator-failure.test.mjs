@@ -4,11 +4,14 @@
 //   1. 少一个验证者时链**照常出块**（等权验证者，容错上限 ⌊n/4⌋ —— 001 研究 R-05）
 //   2. 该节点重启后**自己追上来**，而且追赶期间不被健康检查判为故障、反复重启
 // 第 2 条最容易实现错：把追赶当成不健康，容器就会在节点正常恢复时打断它，恢复变成死循环。
-import { test, describe, before } from 'node:test';
+import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import {
   pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, pickLocalVictims, localVictimSkip, spreadProblems,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 import { maxOffline } from '../../tools/membership/tolerance.mjs';
 
@@ -20,14 +23,23 @@ const LOCAL = pickLocalVictims(1);
 const VICTIM = LOCAL?.[0];
 const CONTAINER = `karmachain-${VICTIM}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 const inspect = (fmt) => {
   try { return execFileSync('docker', ['inspect', '--format', fmt, CONTAINER], { encoding: 'utf8' }).trim(); } catch { return ''; }
 };
 const restartCount = () => Number(inspect('{{.RestartCount}}') || 0);
 
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'single-validator-failure';
 describe('场景 C —— 单个验证者挂掉，链照常出块',
-  { skip: LOCAL ? undefined : localVictimSkip(1), concurrency: 1 }, () => {
+  { skip: (LOCAL ? undefined : localVictimSkip(1)) ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
     // 此前这里是 `assert.equal(VALIDATOR_IDS.length, 5)` —— 加了第六个验证者之后

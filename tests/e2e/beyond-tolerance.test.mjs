@@ -15,6 +15,9 @@ import assert from 'node:assert/strict';
 import {
   pub, sendTx, sh, devnetAvailable, VALIDATOR_IDS, wallet, RECIPIENT,
   pickLocalVictims, localVictimSkip,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 import { parseEther } from 'viem';
 import { maxOffline } from '../../tools/membership/tolerance.mjs';
@@ -26,11 +29,20 @@ import { maxOffline } from '../../tools/membership/tolerance.mjs';
 // 只能靠人工（在两台机器上各执行一次 devnet-stop），或在单机形态下跑。
 // docs/devnet.md 9.6 的演练清单里记着人工做法。
 const VICTIMS = pickLocalVictims(2);
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'beyond-tolerance';
 describe('场景 D —— 超出容错上限后停摆而非分叉',
-  { skip: VICTIMS ? undefined : localVictimSkip(2), concurrency: 1 }, () => {
+  { skip: (VICTIMS ? undefined : localVictimSkip(2)) ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   let checkpoint;   // 越界前的最后一个已确认区块
 
   before(async () => {

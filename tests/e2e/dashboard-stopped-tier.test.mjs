@@ -15,10 +15,13 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   pub, sendTx, sh, devnetAvailable, pickLocalVictims, localVictimSkip, MAX_OFFLINE_VALIDATORS,
+  script,
+  SHELL_SKIP,
+  restoreOrReport,
 } from './lib/devnet.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
 
-const node = (...args) => sh('sh', ['scripts/devnet-node.sh', ...args]);
+const node = (...args) => script('devnet-node.sh', ...args);
 
 /** 要超出容错上限，得停掉 f+1 个验证者。n=5,f=1 时是 2 个。 */
 const NEEDED = MAX_OFFLINE_VALIDATORS + 1;
@@ -30,7 +33,16 @@ const SKIP = !(await devnetAvailable())
     : `${localVictimSkip(NEEDED)} 跨机形态下这一条必然跳过：T-5 保证每边界至多 1 个验证者，`
       + '没有单台机器能同时停掉 2 个。人工做法见 quickstart 场景 C（在两台机器上各 devnet-node kill）。');
 
-describe('面板 —— 超出容错上限时的「已停止」档', { skip: SKIP, concurrency: 1 }, () => {
+// **没有可用的 POSIX shell 时整套跳过**（研究 V-44）。
+// 本套件会改变系统状态，而恢复走 `scripts/devnet-*.sh` —— 跑不了那些脚本就收不了场。
+// 毁坏走 docker（总能跑）而恢复走 sh（可能起不来）的那处不对称，
+// 2026-09-18 真的把 win-1 的 l1-1 与代理留在了停止状态。
+const SUITE_LABEL = 'dashboard-stopped-tier';
+describe('面板 —— 超出容错上限时的「已停止」档', { skip: SKIP ?? SHELL_SKIP, concurrency: 1 }, () => {
+  // **兜底恢复。** 断言在毁坏之后、恢复之前抛出时，旧写法会把节点留在停止状态 ——
+  // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
+  // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
+  after(() => restoreOrReport(SUITE_LABEL));
   let dash;
   let victims = [];
 
