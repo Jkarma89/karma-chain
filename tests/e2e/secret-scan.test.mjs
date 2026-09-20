@@ -9,6 +9,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { findPosixShell, skipReasonFor } from '../../tools/test/posix-shell.mjs';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, extname } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
@@ -150,7 +151,12 @@ const localNodeContainers = (() => {
   } catch { return []; }
 })();
 
-const logsOf = (node, ...args) => execFileSync('sh', ['scripts/devnet-logs.sh', node, ...args], {
+// 起 `.sh` 要一个**看得见本仓库**的 POSIX shell（研究 V-43）：Windows 上 `sh`
+// 可能不在 PATH 里、`bash` 可能是 WSL 的启动器。裸起的后果是 `spawnSync sh ENOENT`,
+// 而这条套件是**密钥扫描** —— 它报红时人第一反应是"泄漏了"，而不是"shell 没找到"。
+const SHELL = findPosixShell();
+
+const logsOf = (node, ...args) => execFileSync(SHELL.cmd, ['scripts/devnet-logs.sh', node, ...args], {
   cwd: REPO_ROOT, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
   stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, MSYS_NO_PATHCONV: '1' },
 });
@@ -159,9 +165,10 @@ const inNode = (node, ...cmd) => execFileSync('docker', ['exec', `karmachain-${n
 });
 
 describe('运行时日志脱敏（FR-026）', {
-  skip: localNodeContainers.length
+  skip: (localNodeContainers.length
     ? undefined
-    : '本机没有运行中的节点容器 —— 跨机形态下每台机器只跑本边界的节点；先 scripts/devnet-start',
+    : '本机没有运行中的节点容器 —— 跨机形态下每台机器只跑本边界的节点；先 scripts/devnet-start')
+    ?? skipReasonFor(SHELL),
 }, () => {
   test('devnet-logs 的默认输出，对本机每个节点都不含密钥材料', () => {
     const leaks = [];

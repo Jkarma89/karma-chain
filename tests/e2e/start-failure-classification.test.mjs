@@ -30,6 +30,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { findPosixShell, skipReasonFor } from '../../tools/test/posix-shell.mjs';
 import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -60,16 +61,20 @@ const docker = (...args) => {
 };
 const compose = (...args) => docker('compose', '-f', COMPOSE_FILE, ...args);
 
+// 起 `.sh` 要一个**看得见本仓库**的 POSIX shell（研究 V-43）：Windows 上裸起 `sh`
+// 要么 ENOENT、要么起到 WSL 去 —— 两种都不是"脚本的行为"，而这套件判的正是脚本的退出码。
+const SHELL = findPosixShell();
+
 /** 跑 devnet-start，返回退出码与合并输出。超时给到脚本自身超时的两倍以上，避免把"被杀"当成结论。 */
 function runStart(extraEnv = {}) {
-  const r = spawnSync('sh', ['scripts/devnet-start.sh'], {
+  const r = spawnSync(SHELL.cmd, ['scripts/devnet-start.sh'], {
     cwd: REPO_ROOT, encoding: 'utf8', timeout: 420_000,
     env: { ...process.env, ...extraEnv },
   });
   return { code: r.status, signal: r.signal, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
-describe('T090 —— devnet-start 的退出码 11 与 20', { skip: SKIP }, () => {
+describe('T090 —— devnet-start 的退出码 11 与 20', { skip: SKIP ?? skipReasonFor(SHELL) }, () => {
   before(() => { assert.ok(compose('ps'), '开发网应已建立 —— 先跑 scripts/devnet-bootstrap 与 devnet-start'); });
 
   after(() => {
