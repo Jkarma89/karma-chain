@@ -22,8 +22,18 @@ if ($ctx.KARMACHAIN_NODE_IDS.Split(' ') -notcontains $Node) {
 # 2026-09-17 在 win-2 上实地撞到：没设 KARMACHAIN_DOMAIN，边界回落成 win-1，
 # `stop l1-2` 去 lan-win-1.yml 里找 l1-2，compose 报 no such service，
 # **而本脚本照报"已停止"**。l1-2 根本没停。
-$localServices = @(Invoke-Quiet { docker compose -f $ctx.Compose config --services }
-    | Where-Object { $_ -and $_.ToString().Trim() } | ForEach-Object { $_.ToString().Trim() })
+# **管道符放在行尾，不要放在行首。**
+#
+# Windows PowerShell 5.1 不接受以 `|` 开头的续行：
+#   不允许使用空管道元素 / EmptyPipeElement
+# PowerShell 7 接受，于是这个错在 7.x 上**看不见** —— 而两台 Windows 机器上跑的是 5.1。
+#
+# 2026-09-20 在 win-2 上实地撞到：整个脚本解析不了，`restart l1-2` 直接是 ParserError。
+# 我此前用 5.1 做语法检查时见过同一句报错，判断成"5.1 更严"就换 7.x 过了 ——
+# 那不是更严，是真的语法错。守卫见 tests/unit/powershell-portability.test.mjs。
+$localServices = @(Invoke-Quiet { docker compose -f $ctx.Compose config --services } |
+    Where-Object { $_ -and $_.ToString().Trim() } |
+    ForEach-Object { $_.ToString().Trim() })
 if ($localServices -notcontains $Node) {
     Write-Host "devnet-node: 本机（边界 $($ctx.Domain)）不承载节点 '$Node'"
     Write-Host "  本机承载: $($localServices -join ' ')"
