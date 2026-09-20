@@ -58,7 +58,7 @@ import { removalImpact, signerAvailability } from './tolerance.mjs';
 // 复制一份的后果不是多几行字，是两条路径对"消息长什么样"各有一套理解。
 import {
   step2, registrationConfirmationMessage, aggregateConfirmationSignatures,
-  packWarpPredicate, WARP_PRECOMPILE_ADDRESS, memberCandidates,
+  packWarpPredicate, WARP_PRECOMPILE_ADDRESS, memberCandidates, messageIdToCb58,
 } from './add-validator.mjs';
 
 // 与加入共用同一套退出码（exit-codes.mjs）。此前这里是 3 / 11 / 12，
@@ -66,6 +66,9 @@ import {
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { ask } from './ask.mjs';
+
+const NEWLINE = String.fromCharCode(10);
+import { readVerificationWeights, nudgePChainHeight } from './pchain-verification-set.mjs';
 
 /**
  * 从链上观测退出进度。**不读任何状态文件。**
@@ -479,6 +482,129 @@ export function innerMessageOf(unsignedWarpMessageHex) {
  * 签名者仍是 **L1 自己的验证者**（研究 V-34 —— 名字叫
  * `requirePrimaryNetworkSigners` 的那个配置项与实际效果不一致，我判断错过一轮）。
  */
+/**
+ * 从一条 warp 消息里剥出 `RegisterL1ValidatorMessage` 的**内层载荷**，
+ * 并用 `sha256(载荷) === validationID` **自校验**。
+ *
+ * ## 为什么必须剥
+ *
+ * `warp_getMessage` 给的是**整条未签名 warp 消息**（本次 258 字节），而 justification
+ * 要的是它最内层那 182 字节。传整条的后果**不是报错**：每个节点都静默拒签，
+ * 聚合器只报 `accumulatedWeight: 0` —— 与"网络连不上"长得一模一样，
+ * 而工具当时的提示还把人指向 `allow-private-ips`。
+ *
+ * ## 字节布局是**穷举撞哈希**定下来的，不是照文档抄的
+ *
+ * 2026-09-19：拿那 258 字节的**每一个子串**去算 sha256，只有 `[76, 258)` 撞上
+ * validationID。回头对结构，正好是：
+ *
+ *   warp 头            2（codec）+ 4（networkID）+ 32（sourceChainID）+ 4（载荷长）= 42
+ *   AddressedCall 头   2（codec）+ 4（typeID）+ 4（地址长）+ 20（地址）+ 4（载荷长）= 34
+ *   → 内层从 42 + 34 = 76 开始
+ *
+ * 与 `genesisValidationIndex` 同一条方法：**公式对得上就是对得上**，
+ * 不靠文档、不靠字段名。
+ *
+ * ## 自校验不是可选的
+ *
+ * 布局哪天变了，剥出来的还是一段"看起来像载荷"的字节 —— 而后果又是静默拒签。
+ * 所以这里**先算哈希再返回**：对不上就抛，把一次静默失败换成一句说得清的话。
+ */
+export function registerMessagePayload({ warpMessage, validationID }) {
+  const buf = Buffer.from(String(warpMessage).replace(/^0x/i, ''), 'hex');
+  const need = (n, what) => {
+    if (buf.length < n) throw new Error(`warp 消息只有 ${buf.length} 字节，读不到${what}`);
+  };
+  need(42, ' warp 头');
+  const warpPayloadLen = buf.readUInt32BE(38);
+  need(42 + warpPayloadLen, ' warp 载荷');
+  const payload = buf.subarray(42, 42 + warpPayloadLen);
+  // AddressedCall
+  let o = 2 + 4;                          // codec + typeID
+  if (payload.length < o + 4) throw new Error('AddressedCall 太短，读不到源地址长度');
+  const addrLen = payload.readUInt32BE(o); o += 4;
+  o += addrLen;
+  if (payload.length < o + 4) throw new Error('AddressedCall 太短，读不到内层载荷长度');
+  const innerLen = payload.readUInt32BE(o); o += 4;
+  if (payload.length < o + innerLen) throw new Error('AddressedCall 的内层载荷被截断');
+  const inner = payload.subarray(o, o + innerLen);
+
+  const got = createHash('sha256').update(inner).digest('hex');
+  const want = String(validationID).replace(/^0x/i, '').toLowerCase();
+  if (got !== want) {
+    throw new Error(`剥出来的载荷（${inner.length} 字节）算出的 sha256 是 ${got}，`
+      + ` 而 validationID 是 ${want} —— **两者必须相等**（validationID 就是它的 sha256）。`
+      + ' 布局大概变了：拿整条消息的每个子串去撞一次哈希，能重新定出偏移。'
+      + ' 不要带着对不上的载荷往下走 —— 那会让每个节点静默拒签，'
+      + ' 而聚合器只会报 accumulatedWeight: 0，与网络不通长得一样。');
+  }
+  return `0x${inner.toString('hex')}`;
+}
+
+/**
+ * 退一个**后加入的**成员时，第四步的 justification 要当初那条**注册消息的原文**。
+ *
+ * ## 为什么此前没有人发现它缺
+ *
+ * `step4Remove` 从第一版就有 `registerMessage` 这个参数，而命令行**从来没传过它**。
+ * 没显形是因为在此之前退的每一个成员都是**创世派生**的 —— 那条路走
+ * `SubnetIDIndex`，用不到注册消息。
+ *
+ * 2026-09-19（T034 准备期）第一次退一个**经 ACP-77 注册过**的成员：l1-2 是创世出身，
+ * 但 T033 把它加回来时重新注册了一次，于是它的 validationID 不再是创世公式派生的。
+ * 两支都取不到材料，第四步在**准备阶段**就停下（还没发交易 —— 这是对的）。
+ *
+ * 这是"把退掉的创世验证者加回来"造出的**混合身份**第二次咬人：
+ * 第一次是 T033 的 `publicMaterialFor`（声明里没有它的 identity 块，材料在建链制品里）。
+ * 两次的形状相同 —— **代码里那个"要么 A 要么 B"的分支，遇到了既是 A 又是 B 的东西。**
+ *
+ * ## 消息从哪来
+ *
+ * 合约的 `InitiatedValidatorRegistration` 事件带 `registrationMessageID`，
+ * 而**原文**要向节点要（`warp_getMessage`）—— 与第二步取消息是同一条路。
+ * 逐个节点试：这条消息在每个节点的库里都有（是本链自己发的），
+ * 但单个节点可能正好不在。
+ */
+export async function fetchRegisterMessage({
+  config, identity, memberSet, validationID, fetchImpl = fetch, timeoutMs = 8000,
+}) {
+  const want = String(validationID).replace(/^0x/i, '').toLowerCase();
+  const ev = (memberSet.history ?? []).find((h) => h.eventName === 'InitiatedValidatorRegistration'
+    && String(h.validationID ?? '').replace(/^0x/i, '').toLowerCase() === want);
+  if (!ev?.registrationMessageID) return null;
+  const messageId = messageIdToCb58(ev.registrationMessageID);
+  const d = deriveTopology(config);
+  const errors = [];
+  for (const n of d.topologyNodes.filter((x) => x.role === 'l1-validator')) {
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await fetchImpl(`http://${n.address}:${n.httpPort}/ext/bc/${identity.blockchainId}/rpc`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0', id: 1, method: 'warp_getMessage', params: [messageId],
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      // eslint-disable-next-line no-await-in-loop
+      const j = await r.json();
+      if (j.error) throw new Error(j.error.message);
+      if (j.result) {
+        return {
+          // **剥到内层并自校验** —— 传整条 warp 消息的后果是静默拒签
+          registerMessage: registerMessagePayload({ warpMessage: j.result, validationID }),
+          via: n.id,
+          messageId,
+        };
+      }
+    } catch (err) {
+      errors.push(`${n.id}: ${err.message.slice(0, 60)}`);
+    }
+  }
+  throw new Error(`拿不到注册消息 ${messageId} 的原文 —— 逐个节点都问过了：`
+    + `${NEWLINE}  ${errors.join(`${NEWLINE}  `)}`);
+}
+
 export async function step4Remove({
   client, validationID, networkId, subnetId, aggregatorUrl, ownerAccount,
   registerMessage = null, dryRun = false,
@@ -549,6 +675,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     return i === -1 ? undefined : (args[i + 1] ?? true);
   };
   const autoYes = args.includes('--yes');
+  // 推进 P 链那一格是**工具自己提议的额外交易**，不在用户要做的四步里，
+  // 所以它不吃 --yes（与加入那侧同一条规矩）。要它就显式写 --nudge。
+  const allowNudge = args.includes('--nudge');
   const nodeId = flag('--node-id');
   if (!nodeId || nodeId === true) {
     console.error('用法: node tools/membership/remove-validator.mjs --node-id NodeID-… [--emergency] [--yes]');
@@ -740,6 +869,59 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       console.error('\n✗ 第一步的事件里没有 validatorWeightMessageID —— 无法进行第二步。');
       process.exit(EXIT_STEP_FAILED);
     }
+    // ── P 链验证 warp 消息用的是**前一格**的集合（研究 V-34）──────────────
+    //
+    // 退出这一侧也要过这一关，而且它的表现更隐蔽：不是"权重不够"，是**位图越界**。
+    // 2026-09-19 实测（T034 准备期）：当前 6 个成员，而链按高度 11−1 = 10 那格的
+    // 5 个验，于是位图里第 6 个位置在链看来不存在：
+    //
+    //   unknown validator: NumIndices (5) >= NumFilteredValidators (5)
+    //
+    // 那次的成因是 T033 的注册正是把高度推到 11 的那一块，此后 P 链没再前进 ——
+    // 所以**紧接在一次成员变更之后的任何 warp 交易**都会撞上。
+    // 收多少签名都过不去：位图按当前集合编号，而链按另一个集合解。
+    const weights = await readVerificationWeights({ pchain, subnetId: identity.subnetId });
+    if (weights.lagging) {
+      console.error(`\n⚠ **P 链验证用的集合比当前集合落后一格**（刚发生过一次成员变更）：`);
+      console.error(`  当前集合    高度 ${weights.height}：${weights.currentCount} 个，合计权重 ${weights.currentTotal}`);
+      console.error(`  验证用集合  高度 ${weights.verifyHeight}：${weights.verifyCount} 个，合计权重 ${weights.verifyTotal}`);
+      console.error('  **必须先把 P 链推进一格** —— 两个集合的成员数不同时，位图的索引会越界，');
+      console.error('  链报的是 `unknown validator: NumIndices (…) >= NumFilteredValidators (…)`，');
+      console.error('  而那跟「收几个签名」无关。P 链**不会自己出块**，所以等也没用。');
+      const nudgeArgs = {
+        privateKeyHex: entry.privateKey,
+        pchainUri: `http://${primary.address}:${primary.httpPort}`,
+      };
+      if (!allowNudge) {
+        console.error('\n  要推进就带 --nudge 重跑本命令（它会先推掉这一格，再继续退出）：');
+        console.error(`  scripts/devnet-member.sh remove --node-id ${nodeId} --nudge`);
+        process.exit(EXIT_STEP_FAILED);
+      }
+      let nudged;
+      try {
+        nudged = await nudgePChainHeight(nudgeArgs);
+      } catch (err) {
+        console.error(`\n✗ 推进失败：${err.message}`);
+        console.error('  这一笔与退出无关，失败不会留下任何中间态 —— 可直接重跑。');
+        process.exit(EXIT_STEP_FAILED);
+      }
+      console.error(`  ✓ 交易 ${nudged.txId}，手续费 ${nudged.fee} nAVAX`);
+      let after = weights;
+      for (let i = 0; i < 30 && after.height <= weights.height; i += 1) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 2_000));
+        // eslint-disable-next-line no-await-in-loop
+        after = await readVerificationWeights({ pchain, subnetId: identity.subnetId });
+      }
+      if (after.height <= weights.height) {
+        console.error('  ✗ 等了 60 秒 P 链高度没涨 —— 交易还没被接受。稍后重跑本命令。');
+        process.exit(EXIT_STEP_FAILED);
+      }
+      console.error(`  ✓ 高度 ${weights.height} → ${after.height}，`
+        + `验证集合 ${weights.verifyCount} 个 → ${after.verifyCount} 个`
+        + `（当前 ${after.currentCount} 个）`);
+    }
+
     const set = await readMemberSet({ client });
     let s2;
     try {
@@ -810,6 +992,23 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   }
 
   if (progress.step === 3) {
+    // **后加入的成员要带上当初那条注册消息**（见 fetchRegisterMessage）。
+    // 创世派生的那些用不到它，所以取不到也不当失败 —— 由 step4Remove 里
+    // 那个"按证据选支"的判定决定该用哪一支。
+    let registerMessage = null;
+    try {
+      const found = await fetchRegisterMessage({
+        config, identity, memberSet: await readMemberSet({ client }),
+        validationID: progress.validationID,
+      });
+      if (found) {
+        registerMessage = found.registerMessage;
+        console.error(`  注册消息    ${found.messageId}（取自 ${found.via}）`);
+      }
+    } catch (err) {
+      console.error(`  ⚠ 取注册消息失败：${err.message}`);
+      console.error('    创世派生的成员用不到它；后加入的成员没有它就走不下去。');
+    }
     const args4 = {
       client,
       validationID: progress.validationID,
@@ -817,6 +1016,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       subnetId: identity.subnetId,
       aggregatorUrl,
       ownerAccount,
+      registerMessage,
     };
     let plan;
     try {

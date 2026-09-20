@@ -121,8 +121,18 @@ switch ($Action) {
     'wipe'    {
         Invoke-Quiet { docker compose -f $ctx.Compose stop $Node } | Out-Null
         Invoke-Quiet { docker compose -f $ctx.Compose rm -f $Node } | Out-Null
-        docker volume rm -f $volume | Out-Null
-        Write-Host "devnet-node: $Node 的数据卷已删除 —— 'start' 后它会从对等节点重新同步"
+        Invoke-Quiet { docker volume rm -f $volume } | Out-Null
+        # **卷真的没了吗** —— 与 .sh 同一段理由。wipe 是最不该报假成功的一个：
+        # 假成功之后 start 会把带着原数据的节点拉回来，秒级追平，
+        # 于是想观察的引导窗口根本不存在，而人会以为是"没观察到"。
+        Invoke-Quiet { docker volume inspect $volume } | Out-Null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "devnet-node: **$Node 的数据卷没有被删除** —— 它还在（$volume）"
+            Write-Host '  多半是还有容器占着它。先 stop 那个容器，或 docker ps -a 看谁在用。'
+            Write-Host '  不要把这次当成已生效：数据还在，节点起来后不会重新同步。'
+            exit 20
+        }
+        Write-Host "devnet-node: $Node 的数据卷已删除（已核实它确实不存在了）—— 'start' 后它会从对等节点重新同步"
         Write-Host '  身份不在数据卷里（只读挂载自仓库），因此 NodeID 不变（研究 R-03）'
     }
 }

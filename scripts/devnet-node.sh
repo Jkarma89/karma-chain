@@ -132,8 +132,20 @@ case "$ACTION" in
   wipe)
     docker compose -f "$COMPOSE" stop "$NODE" >/dev/null 2>&1 || true
     docker compose -f "$COMPOSE" rm -f "$NODE" >/dev/null 2>&1 || true
-    docker volume rm -f "$VOLUME" >/dev/null
-    echo "devnet-node: ${NODE} 的数据卷已删除 —— 'start' 后它会从对等节点重新同步"
+    docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
+    # **卷真的没了吗** —— wipe 是这几个动作里最不该报假成功的一个。
+    #
+    # 卷被别的容器占着时 `docker volume rm` 会失败，而上一版无条件打印"已删除"。
+    # 那种假成功的后果不是"少删一次"：随后的 start 会把**带着原数据**的节点拉回来，
+    # 它秒级追平，于是想观察的引导窗口根本不存在 —— 而人会以为是"没观察到"。
+    # 2026-09-19 补（研究 V-36 的同一形状，那次是 restart）。
+    if docker volume inspect "$VOLUME" >/dev/null 2>&1; then
+      echo "devnet-node: **${NODE} 的数据卷没有被删除** —— 它还在（${VOLUME}）" >&2
+      echo "  多半是还有容器占着它。先 'stop' 那个容器，或 docker ps -a 看谁在用。" >&2
+      echo "  不要把这次当成已生效：数据还在，节点起来后不会重新同步。" >&2
+      exit 20
+    fi
+    echo "devnet-node: ${NODE} 的数据卷已删除（已核实它确实不存在了）—— 'start' 后它会从对等节点重新同步"
     echo "  身份不在数据卷里（只读挂载自仓库），因此 NodeID 不变（研究 R-03）"
     ;;
   *)
