@@ -22,6 +22,7 @@ import assert from 'node:assert/strict';
 import { pub, sendTx, sh, devnetAvailable, NODE_IDS, containerExists, localNodeIds , script,
   SHELL_SKIP,
   restoreOrReport,
+ acquireDestructiveLock,
 } from './lib/devnet.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
 
@@ -53,6 +54,10 @@ describe('面板 —— 两个 Primary 全停时 L1 健康度不受影响', { sk
   // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
   // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
   after(() => restoreOrReport(SUITE_LABEL));
+  // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
+  // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
+  // 一条只写在文档里的规矩，不会在有人违反时变红。
+  before(() => acquireDestructiveLock(SUITE_LABEL));
   let dash;
 
   before(async () => {

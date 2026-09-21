@@ -15,6 +15,7 @@ import {
   script,
   SHELL_SKIP,
   restoreOrReport,
+ acquireDestructiveLock,
 } from './lib/devnet.mjs';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 
@@ -45,6 +46,10 @@ describe('场景 E —— 单节点数据损坏，故障不外溢',
   // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
   // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
   after(() => restoreOrReport(SUITE_LABEL));
+  // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
+  // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
+  // 一条只写在文档里的规矩，不会在有人违反时变红。
+  before(() => acquireDestructiveLock(SUITE_LABEL));
   let heightAtWipe;
 
   before(async () => {

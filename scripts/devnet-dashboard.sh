@@ -99,7 +99,13 @@ mkdir -p ./.devnet
 # 因此**改 package-lock.json 必须重建镜像**（Dockerfile 顶部已注明）。
 #
 # 挂载集合由 tests/unit/dashboard-container-env.test.mjs 守住四对脚本一致，防止漂移。
-exec env MSYS_NO_PATHCONV=1 docker run --rm $TTY \
+# **给它一个名字**（研究 V-38）。此前没有 --name，容器叫 interesting_booth 这类随机名 ——
+# 而本脚本自己说的是"Ctrl-C 停止"：终端一关，就只能靠端口或镜像名去认它，
+# 而那两样都可能同时对上别的容器。长驻进程要能被按名字找到、按名字停掉。
+#
+# 一台机器上只该有一个面板，所以名字不带边界后缀 —— 重名时 docker 直接报错，
+# 那正是想要的。
+exec env MSYS_NO_PATHCONV=1 docker run --rm --name karmachain-dashboard $TTY \
   --network "$NETWORK" \
   -p "${PORT}:${PORT}" \
   -e KARMACHAIN_RPC_URL="$(devnet_container_rpc_url "$DOMAIN")" \

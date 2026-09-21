@@ -14,6 +14,7 @@ import {
   script,
   SHELL_SKIP,
   restoreOrReport,
+ acquireDestructiveLock,
 } from './lib/devnet.mjs';
 
 // 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
@@ -54,6 +55,10 @@ describe('V-03 —— 引导中途被强制终止',
   // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
   // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
   after(() => restoreOrReport(SUITE_LABEL));
+  // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
+  // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
+  // 一条只写在文档里的规矩，不会在有人违反时变红。
+  before(() => acquireDestructiveLock(SUITE_LABEL));
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });

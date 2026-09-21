@@ -1330,8 +1330,25 @@ docker build -f docker/aggregator/Dockerfile \
   --build-arg TARGETARCH=$(dpkg --print-architecture) -t karmachain/aggregator:local .
 docker run -d --rm --name karmachain-aggregator -p 8646:8646 \
   -v "$PWD/blockchain:/repo/blockchain:ro" karmachain/aggregator:local
-curl -s http://127.0.0.1:8646/health     # 必须是 "up"
+curl -s http://127.0.0.1:8646/health     # "up" 只说进程活着 —— **不等于可用**
 ```
+
+**`up` 不是就绪信号。** 2026-09-19 实测（研究 V-48）：重启后 13 秒就用它，
+`/health` 已经是 `up`，而它**一个验证者都没连上** —— 第四步直接报
+`accumulatedWeight: 0`，长得和「网络配置错了」一模一样。
+它要先与两个 Primary 握手、再经 gossip 学到各 L1 验证者的 IP 声明，实测约需 60–90 秒。
+
+真正可判的是**它连上了签名集合多少权重**（指标在 8647，与 API 同主机）。
+它与工具容器同网，所以从任何一个同网容器里问都行：
+
+```bash
+docker run --rm --network compose_default karmachain/verify:local node -e "fetch('http://karmachain-aggregator:8647/metrics').then(r=>r.text()).then(t=>console.log(t))" | grep connected_stake
+# signature_aggregator_connected_stake_weight_percentage{subnetID="…"} 100
+```
+
+**低于门槛（67%）就收不齐签名**，而那与 `allow-private-ips` 无关 —— 等一会儿即可。
+只有它**长期停在 0** 才去查那个配置。`devnet-member` 的失败消息现在会自己报出这个数，
+并据此把「刚起来还没连上」与「某个验证者不签」分开说。
 
 不在本机时用 `KARMACHAIN_AGGREGATOR_URL` 指过去。
 

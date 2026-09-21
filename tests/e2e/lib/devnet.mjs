@@ -3,7 +3,7 @@
 // 这些测试只通过**对外接口**操作开发网：scripts/devnet-* 与 RPC。
 // 不直接读节点内部状态 —— 否则测的就不是"用户能观察到的恢复"了。
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createPublicClient, createWalletClient, http, defineChain, parseEther } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -249,6 +249,65 @@ export const script = (name, ...args) => {
 export const start = () => script('devnet-start.sh');
 
 /**
+ * **破坏性套件必须串行** —— 这把锁挡的是"两次运行同时打同一条链"。
+ *
+ * ## 为什么需要它
+ *
+ * `--test-concurrency=1` 只保证**一次运行内**文件串行（npm-scripts 那条守卫钉着它）。
+ * 它挡不住的是：把一次完整 e2e 放到后台跑，**同时**又在同一条链上跑别的破坏性套件。
+ *
+ * 2026-09-19 我就是这么干的（研究 V-44）。链一直没事 ——
+ * **而它没事是因为容错刚好够，不是因为我做得对**：两轮故障注入各自以为
+ * "现在只有我在动节点"，而它们的判据全都建立在那个前提上。
+ *
+ * 那条教训此前只写在 research 里。**一条只写在文档里的规矩，不会在有人违反时变红。**
+ *
+ * ## 它挡得住什么、挡不住什么
+ *
+ * 挡得住：**同一台机器**上两次并发的破坏性运行。
+ * 挡不住：两台机器分别对同一条链做故障注入 —— 锁在 `.devnet/` 里，是本机的。
+ * 这一点要说出来，而不是让人以为有了锁就万无一失。
+ *
+ * ## 陈旧的锁
+ *
+ * 崩溃的运行会留下锁文件。按**持有者进程还在不在**判断：不在就接管，并打印一行
+ * 说明接管了谁 —— 静默接管等于没有锁。
+ */
+// 换行常量：模板串里直接写转义在本仓库被多层引号搬运时会丢，
+// 而 2026-09-21 就因为引用了一个**没定义**的 NEWLINE，让这把锁
+// 以 ReferenceError 拦住了运行 —— 拦对了结果、错了原因，那句说明一个字没送出去。
+const NEWLINE = String.fromCharCode(10);
+
+export function acquireDestructiveLock(label) {
+  const path = resolve(REPO_ROOT, '.devnet', 'destructive.lock');
+  const mine = { pid: process.pid, label, at: new Date().toISOString() };
+
+  const alive = (pid) => {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  };
+
+  let held = null;
+  try { held = JSON.parse(readFileSync(path, 'utf8')); } catch { /* 没有锁，或读不动 */ }
+
+  if (held && held.pid !== process.pid && alive(held.pid)) {
+    throw new Error(
+      `**已经有一次破坏性运行在进行中**：pid ${held.pid}「${held.label}」，起于 ${held.at}。`
+      + `${NEWLINE}  破坏性套件必须串行 —— 两轮故障注入并发时，各自的判据都建立在`
+      + `${NEWLINE}  "现在只有我在动节点"这个前提上，而那个前提不成立。`
+      + `${NEWLINE}  等它跑完，或确认它已经死了之后删掉 ${path}。`,
+    );
+  }
+  if (held && !alive(held.pid)) {
+    process.stderr.write(`（接管一把陈旧的锁：pid ${held.pid}「${held.label}」已经不在了）${NEWLINE}`);
+  }
+
+  writeFileSync(path, JSON.stringify(mine));
+  const release = () => { try { rmSync(path, { force: true }); } catch { /* 已经没了 */ } };
+  process.on('exit', release);
+  return release;
+}
+
+/**
  * **没有恢复路径时直接拒绝。**
  *
  * 2026-09-18（V-44）撞到的不对称：`docker kill` 能跑，不代表我们能把它起回来。
@@ -257,7 +316,20 @@ export const start = () => script('devnet-start.sh');
  */
 export function killAll() {
   if (!SHELL) throw new Error(`拒绝执行 killAll()：起不回来。${SHELL_SKIP}`);
-  const ids = sh('docker', ['ps', '-q', '--filter', 'name=karmachain-']).trim().split(/\s+/).filter(Boolean);
+  // **只杀节点容器 —— 聚合器不算。**
+  //
+  // 过滤条件 `name=karmachain-` 比这个函数的说法宽：它也匹配 `karmachain-aggregator`，
+  // 而聚合器是**按需容器**，`start()`（devnet-start）不会把它带回来。
+  // 于是跑完一轮崩溃恢复之后，下一次成员变更会以退出码 10 报「找不到聚合器」——
+  // 那句话是对的，但它本不该发生：这一轮从没打算动它。
+  //
+  // 2026-09-21 实测到（验证 V-44 那把锁时顺带发现）。
+  const NOT_A_NODE = new Set(['karmachain-aggregator']);
+  const ids = sh('docker', ['ps', '--format', '{{.ID}} {{.Names}}', '--filter', 'name=karmachain-'])
+    .trim().split(/\r?\n/).filter(Boolean)
+    .map((line) => line.trim().split(/\s+/))
+    .filter(([, name]) => !NOT_A_NODE.has(name))
+    .map(([id]) => id);
   if (ids.length) sh('docker', ['kill', ...ids]);
   return ids.length;
 }

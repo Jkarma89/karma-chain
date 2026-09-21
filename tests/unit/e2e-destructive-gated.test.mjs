@@ -142,3 +142,52 @@ describe('③ 那两个入口自己也要拦得住', () => {
       'after 里抛异常会把真正的断言失败原因盖掉，而那个原因才是人要看的');
   });
 });
+
+describe('④ 破坏性套件必须**串行** —— 一条只写在文档里的规矩不会变红', () => {
+  // `--test-concurrency=1` 只保证**一次运行内**文件串行（npm-scripts 那条守卫钉着它）。
+  // 它挡不住的是：把一次完整 e2e 放到后台跑，**同时**又在同一条链上跑别的破坏性套件。
+  // 2026-09-19 我就是这么干的（V-44）。链没事是因为容错刚好够，不是因为我做得对。
+  const needLock = destructiveFiles.filter((f) => {
+    const src = srcOf(f);
+    return src.includes('killAll(') || src.includes("'kill'") || src.includes("'stop'")
+      || src.includes("'wipe'");
+  });
+
+  test('需要加锁的那批不为空', () => {
+    assert.ok(needLock.length >= 8, `只有 ${needLock.length} 个 —— 识别特征大概漂了`);
+  });
+
+  for (const f of needLock) {
+    test(`${f} 在 before 里取锁`, () => {
+      assert.ok(srcOf(f).includes('before(() => acquireDestructiveLock('),
+        `${f} 没有取锁 —— 两轮故障注入并发时，各自的判据都建立在
+`
+        + '  "现在只有我在动节点"这个前提上，而那个前提不成立。');
+    });
+  }
+
+  test('锁自己：拒绝时说得清，陈旧时接管并说出来，退出时释放', () => {
+    const LIB = readFileSync(resolve(E2E, 'lib/devnet.mjs'), 'utf8');
+    assert.match(LIB, /已经有一次破坏性运行在进行中/, '拒绝时要说清是谁在跑');
+    assert.match(LIB, /接管一把陈旧的锁/,
+      '静默接管等于没有锁 —— 崩溃留下的锁被接管时必须打印一行');
+    assert.ok(LIB.includes("process.on('exit', release)"),
+      '退出时不释放的话，一次正常运行会把后面所有运行都挡住');
+    assert.ok(LIB.includes('alive(held.pid)'),
+      '要按持有者进程还在不在判断陈旧 —— 只看文件在不在会把崩溃留下的锁当成活的');
+  });
+
+  test('killAll 不杀聚合器 —— 它不是节点，而且 start() 不会把它带回来', () => {
+    const LIB = readFileSync(resolve(E2E, 'lib/devnet.mjs'), 'utf8');
+    // **查那个集合里真的有它，而不是"文件里提到过"。**
+    // 第一版写的是 `assert.match(LIB, /NOT_A_NODE/)` + `/karmachain-aggregator/` ——
+    // 而把 Set 清空之后这两个字符串仍在（注释里就有），守卫照旧全绿（变红检查抓到）。
+    // 这是本轮第三次犯同一个错：**断言"提到过"，而不是断言"做了"。**
+    const QUOTE = String.fromCharCode(39);
+    const wanted = `new Set([${QUOTE}karmachain-aggregator${QUOTE}])`;
+    assert.ok(LIB.includes(wanted),
+      `killAll 的排除集合里没有 karmachain-aggregator（找 ${wanted}）。`
+      + '过滤条件 name=karmachain- 也匹配它，而杀掉之后 devnet-start 不会把它带回来 ——'
+      + ' 下一次成员变更就会以退出码 10 失败，而这一轮从没打算动它');
+  });
+});

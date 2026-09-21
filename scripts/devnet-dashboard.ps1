@@ -55,7 +55,13 @@ if ($deploy) { $serverArgs += @('--deployment', $deploy) }
 # `-t` 只在 stdin 确实是终端时才加：非交互调用下 docker 会报
 # `cannot attach stdin to a TTY-enabled container because stdin is not a terminal`。
 # 不加 -t 时 docker CLI 的 sig-proxy 仍会把 Ctrl-C 转成 SIGTERM 送进容器。
-$dockerArgs = @('run', '--rm')
+# **给它一个名字**（研究 V-38）。此前没有 --name，容器叫 interesting_booth 这类随机名 ——
+# 而本脚本自己说的是"Ctrl-C 停止"：终端一关，就只能靠端口或镜像名去认它，
+# 而那两样都可能同时对上别的容器。长驻进程要能被按名字找到、按名字停掉。
+#
+# 一台机器上只该有一个面板，所以名字不带边界后缀 —— 重名时 docker 直接报错，
+# 那正是想要的。
+$dockerArgs = @('run', '--rm', '--name', 'karmachain-dashboard')
 if (-not [Console]::IsInputRedirected) { $dockerArgs += '-t' }
 # -p 让宿主浏览器能连上；--network 让容器能探到节点（单机形态是容器网段，跨机是局域网 IP）
 # 人工探活要走**对外的 RPC 入口**（本边界的 nginx 代理），而容器内的 127.0.0.1

@@ -7,6 +7,7 @@ import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { pub, sendTx, killAll, start, waitReady, devnetAvailable, RECIPIENT , SHELL_SKIP,
   restoreOrReport,
+ acquireDestructiveLock,
 } from './lib/devnet.mjs';
 
 const ROUNDS = Number(process.env.KARMACHAIN_CRASH_ROUNDS ?? 50);
@@ -21,6 +22,10 @@ describe(`场景 B —— ${ROUNDS} 轮强制终止后仍不丢状态`, { skip: 
   // 而报出来的是"断言失败"，不是"我改了什么"。`after` 无论成败都跑。
   // 它自己不抛（见 restoreOrReport）：在 after 里抛会盖掉真正的失败原因。
   after(() => restoreOrReport(SUITE_LABEL));
+  // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
+  // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
+  // 一条只写在文档里的规矩，不会在有人违反时变红。
+  before(() => acquireDestructiveLock(SUITE_LABEL));
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });

@@ -1155,6 +1155,47 @@ export function registrationConfirmationMessage({ validationID, networkId, regis
  *   `invalid justification type: <nil>`（2026-09-16 实测）。
  *   构造见 remove-validator.mjs 的 removalJustification。
  */
+/**
+ * 聚合器**连上了签名集合多少权重** —— 这才是"可用了没有"的判据。
+ *
+ * ## `/health` 说 up 的时候，它可能一个验证者都没连上
+ *
+ * 2026-09-19 实测（研究 V-48）：重启聚合器后 13 秒就用它 →
+ * `accumulatedWeight: 0`、`Failed to connect to a threshold of stake`，
+ * 而同一时刻 `curl /health` **已经是** `{"status":"up"}`。等约 90 秒后同一条命令就过了。
+ *
+ * **`up` 只说进程活着**：它还要先与两个 Primary 握手、再经 gossip 学到各 L1 验证者的
+ * IP 声明，才谈得上收签名。而文档当时只教人 `curl /health` 必须是 up ——
+ * 一个恒真的就绪信号，等于没有就绪信号。
+ *
+ * 真正可判的数在它自己的指标里（端口 8647，与 API 的 8646 同主机）：
+ *
+ *   signature_aggregator_connected_stake_weight_percentage{subnetID="…"} 100
+ *
+ * 刚起来时是 0，连齐了是 100。**低于门槛就收不齐签名**，与网络配置无关。
+ *
+ * 读不到时返回 `null` —— **"没读到"与"是 0"是两件事**，不得混淆
+ *（指标端口可能没发布，或它在别的机器上）。
+ */
+export async function aggregatorConnectedStake({
+  aggregatorUrl, subnetId = null, fetchImpl = fetch, timeoutMs = 5000,
+}) {
+  const base = String(aggregatorUrl).replace(/\/$/, '').replace(/:\d+$/, '');
+  try {
+    const r = await fetchImpl(`${base}:8647/metrics`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!r.ok) return null;
+    const rows = (await r.text()).split('\n')
+      .filter((l) => l.startsWith('signature_aggregator_connected_stake_weight_percentage'));
+    if (!rows.length) return null;
+    // 有 subnetId 就取那一条；没有就取第一条
+    const row = (subnetId && rows.find((l) => l.includes(subnetId))) || rows[0];
+    const pct = Number(row.trim().split(/\s+/).pop());
+    return Number.isFinite(pct) ? pct : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function aggregateConfirmationSignatures({
   aggregatorUrl, unsignedMessage, signingSubnetId, justification = null,
   quorumPercentage = 67, timeoutMs = 90_000,
@@ -1186,11 +1227,25 @@ export async function aggregateConfirmationSignatures({
   }
   const body = await r.json();
   if (body.error) {
+    // **先问聚合器它自己连上了多少** —— 那一个数能把两种完全不同的成因分开：
+    //「它刚起来还没连上」与「某个验证者不签」。此前这条消息只会把人指向
+    // allow-private-ips，而 2026-09-19 那次的真因是**起来才 13 秒**（研究 V-48）。
+    const pct = await aggregatorConnectedStake({
+      aggregatorUrl, subnetId: signingSubnetId,
+    });
+    const reach = pct === null
+      ? '  （读不到聚合器的连通性指标 —— 端口 8647 没发布，或它在别的机器上）'
+      : `  **此刻它连上了签名集合 ${pct}% 的权重**（门槛 ${quorumPercentage}%）。`
+        + (pct < quorumPercentage
+          ? '\n  低于门槛 —— **它多半是刚起来还没连上**：要先与两个 Primary 握手、'
+            + '再经 gossip 学到各验证者的 IP 声明，实测约需 60–90 秒。等一会儿重跑。'
+            + '\n  若长期停在 0，那才去查 allow-private-ips。'
+          : '\n  已达门槛 —— 那问题不在连通性，而在某个验证者不签'
+            + '（它自己能签、HTTP 也通，但别人经 P2P 要不到 —— 实测修法是'
+            + ' up -d --force-recreate 重建那个容器）。');
     throw new Error(`聚合器没能收齐签名：${body.error}\n`
-      + '  签名者是 **L1 自己的验证者**（见本函数顶部那段），等权 n 个、门槛 67%\n'
-      + '  —— n = 6 时要 5 个签。常见成因：某个验证者不签（它自己能签、HTTP 也通，\n'
-      + '  但别人经 P2P 要不到 —— 实测修法是 up -d --force-recreate 重建那个容器），\n'
-      + '  或聚合器连不上它们（日志里 connectedWeight 为 0 时，多半是缺 allow-private-ips）。');
+      + '  签名者是 **L1 自己的验证者**（见本函数顶部那段），等权 n 个、门槛 67%。\n'
+      + reach);
   }
   const signed = body['signed-message'];
   if (!signed) {
