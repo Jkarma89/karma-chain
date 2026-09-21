@@ -166,6 +166,7 @@ export async function probeChain({ protocol } = {}) {
     return {
       confirmed: null, blockNumber: null, elapsedMs: 0, txHash: null,
       error: '已有探活在进行中 —— 同一时刻只允许一笔在飞（避免 nonce 间隙）',
+      httpStatus: null,
       busy: true,
     };
   }
@@ -189,6 +190,7 @@ export async function probeChain({ protocol } = {}) {
           elapsedMs,
           txHash,
           error: null,
+          httpStatus: null,
           via: rpcUrl,
         }
         : {
@@ -197,6 +199,7 @@ export async function probeChain({ protocol } = {}) {
           elapsedMs,
           txHash,
           error: `回执状态为 ${receipt.status}`,
+          httpStatus: null,
           via: rpcUrl,
         };
     } catch (err) {
@@ -216,6 +219,10 @@ export async function probeChain({ protocol } = {}) {
         // 而那句话对"为什么连不上"零信息量 —— 2026-09-10 就是它让人无从下手：
         // 容器内回落到 127.0.0.1 时，报错看起来像链坏了，实际是地址不对。
         error: redact(explain(raw, rpcUrlOf(protocol), httpStatus)),
+        // SC-002 要数的是**5xx 的次数**，而次数没法从一段中文文案里数出来。
+        // 状态码在上一行已经算出来了，此前只揉进文案 —— 现在一并返回。
+        // 加字段而非改字段：dashboard-probe.test 断言的是"这些键存在"，不是键集精确。
+        httpStatus,
       };
     }
   })();

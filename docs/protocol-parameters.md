@@ -73,10 +73,10 @@
 | 参数 | 值 | 取值理由 |
 |---|---|---|
 | `primaryNetwork.nodeCount` | 2 | 2：Avalanche CLI 本地 Primary Network 默认规模；对开发者透明，无需更多。 |
-| `validators.count` | 6 | 5：2026-08-31 用户裁定（Q1=B）。可在本地暴露多验证者共识/同步行为；默认 Snow 参数下容忍 1 个离线（research R-05）。 |
+| `validators.count` | 6 | 初值 5 由 2026-08-31 用户裁定（Q1=B）；此后随成员增删而变（功能 005），故此处**不复述当前值** —— 当前值见上方表格。可在本地暴露多验证者共识/同步行为。可离线数由 minConnectedStakeToQuery = 15/20 = 75% 推导，f = ⌊n/4⌋，**不随 count 单调上升**：n=5/6/7 同为 f=1，n=8 才到 2（research R-05 与 005 的 F-5）。 |
 | `validators.management` | "proof-of-authority" | proof-of-authority：本地开发无质押经济需求；ValidatorManager 由 Avalanche CLI 部署（官方合约）。 |
 | `validators.ownerAccount` | "ewoq" | ewoq：Avalanche 官方公开测试账户，CLI 在本地网络为其预置 P/C 链资金，可直接支付 P-Chain 交易并担任 PoA 管理员。 |
-| `validators.nodes` | 见下 | 端口 21660-21669（HTTP/staking 交替）：keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。【端口迁移，configVersion 1.4.0】原用 9660-9669，实测 Windows 的 Hyper-V 从动态端口范围（本机 1024-15000）中切走了 9617-9716 等多个区间，覆盖全部节点端口；而跨机 P2P 要求 staking 端口发布到宿主，且 avalanchego 对外通告的就是 public-ip:staking-port（通告端口必须等于宿主发布端口，没有内外不同端口的选项），因此这些端口在 Windows 故障边界上无法使用。迁到 21650-21669：该区段在动态端口范围之外，Hyper-V 不会再切走它。编号保持原有对应关系（9660→21660）以便对照。8545 未受影响，本就不在保留区间内。 |
+| `validators.nodes` | 见下 | 端口自 21660 起按 HTTP/staking 交替递增（每新增一个验证者占两个；当前占用区间见上方表格，此处不复述上界以免随成员增加而过期）：keyDir 指向仓库内 DEVELOPMENT ONLY 密钥，保证 NodeID 跨重建一致。【端口迁移，configVersion 1.4.0】原用 9660-9669，实测 Windows 的 Hyper-V 从动态端口范围（本机 1024-15000）中切走了 9617-9716 等多个区间，覆盖全部节点端口；而跨机 P2P 要求 staking 端口发布到宿主，且 avalanchego 对外通告的就是 public-ip:staking-port（通告端口必须等于宿主发布端口，没有内外不同端口的选项），因此这些端口在 Windows 故障边界上无法使用。迁到 21650-21669：该区段在动态端口范围之外，Hyper-V 不会再切走它。编号保持原有对应关系（9660→21660）以便对照。8545 未受影响，本就不在保留区间内。 |
 | `validators.nodes[0]` | http 21660 / staking 21661，密钥 `blockchain/validators/dev/node-1/` | ↑ |
 | `validators.nodes[1]` | http 21662 / staking 21663，密钥 `blockchain/validators/dev/node-2/` | ↑ |
 | `validators.nodes[2]` | http 21664 / staking 21665，密钥 `blockchain/validators/dev/node-3/` | ↑ |

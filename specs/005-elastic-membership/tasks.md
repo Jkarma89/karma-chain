@@ -265,6 +265,51 @@ stamp 六项逐字节不变、无节点退出 12、既有节点容器未重启�
 - [ ] T022 [US1] 场景 E 的可用性一半：全过程每 30 秒一笔交易、连续 10 分钟，
       **全部确认、零次 5xx**（SC-002）
 
+> **离线那一半已经量完（2026-09-21，详见 research.md 的 V-54）。**
+>
+> T010 留的那个拦路石（`http-allowed-hosts` 是全局清单 → 加机器会迫使五台重建 →
+> 判据 ④ 达不到）**已经过期**：V-19 之后 IP 字面量不再进清单，按 IP 加机器对它零影响。
+>
+> 真正要先定的是另一件事，校验器直接报出来：加一台机器不只是加一个故障边界，
+> 还要 `validators.count`、`validators.nodes[]` 的端口条目、**以及 `local` 形态
+> 也要安置新节点**。补全之后实测（加第 7 台 `ubuntu-5` / 192.168.1.32 / `l1-7`）：
+>
+> - `blockchain/genesis/` 零改动 → 判据①③ 的前提在文件层成立
+> - `validators.count` 住在 `deployment.json`（`protocol.json.validators` 是空壳）
+>   → 不碰 `configVersion`、不碰 stamp 六项 → **判据② 在结构上成立，不靠运气**
+> - 既有 8 个节点的 `*.flags.json` / `*.identity.json` **零改动**，
+>   既有 6 台机器的 `docker/compose/lan-*.yml` **零改动** → **判据④ 在文件层成立**
+> - `KARMACHAIN_MAX_OFFLINE_VALIDATORS` 从 6 台到 7 台**仍是 1** —— F-5 的真值守住了
+>
+> 会变的是：新增 `lan-ubuntu-5.yml` 与 l1-7 的三个文件；改 两份 `rpc-proxy.conf`、
+> `active.env`、`bootstrap.yml`、`local-local.yml`（后两个都不在跑）、生成的
+> `protocol-parameters.md`。
+>
+> **顺序约束**：`rpc-proxy.conf` 会把 l1-7 加进 upstream。在 l1-7 可服务**之前**
+> 同步代理，等于往负载池里放一个连不上的成员 —— 客户端拿到的是延迟而不是 5xx，
+> 但 T022 要连续 10 分钟零 5xx，不该拿这个去赌。**代理排在新节点可服务之后。**
+>
+> **卡住的是物理前提**：`render` 要读新机器的 `staker.crt`（实测 ENOENT: node-7/staker.crt），
+> 而 005 的约束是私钥必须在目标机生成、不得经过仓库。T069 给出的路径是
+> `validators.nodes[i].identity`（`origin: "joined"`，只装公开材料，l1-6 的先例）。
+> 所以**必须先有第 7 台物理机、在它上面生成密钥并回报公开材料**，render 才跑得通 ——
+> 这一步卡在生成链的最前面，不能先跳过后补。当前拓扑已有 **6** 个故障边界
+> （win-1 / win-2 / ubuntu-1 / ubuntu-2 / ubuntu-3 / ubuntu-4）。
+>
+> **T022 的探测器已经做好并实测过两支**：`npm run soak:availability`
+> （`tools/test/availability-soak.mjs`，`--minutes` / `--interval` / `--out`）。
+> 它复用 `probe-tx.mjs`（走对外入口、沿 `error.cause` 取状态码、抹掉密钥材料），
+> 把四个结局分开数：确认 / **5xx**（代理活着但无健康上游，SC-002 数的是这一类）/
+> 无 HTTP 应答（是我到代理的路）/ busy（节奏没守住，**测量自己**的失败）。
+> 判决顺序是**先看测量做到了没有**：节奏没守住就退出 2 并拒绝宣称 SC-002 ——
+> 否则"全部确认"覆盖的不是 10 分钟，那是个虚假的绿灯。
+> 为此给 `probeChain()` 的返回加了 `httpStatus`（加字段，不改字段）——
+> 5xx 的**次数**没法从一段中文文案里数出来。
+>
+> 两支都在活链上实测过：间隔 3 秒而每笔约 4 秒 → 它抓住自己，退出 2；
+> 间隔 10 秒 → 3/3 确认、零 5xx、迟到 0ms，退出 0。
+> **探测器自己也被检查了**，而且是往失败方向检查的。
+
 **Checkpoint**: US1 到此可**独立交付并验收** —— 加观察机零成本、加机器不再重置。
 **建议在此停一次，验收通过再开 US2。**
 

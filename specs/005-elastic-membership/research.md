@@ -1913,3 +1913,109 @@ null !== true
 
 **范围 C 的实测会改动 Primary 的配置甚至重启节点** ——
 到那一步必须先问用户，不自行动手。
+
+### V-54 T021 离线测量：加一台承载验证者的机器，会改到哪些文件（2026-09-21）
+
+T021 的四条判据里，①创世哈希不变、②stamp 六项逐字节不变、③零个节点退出 12、
+④既有节点容器 `Created`/`StartedAt` 逐字符相同 —— 后两条都取决于一件事：
+**重新生成之后，既有节点的声明有没有变**。所以动手之前先离线量它，
+不碰任何机器。做法是往 `blockchain/deployment.json` 加第 7 台（`ubuntu-5` /
+192.168.1.32 / `l1-7`），跑 `npm run render`，再 `git status`。
+
+#### T010 记下的那个拦路石已经过期
+
+T010 的备注说：`http-allowed-hosts` 是一份全局清单，加机器会迫使五台机器的
+容器全部重建，判据 ④ 因此不成立，并写着「T021 动手前必须先定这件事怎么办」。
+**这条已经不适用了。** `render-node-flags.mjs` 里 `allowedHosts` 经 `namesOnly()`
+过滤，IP 字面量根本不进清单（V-19 的实测结论：avalanchego 无条件接受 IP 字面量
+Host 头），当前值是 `["127.0.0.1","localhost"]`。按 IP 加机器对它零影响。
+
+**真正的拦路石是另一件事**，校验器直接报了出来：
+
+```
+constraint: topology has 7 l1-validator nodes but validators.count is 6
+constraint: topology l1-validator nodes must reference validators.nodes
+            indices 1,2,3,4,5,6 exactly once each (got 1,2,3,4,5,6,7)
+constraint: deployment "local": node(s) not assigned to any failure domain: l1-7
+```
+
+即"加一台机器"不是加一个故障边界就完了，还要 `validators.count`、
+`validators.nodes[]` 的端口条目、以及 **`local` 形态也要安置** l1-7 ——
+`local` 不在跑，但它是同一份声明里的另一个形态，漏了就不通过。
+
+#### 关键：`validators.count` 在哪个文件里
+
+这决定判据 ② 成不成立。核对结果：`protocol.json.validators` 只有
+`management` / `ownerAccount` / `nodes: []`（空壳），真正的 `count` 与
+`nodes[]` 住在 `deployment.json`。**A 块的分家已经把它挪出去了** ——
+所以加验证者不碰 `protocol.json`、不碰 `configVersion`、不碰 stamp 六项。
+判据 ② 在结构上成立，不是靠运气。
+
+#### 补全三条约束之后，实测的文件改动面
+
+| 生成物 | 加第 7 台后 |
+|---|---|
+| `blockchain/genesis/` | **零改动** |
+| `blockchain/nodes/lan/*.flags.json`（既有 8 个节点） | **零改动** |
+| `blockchain/nodes/*.identity.json`（既有 8 个节点） | **零改动** |
+| `docker/compose/lan-{win-1,win-2,ubuntu-1..4}.yml` | **零改动** |
+| `blockchain/nodes/aliases.json`、`chain-config/` | 零改动 |
+| `docker/compose/lan-ubuntu-5.yml` | 新增 |
+| `blockchain/nodes/{lan,local}/l1-7.flags.json`、`l1-7.identity.json` | 新增 |
+| `blockchain/nodes/{lan,local}/rpc-proxy.conf` | 改（加 upstream、`proxy_next_upstream_tries` 6→7） |
+| `docker/compose/active.env` | 改（`KARMACHAIN_*_IDS`、`DOMAIN_COUNT` 6→7、`DOMAIN_ADDRESSES`） |
+| `docker/compose/{bootstrap,local-local}.yml` | 改（都不在跑） |
+| `docs/protocol-parameters.md` | 改（生成物） |
+
+**既有节点的 flags 零改动不是读代码读出来的，是生成出来比对的。**
+读代码只能得到"应该不变"：L1 验证者的 `bootstrap-ids`/`bootstrap-ips` 恒为
+全部 Primary，Primary 的恒为它之前的 Primary，都与 L1 集合无关。
+实测确认了这一点 —— 判据 ④ 在**文件层面**成立。
+
+#### `MAX_OFFLINE_VALIDATORS` 从 6 台到 7 台仍然是 1
+
+`active.env` 里 `KARMACHAIN_MAX_OFFLINE_VALIDATORS=1` 在 diff 里**没有出现** ——
+生成器把 F-5 的真值守住了。这是"加了机器并不更抗"的一条直接证据，
+且 `tests/unit/tolerance-after-add.test.mjs:101` 的表里 `[7, 1]` 已经在守着它。
+
+#### 冒出来的一条顺序约束
+
+`rpc-proxy.conf` 会把 l1-7 加进 upstream。若在 l1-7 真正能服务**之前**就同步代理，
+就等于往负载池里放进一个必然连不上的成员：nginx 会 `proxy_connect_timeout 2s`
+之后转下一个，客户端拿到的是**延迟**而不是 5xx（`proxy_next_upstream_tries` 已
+随之变成 7）—— 但 T022 要连续 10 分钟每 30 秒一笔、零 5xx，不该拿这个去赌。
+**代理的同步应排在新节点可服务之后。**
+
+#### 还有一件绕不过去的事：新节点的身份必须先有
+
+`render-node-flags.mjs` 走 `identityFromKeyDir(n.keyDir)` 时会去读
+`blockchain/validators/dev/node-7/staker.crt`：
+
+```
+Error: ENOENT: no such file or directory, open
+  '…\blockchain\validators\dev\node-7\staker.crt'
+```
+
+而 005 的约束是**新验证者私钥必须在目标机生成、不得经过仓库**。
+l1-6 给出了先例：`validators.nodes[5].identity` 带 `origin: "joined"`，
+只装公开材料（NodeID、BLS 公钥、PoP、三个 sha256 指纹、谁在何时回报的），
+`identityOf(declared)` 优先于 `identityFromKeyDir`。
+所以 **l1-7 必须先由目标机生成密钥并回报公开材料，`render` 才跑得通** ——
+这不是一个可以先跳过后补的步骤，它卡在生成链的最前面。
+
+（本次测量为验证"既有节点 flags 是否随之变化"，临时借用了 l1-6 的公开身份
+材料填进 l1-7 的 `identity`，`reportedBy` 标为 `MEASUREMENT-ONLY`；
+测完整棵工作树已回滚，未接触任何机器。）
+
+#### 顺带查实的一处过期值
+
+`protocol-rationale.json` 的理由列惯例是"复述当前值再说为什么"
+（`primaryNetwork.nodeCount` → `"2：…"`）。`validators.count` 的理由写着
+`"5：…"` 而实际已是 6 —— 加第 7 台会让它变成 `"5："` 挨着值 7。
+已改成不复述当前值，并把 F-5 写进去；`validators.nodes` 的
+"迁到 21650-21669" 同理改成不写上界（node-7 的 21672/21673 落在区间外）。
+
+**没有给整张理由表加通用守卫。** 探针量过：29 行里 7 行的"不符"是千分位与
+单位造成的假阳性（`"15,000,000"` vs `15000000`、`"25 gwei"` vs `25000000000`）——
+恒定非空的告警等于没有告警。只给 `validators.count` 加了一条
+（理由不得以数字开头），变红检查已过：注入 `"5：…"` 后 `not ok 5`，还原后 29/29。

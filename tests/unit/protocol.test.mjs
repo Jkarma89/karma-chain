@@ -168,3 +168,24 @@ test('loadProtocol throws with all errors listed for an invalid file', () => {
   assert.equal(errors.length, 2);
   assert.ok(errors.every((e) => e.startsWith('constraint: ')));
 });
+
+// 005 / T021：理由列的惯例是"复述当前值再说为什么"（`primaryNetwork.nodeCount` →
+// "2：…"、`validators.management` → "proof-of-authority：…"）。对**不会变**的参数，
+// 这个惯例很好读。但 `validators.count` 从 005 起会随成员增删而变 ——
+// 它的理由在实测中确实过期了：值已经是 6，理由还写着"5：…"，
+// 而 T021 的离线测量（加第 7 台机器重新生成）会让它变成"5：" 挨着值 7。
+// 只守这一个参数，而不是给整张理由表加一条通用规则：探针量过，
+// 29 行里有 7 行的"不符"是千分位与单位造成的假阳性（"15,000,000" vs 15000000、
+// "25 gwei" vs 25000000000）—— 恒定非空的告警等于没有告警。
+test('随成员变化的参数，理由里不得复述当前值（否则必然过期）', () => {
+  const { rationale } = readJson(
+    new URL('../../blockchain/protocol-rationale.json', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'),
+  );
+  const why = rationale['validators.count'];
+  assert.equal(typeof why, 'string', 'validators.count 必须有理由');
+  assert.doesNotMatch(
+    why,
+    /^\s*\d/,
+    'validators.count 的理由不得以数字开头复述当前值 —— 成员一变它就过期（当前值见生成的表格）',
+  );
+});
