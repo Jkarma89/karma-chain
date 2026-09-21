@@ -168,6 +168,18 @@ export async function pollOnce({ nodes, blockchainId, prev = {}, intervalSeconds
   const memberNodeIds = new Set(nodes
     .map((n, i) => (n.role === 'l1-validator' ? (probes[i].nodeId ?? n.nodeId) : null))
     .filter(Boolean));
+  // **谁是真的不在** —— 沿用 004 那条区分（data-model §7）：
+  // 本机探不到**且**其余节点的对等列表里也没有，才算它真的缺席；
+  // 只是本机探不到的，是本机到它的路径问题，链里还有它。
+  //
+  // quorumReach 用它来回答"连不上 quorum 该怪谁"：把本来就不在的那些排除掉，
+  // 否则三台机器真的下线时，每个幸存节点都会被判成 stalled —— 一屋子假红灯，
+  // 而容错那边已经把下线的那几个算过一次了。
+  const absentMemberIds = new Set([...memberNodeIds].filter((id) => {
+    const i = nodes.findIndex((n, k) => (probes[k].nodeId ?? n.nodeId) === id);
+    if (i < 0) return true;                       // 拓扑里都找不到 → 当作不在
+    return !probes[i].reachable && !seenByPeers.has(id);
+  }));
 
   const byDomain = new Map();
   for (const [i, n] of nodes.entries()) {
@@ -186,6 +198,7 @@ export async function pollOnce({ nodes, blockchainId, prev = {}, intervalSeconds
       networkHeight,
       seenByPeers,
       memberNodeIds,
+      absentMemberIds,
       domainAllUnreachable: dom.down === dom.total,
       container: containers[n.id] ?? null,
       sampleSeconds: intervalSeconds,

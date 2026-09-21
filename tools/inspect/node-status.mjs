@@ -68,6 +68,55 @@ export function parseArgs(argv = process.argv.slice(2)) {
  * @param {object} ctx 观测上下文，见文件头说明
  * @returns {{state,detail,countsAsOffline,countsTowardTolerance}}
  */
+/**
+ * 这个验证者**还连得上足够的成员吗** —— 以及连不上的话，**该怪谁**。
+ *
+ * ## 两个条件，缺一不可
+ *
+ * 002 的 data-model §7 给 `stalled` 定的是：
+ *
+ * > 未在服务 L1 且超过窗口，**且其余验证者全部在场**。后一个条件是必需的：
+ * > 跨机分批启动时先起来的机器无法服务 L1，成因在别的机器未启动
+ * >（未达 α/k=75% 查询门槛），**本机无可处置之处**。
+ *
+ * 所以只算"连上了几个"是不够的 —— 还要问那些没连上的**是不是本来就不在**。
+ * 三台机器真的下线时，每个幸存节点都会"连不上 75%"，而它们一个都没错；
+ * 把它们逐个判成 stalled 就是一屋子假红灯，而容错那边已经把下线的那几个算过一次了。
+ *
+ * ## 「不在」怎么判
+ *
+ * 沿用 004 那条区分：**本机探不到 + 其余节点的对等列表里也没有** 才算真的不在。
+ * 只是本机探不到的，是本机到它的路径问题（那种情况下链里还有它）。
+ *
+ * @returns {{ok: boolean, connected: number, n: number, percent: number,
+ *            blamed: string[], absentUnseen: string[]}|null} 材料不全时返回 null
+ */
+/** 连不上 quorum 时那句话 —— 把数字、该怪谁、不该怪谁三样都说出来。 */
+function reachNote(r) {
+  const absent = r.absentUnseen.length
+    ? `（另有 ${r.absentUnseen.length} 个成员本来就不在，不算它的问题）`
+    : '';
+  return `**只连上 ${r.connected}/${r.n} 个成员（${r.percent}%）** —— 发起共识查询要 ≥75%，`
+    + `最多断 ${r.allowed} 个。它现在投不了票。`
+    + `看不见 ${r.blamed.join('、')}，而**它们是活着的**${absent} —— `
+    + '先查这个节点到它们的 P2P 连通性。';
+}
+
+export function quorumReach({ probe, memberNodeIds, absentMemberIds }) {
+  if (!memberNodeIds?.size || !probe?.peerNodeIds) return null;
+  const seen = new Set(probe.peerNodeIds);
+  const unseen = [...memberNodeIds].filter((id) => id !== probe.nodeId && !seen.has(id));
+  const absent = absentMemberIds ?? new Set();
+  const q = canQuery({ n: memberNodeIds.size, disconnectedMembers: unseen.length });
+  return {
+    ...q,
+    // 看不见、而它**其实活着** —— 这些才算得到这个节点头上
+    blamed: unseen.filter((id) => !absent.has(id)),
+    // 看不见、而它本来就不在 —— 这些不算它的错
+    absentUnseen: unseen.filter((id) => absent.has(id)),
+  };
+}
+
 export function classify(node, ctx) {
   const isValidator = node.role === 'l1-validator';
   /**
@@ -151,22 +200,31 @@ export function classify(node, ctx) {
       // 两个 Primary 全停时会全假而 L1 仍在出块（dashboard/README 的四条边界之一）。
       // peer 列表只说 L1 这一层，正是 FR-013 要的那个口径。
       const members = ctx.memberNodeIds;
-      if (members?.size && probe.peerNodeIds) {
-        const seen = new Set(probe.peerNodeIds);
-        const disconnected = [...members].filter((id) => id !== probe.nodeId && !seen.has(id)).length;
-        const q = canQuery({ n: members.size, disconnectedMembers: disconnected });
-        if (!q.ok) {
-          return out('stalled',
-            `落后 ${behind} 块且无进展；**只连上 ${q.connected}/${q.n} 个成员（${q.percent}%）**`
-            + ` —— 发起共识查询要 ≥75%，最多断 ${q.allowed} 个。它现在投不了票，`
-            + '不是在追赶。先查它到其余验证者的 P2P 连通性。');
-        }
+      const reach = quorumReach({
+        probe, memberNodeIds: members, absentMemberIds: ctx.absentMemberIds,
+      });
+      if (reach && !reach.ok && reach.blamed.length) {
+        return out('stalled', `落后 ${behind} 块且无进展；${reachNote(reach)}`);
       }
       return out('catching-up',
         `落后 ${behind} 块，${secs}s 采样窗口内无进展`
         + (members?.size
           ? '（与成员的连接数够发起查询 —— 是否卡住由容器健康检查判定，它持有超时窗口）'
           : '（**没有成员集合可比对**，也没有容器级事实 —— 卡没卡这件事此刻没有判定者）'));
+    }
+    // **追平了不等于投得了票。**（研究 V-49，2026-09-19 实测）
+    //
+    // 2026-09-18 我把这条判定挂在了"落后且无进展"那一支上。而第二天撞到的是另一种：
+    // l1-1 高度**没落后**（和大家都在 1503），它自己却报
+    // `not connected to enough stake: 66.666667%` —— 投不了票，而面板照报 100% / 参与 6。
+    //
+    // "连不上 quorum"与"落后"是两件事：一个跟得上高度的节点同样可能发不起查询。
+    // 判定被我挂在了一个太窄的前提上。
+    const reachHealthy = quorumReach({
+      probe, memberNodeIds: ctx.memberNodeIds, absentMemberIds: ctx.absentMemberIds,
+    });
+    if (reachHealthy && !reachHealthy.ok && reachHealthy.blamed.length) {
+      return out('stalled', `高度已追平（${probe.height}），但${reachNote(reachHealthy)}`);
     }
     return out('healthy', net != null ? `已追平（高度 ${probe.height}）` : `高度 ${probe.height}`);
   }
@@ -400,6 +458,18 @@ export async function collect(opts = parseArgs()) {
   const memberNodeIds = new Set(nodes
     .map((n, i) => (n.role === 'l1-validator' ? (second[i].nodeId ?? n.nodeId) : null))
     .filter(Boolean));
+  // **谁是真的不在** —— 沿用 004 那条区分（data-model §7）：
+  // 本机探不到**且**其余节点的对等列表里也没有，才算它真的缺席；
+  // 只是本机探不到的，是本机到它的路径问题，链里还有它。
+  //
+  // quorumReach 用它来回答"连不上 quorum 该怪谁"：把本来就不在的那些排除掉，
+  // 否则三台机器真的下线时，每个幸存节点都会被判成 stalled —— 一屋子假红灯，
+  // 而容错那边已经把下线的那几个算过一次了。
+  const absentMemberIds = new Set([...memberNodeIds].filter((id) => {
+    const i = nodes.findIndex((n, k) => (second[k].nodeId ?? n.nodeId) === id);
+    if (i < 0) return true;                       // 拓扑里都找不到 → 当作不在
+    return !second[i].reachable && !seenByPeers.has(id);
+  }));
 
   const unreachableByDomain = new Map();
   for (const [i, n] of nodes.entries()) {
@@ -417,6 +487,7 @@ export async function collect(opts = parseArgs()) {
       networkHeight,
       seenByPeers,
       memberNodeIds,
+      absentMemberIds,
       domainAllUnreachable: dom.down === dom.total,
       container: containers[n.id] ?? null,
       sampleSeconds: opts.sampleSeconds,
