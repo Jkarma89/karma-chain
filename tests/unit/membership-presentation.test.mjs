@@ -19,6 +19,9 @@
 // （按声明的 6 算，把一条正在出块的链报成"已停止"，见 scopeToChainMembers 的注释）。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { REPO_ROOT } from '../../tools/protocol/load.mjs';
 import { participatesInConsensus, deriveTier } from '../../tools/dashboard/snapshot.mjs';
 import { maxOffline } from '../../tools/membership/tolerance.mjs';
 
@@ -183,4 +186,35 @@ describe('③ 健康百分比不因名册变长而虚高（FR-027）', () => {
         + '呈现上不得让人以为更抗了');
     }
   });
+});
+// ④ 呈现里不许写死 n（2026-09-22 实测到的一处过期）
+//
+// 注册 l1-7 时，第四步的提示说「n 从 5 到 6，可离线数仍是 1」——
+// 而实际是 **6 → 7**。同一次运行的开头那句是算出来的（"容错：n = 6 → 7"），
+// 只有这一行写死。于是过期的那处看起来与算对的那处同样权威。
+//
+// 这是本期第四次撞上「手写的数会过期」：
+// validators.count 的理由（写着 5，实际 6）、dod 摘要里的「剩下那 8 条」（实际 7）、
+// lan.description 的「5 台独立物理机」（实际 6），加上这一条。
+// 前三条都在文档里，这一条在**工具输出**里 —— 而工具输出正是操作者当场据以决策的东西。
+//
+// 判据只看**会打印出去的字面量**，注释里的引述要留（它记录了曾经是什么），
+// 所以先剥掉 `//` 行再查。
+describe('④ 呈现里不许写死 n（否则成员一变就过期）', () => {
+  const SOURCES = ['tools/membership/add-validator.mjs', 'tools/membership/remove-validator.mjs'];
+  const HARDCODED_N = /n\s*(?:从|=)\s*\d+\s*(?:到|→|->)\s*\d+/;
+
+  for (const rel of SOURCES) {
+    test(`${rel} 的输出里没有写死的 n 变化`, () => {
+      const text = readFileSync(resolve(REPO_ROOT, rel), 'utf8');
+      const offending = text.split('\n')
+        .map((line, i) => ({ line, no: i + 1 }))
+        // 剥掉整行注释 —— 注释里引述旧文案是有意的，不该被判违规
+        .filter(({ line }) => !/^\s*(?:\/\/|\*|\/\*)/.test(line))
+        .filter(({ line }) => HARDCODED_N.test(line));
+      assert.deepEqual(offending.map((o) => `${o.no}: ${o.line.trim().slice(0, 70)}`), [],
+        '这些行把 n 的变化写死了 —— 成员一变就过期，而它与算对的那句并列时看起来同样权威。\n'
+        + '  修法：复用已经算好的 toleranceChange 结果（t.before.n / t.after.n / t.before.f / t.after.f）。');
+    });
+  }
 });
