@@ -2019,3 +2019,47 @@ l1-6 给出了先例：`validators.nodes[5].identity` 带 `origin: "joined"`，
 单位造成的假阳性（`"15,000,000"` vs `15000000`、`"25 gwei"` vs `25000000000`）——
 恒定非空的告警等于没有告警。只给 `validators.count` 加了一条
 （理由不得以数字开头），变红检查已过：注入 `"5：…"` 后 `not ok 5`，还原后 29/29。
+
+### V-55 守卫声称的性质比它查的范围宽 —— 在第七台机器上现场打穿（2026-09-21）
+
+ubuntu-5 上照 `docs/devnet.md` §11.2 执行：
+
+```
+$ KARMACHAIN_DOMAIN=ubuntu-5 tools/membership/gen-node-keys.sh 7
+bash: tools/membership/gen-node-keys.sh: 权限不够
+```
+
+`tools/membership/gen-node-keys.sh` 以 **100644** 进了仓库。
+
+#### 这件事本该被守住，而守卫在那儿
+
+`tests/unit/powershell-portability.test.mjs` 早有一条专门的守卫，注释里连措辞陷阱
+都写清楚了（「`command not found` 会把人引向 PATH 而不是权限」），
+判据也对（只看 git 索引的模式位，因为在 Windows 上 stat 权限没有意义），
+`_` 开头的库还做了反向断言。它 2026-09-08 就是被 ubuntu-1 上一次真实失败逼出来的。
+
+**它唯一的问题是作用域**：`git ls-files -s -- scripts`。
+而这条守卫的标题声称的是「宿主直接执行的 .sh」这个**性质** ——
+`tools/membership/gen-node-keys.sh` 与 `tools/protocol/extract-vm-alloc.sh`
+都是宿主直接执行的，都住在 `tools/`，都从它下面漏了过去。
+
+这是本期第二次遇到同一个形状。上一次是「检查器自己没有被检查」；
+这一次更精确：**守卫声称的性质比它实际查的范围宽**。
+一条写得很好、注释很完备、当初确实由真实失败逼出来的守卫，
+可以因为 pathspec 写窄了一格而对同类问题完全无感 ——
+而且它一直是绿的，所以没有任何信号。
+
+#### 修法
+
+范围扩到全仓库 `*.sh`，排除 `docker/`（那些或被 `.` source，或拷进镜像后由各自
+Dockerfile 的 `RUN chmod +x` 兜住），`_` 前缀的反向断言保留。
+然后 `git update-index --chmod=+x` 那两个文件。
+
+**变红检查不需要注入**：扩范围之后它当场红在恰好那两个真缺陷上，
+修完转绿。单元测试数不变（1536）—— 改的是既有那条的作用域，没有新增断言，
+这一点值得如实写出来，否则「又加了一条守卫」会显得比实际做的更多。
+
+#### 顺带
+
+`tests/e2e/vm-alloc-drift.test.sh` 被 `blockchain/genesis/README.md` 引用，
+但 `git ls-files -- '*.sh'` 里没有它 —— 那是一处过期引用，与本条无关，记下待查。

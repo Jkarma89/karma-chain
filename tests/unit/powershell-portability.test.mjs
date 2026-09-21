@@ -151,10 +151,16 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
     }
   });
 
-  test('每个 scripts/*.sh 在 git 索引里都是 100755 —— 否则 Linux 上 clone 完跑不了', () => {
+  // 2026-09-21 在 ubuntu-5 上现场打穿了这条守卫**原先的作用域**：
+  // 它只查 `scripts/`，而 `tools/membership/gen-node-keys.sh` 住在 `tools/`，
+  // 于是以 100644 进了仓库，新机器上 clone 出来直接执行报「权限不够」。
+  // docs/devnet.md §11.2 与脚本自己的用法行都写着直接执行它 ——
+  // **守卫声称的性质（"宿主直接执行的 .sh 必须可执行"）比它实际查的范围窄**，
+  // 这正是"检查器自己没有被检查"的那个形状。范围因此扩到全仓库。
+  test('宿主直接执行的 *.sh 在 git 索引里都是 100755 —— 否则 Linux 上 clone 完跑不了', () => {
     let out;
     try {
-      out = execFileSync('git', ['ls-files', '-s', '--', 'scripts'], {
+      out = execFileSync('git', ['ls-files', '-s', '--', '*.sh'], {
         cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
       });
     } catch {
@@ -162,20 +168,25 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
       return;
     }
     const entries = out.split('\n')
-      .map((l) => l.match(/^(\d{6})\s+\S+\s+\d+\tscripts\/([^/]+\.sh)$/))
+      .map((l) => l.match(/^(\d{6})\s+\S+\s+\d+\t(.+\.sh)$/))
       .filter(Boolean)
-      .map((m) => ({ mode: m[1], name: m[2] }));
-    assert.ok(entries.length >= 10, `期望至少 10 个 scripts/*.sh，实际 ${entries.length}`);
+      .map((m) => ({ mode: m[1], path: m[2] }))
+      // `docker/` 下的不由宿主执行：或被 `.` source，或拷进镜像后由各自
+      // Dockerfile 的 `RUN chmod +x` 兜住。它们保持 644 是对的。
+      .filter(({ path }) => !path.startsWith('docker/'));
+    assert.ok(entries.length >= 14, `期望至少 14 个受管 *.sh，实际 ${entries.length}`);
 
     // 入口必须可执行；`_` 开头的是被 source 的库，应当保持 644 —— 两个方向都断言，
     // 否则"给库也加上 +x"这种反向漂移不会被发现。
+    const sourced = (p) => p.split('/').pop().startsWith('_');
     const wrong = entries
-      .filter(({ mode, name }) => (name.startsWith('_') ? mode !== '100644' : mode !== '100755'))
-      .map(({ mode, name }) => `scripts/${name}（${mode}，期望 ${name.startsWith('_') ? '100644' : '100755'}）`);
+      .filter(({ mode, path }) => (sourced(path) ? mode !== '100644' : mode !== '100755'))
+      .map(({ mode, path }) => `${path}（${mode}，期望 ${sourced(path) ? '100644' : '100755'}）`);
     assert.deepEqual(wrong, [],
-      `以下 scripts/*.sh 的模式位不对：\n  ${wrong.join('\n  ')}\n`
+      `以下 *.sh 的模式位不对：\n  ${wrong.join('\n  ')}\n`
       + '  NTFS 没有权限位，在 Windows 上新建的脚本会被记成 100644。Windows 侧毫无症状，\n'
-      + '  Linux 上 clone 出来直接执行会报 command not found —— 措辞会把人引向 PATH 而不是权限。\n'
+      + '  Linux 上 clone 出来直接执行会报 command not found / 权限不够 ——\n'
+      + '  前者的措辞会把人引向 PATH 而不是权限。\n'
       + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
   });
 
