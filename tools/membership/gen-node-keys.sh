@@ -117,20 +117,74 @@ trap cleanup EXIT
 echo "在本机生成 node-${INDEX} 的 staking 材料（约 30 秒）…" >&2
 
 # 端口给得很高且只绑回环：这个临时节点不该被任何人连上，也不该撞到正在跑的节点。
-# `--user` 让容器以**调用者**的身份写文件。少了它，avalanchego 以 root 生成
-# staker.key（权限 0600、属主 root），后面这个脚本以普通用户 cp 就**读不出来** ——
-# 而那时报的是一句 Permission denied，看不出根因在容器的运行身份上。
+#
+# ## 容器该以什么身份跑，**不能推断，要现场探一次**
+#
+# 默认带 `--user "$(id -u):$(id -g)"`，让容器以调用者身份写文件。少了它，
+# avalanchego 以 root 生成 staker.key（0600、属主 root），后面这个脚本以普通用户
+# cp 就**读不出来** —— 而那时报的是一句 Permission denied，看不出根因在运行身份上。
+#
+# 但 uid 一旦被命名空间重映射（rootless daemon，或 daemon 开了 userns-remap），
+# 容器里的 1000 在宿主侧就是另一个 subuid，于是它写不进 mktemp 建出来的
+# 那个属主为本用户、mode 700 的目录。2026-09-21 在 ubuntu-5 上实测到：
+#
+#     uid=1000 gid=1000 groups=1000
+#     sh: 4: cannot create /out/mount-check: Permission denied
+#
+# 那种情形下**不带** --user 才对：容器 root 映射到本用户，文件落在宿主上就归本用户。
+# 两种装法要的恰好相反，所以探一次再定，不靠猜。
+#
+# 判据是**往返**的：容器写得进去，而且宿主读得回来、删得掉。
+# 只验"容器写成功"会漏掉 userns-remap —— 那时容器写得很好，
+# 而文件属主是宿主读不了的 subuid，于是失败会推迟到 cp 那一步才暴露。
+probe_identity() {
+  rm -f "${WORK}/probe" 2>/dev/null || true
+  ${DOCKER} run --rm --entrypoint sh "$@" -v "${WORK}:/out" "${IMAGE}" \
+    -c 'echo ok > /out/probe' >/dev/null 2>&1 || return 1
+  [ "$(cat "${WORK}/probe" 2>/dev/null || true)" = ok ] || return 1
+  rm -f "${WORK}/probe" 2>/dev/null || return 1
+  return 0
+}
+
+USER_ARGS=(--user "$(id -u):$(id -g)")
+if probe_identity "${USER_ARGS[@]}"; then
+  : # 普通 rootful docker —— 用调用者身份，文件属主正确
+elif probe_identity; then
+  USER_ARGS=()
+  echo "  这套 docker 把 uid 重映射了（rootless 或 userns-remap）——" >&2
+  echo "  改为不带 --user 运行：容器 root 会映射到本用户，文件属主仍然正确。" >&2
+else
+  echo "" >&2
+  echo "**宿主与容器之间来不了文件。** 两种身份都探过了：" >&2
+  echo "    带 --user $(id -u):$(id -g) → 不通" >&2
+  echo "    不带 --user               → 也不通（写不进，或宿主读不回）" >&2
+  echo "" >&2
+  # 已经设过 KARMACHAIN_WORKDIR 还失败，就不该再劝人去设它 ——
+  # 那是一句朝错误方向的提示，而那比没有提示更坏（2026-09-21 用桩当场演示到）。
+  if [ -n "${KARMACHAIN_WORKDIR:-}" ]; then
+    echo "  工作目录是 ${WORK}（来自 KARMACHAIN_WORKDIR）—— 换目录这条路已经试过了。" >&2
+    echo "  所以问题不在 /tmp，而在这套 docker 的挂载或身份映射本身。先看它是什么：" >&2
+    echo "    docker info -f '{{.SecurityOptions}}'; docker context show; echo \"\${DOCKER_HOST:-（未设）}\"" >&2
+    echo "  若是远程 daemon，密钥必须在**它所在的那台机器**上生成 —— 换台机器跑本脚本。" >&2
+  else
+    echo "  工作目录当前是 ${WORK}。某些装法挂不了 /tmp —— 换到家目录下重试：" >&2
+    echo "    KARMACHAIN_WORKDIR=\"\$HOME/karmachain-keygen\" KARMACHAIN_DOMAIN=${KARMACHAIN_DOMAIN:-<边界名>} $0 ${INDEX}" >&2
+    echo "" >&2
+    echo "  再看一眼这套 docker 是什么：" >&2
+    echo "    docker info -f '{{.SecurityOptions}}'; docker context show" >&2
+  fi
+  exit ${EXIT_DEPS}
+fi
+
 # 容器的输出**不能扔掉**。初版是 `>/dev/null 2>&1`，于是 docker run 自己的失败
-# （镜像跑不起来、挂载被拒、--user 不被接受…）一点痕迹都不留，而下面的判据
-# 会报出「avalanchego 没有生成 staker.crt」—— 一句指向 avalanchego 的话，
-# 而 avalanchego 可能根本没被启动过。2026-09-21 在 ubuntu-5 上就是这样：
-# 连 avago.log 都不存在，`tail` 报「没有那个文件或目录」。
-# 本脚本前面为「docker 不可用」与「镜像不存在」写了整段分辨，这一步却把证据丢了。
+# 一点痕迹都不留，而下面的判据会报出「avalanchego 没有生成 staker.crt」——
+# 一句指向 avalanchego 的话，而 avalanchego 可能根本没被启动过。
+# 2026-09-21 在 ubuntu-5 上就是这样：连 avago.log 都不存在，`tail` 报文件不存在。
 #
 # `mount-check` 是给宿主看的：容器最先写它。它在容器里成功、而宿主看不见，
-# 就说明 bind mount 没有把内容传回来 —— 这与 avalanchego 失败是两件完全不同的事。
+# 就说明 bind mount 没有把内容传回来 —— 与 avalanchego 失败是两件完全不同的事。
 set +e
-${DOCKER} run --rm --entrypoint sh --user "$(id -u):$(id -g)" \
+${DOCKER} run --rm --entrypoint sh ${USER_ARGS[@]+"${USER_ARGS[@]}"} \
   -e NETWORK_ID="${NETWORK_ID}" -v "${WORK}:/out" "${IMAGE}" -c '
   set -e
   id
@@ -208,8 +262,27 @@ KEY_SHA="$(sha256sum "${KEYDIR}/staker.key" | cut -d' ' -f1)"
 SIGNER_SHA="$(sha256sum "${KEYDIR}/signer.key" | cut -d' ' -f1)"
 
 DOMAIN="${KARMACHAIN_DOMAIN:-<本机的故障边界 id>}"
-ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
-TODAY="$(date -u +%Y-%m-%d)"
+
+# ## 密钥一旦落盘，**任何事都不许阻止下面那段公开材料被打印出来**
+#
+# 初版写的是：
+#     ADDR="$(hostname -I 2>/dev/null | awk '{print $1}')"
+# `2>/dev/null` 只吞掉 stderr，而 `set -o pipefail` 让 `hostname -I` 的非零状态
+# 成为整个管道的状态，`set -e` 于是把脚本打掉 —— **就在 cp 之后**。
+# 后果不是"少一行地址"：密钥已经在 keyDir 里了，公开材料却一个字没印出来，
+# 而重跑会被上面那条「staker.key 已存在 —— 不覆盖」拦住。
+# 机器卡在一个既没拿到材料、又不能重来的状态里，只能手工移走目录重新生成身份。
+#
+# 2026-09-21 在 win-1 上用桩跑完整路径时撞到（Git Bash 的 hostname 没有 -I）。
+# Linux 上不复现，所以它能一直躺着 —— 而"只在某些机器上炸"的那一类，
+# 正是这种脚本最该防的：它的用途就是在**一台陌生的新机器**上跑第一次。
+#
+# 地址只是个便于追溯的注记，取不到就留空；绝不让它决定脚本的成败。
+ADDR="$( (hostname -I 2>/dev/null || true) | awk '{print $1}' )" || ADDR=""
+if [ -z "${ADDR}" ]; then
+  ADDR="$( (ip -4 -o addr show scope global 2>/dev/null || true) | awk '{print $4}' | cut -d/ -f1 | head -1 )" || ADDR=""
+fi
+TODAY="$(date -u +%Y-%m-%d)" || TODAY="(日期未知)"
 
 cat > "${KEYDIR}/README.md" <<EOF
 # DEVELOPMENT ONLY — KarmaChain 本地开发网络的验证者材料（node-${INDEX}）
