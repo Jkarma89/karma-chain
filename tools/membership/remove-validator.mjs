@@ -66,6 +66,7 @@ import {
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { ask } from './ask.mjs';
+import { assertChainReachable, reportUnexpected } from './cli-failure.mjs';
 
 const NEWLINE = String.fromCharCode(10);
 import { readVerificationWeights, nudgePChainHeight } from './pchain-verification-set.mjs';
@@ -689,7 +690,20 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   const identity = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
   const rpcUrl = process.env.KARMACHAIN_RPC_URL
     ?? `http://127.0.0.1:${config.endpoints.hostRpcPort}${config.endpoints.rpcPath}`;
+  // **兜底：未预料的抛出不许变成一段 stack trace 加退出码 1。**
+  //
+  // 命令行主体是顶层 await，没有 try/catch 包得住它 —— 用进程级处理器接。
+  // 这么接还有一个好处：回调里抛出的也接得住，而 try/catch 接不住那些。
+  // T031 场景 N 注入实测（2026-09-21）：入口代理一停，此前拿到的是
+  // `getaddrinfo ENOTFOUND` 的原始堆栈 + exit 1，而 1 在本仓库没有含义。
+  const onFatal = (err) => reportUnexpected(err, { command: 'devnet-member remove' });
+  process.on('unhandledRejection', onFatal);
+  process.on('uncaughtException', onFatal);
+
   const client = createPublicClient({ transport: http(rpcUrl) });
+  // 在动任何东西之前问一次链可不可达 —— 那时"一步都没动链"是确定为真的，
+  // 而这正是退出码 30 的含义。
+  await assertChainReachable({ client, rpcUrl });
   const d = deriveTopology(config);
   const primary = d.topologyNodes.find((n) => n.role === 'primary');
   const pchain = async (method, params) => {

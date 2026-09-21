@@ -53,6 +53,7 @@ import { toleranceChange, toleranceAfterAdd } from './tolerance.mjs';
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { ask } from './ask.mjs';
+import { assertChainReachable, reportUnexpected } from './cli-failure.mjs';
 
 // 这四样搬到了 pchain-verification-set.mjs —— **加入与退出都要用它们**
 //（研究 V-34：落后一格的那个验证集合，两个方向各撞过一次）。
@@ -1335,7 +1336,20 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
 
   const rpcUrl = process.env.KARMACHAIN_RPC_URL
     ?? `http://127.0.0.1:${config.endpoints.hostRpcPort}${config.endpoints.rpcPath}`;
+  // **兜底：未预料的抛出不许变成一段 stack trace 加退出码 1。**
+  //
+  // 命令行主体是顶层 await，没有 try/catch 包得住它 —— 用进程级处理器接。
+  // 这么接还有一个好处：回调里抛出的也接得住，而 try/catch 接不住那些。
+  // T031 场景 N 注入实测（2026-09-21）：入口代理一停，此前拿到的是
+  // `getaddrinfo ENOTFOUND` 的原始堆栈 + exit 1，而 1 在本仓库没有含义。
+  const onFatal = (err) => reportUnexpected(err, { command: 'devnet-member add' });
+  process.on('unhandledRejection', onFatal);
+  process.on('uncaughtException', onFatal);
+
   const client = createPublicClient({ transport: http(rpcUrl) });
+  // 在动任何东西之前问一次链可不可达 —— 那时"一步都没动链"是确定为真的，
+  // 而这正是退出码 30 的含义。
+  await assertChainReachable({ client, rpcUrl });
 
   // P 链走某个 Primary 节点。它们是 P 链的权益持有者，也是唯一完整同步主网络的节点。
   const d = deriveTopology(config);
