@@ -2263,3 +2263,75 @@ Ubuntu Server 的精简安装不带它。于是 `chain_id()` 静默返回空字�
 - 脚本级：构造一个**有 docker、没有 curl** 的 PATH 真跑一遍 → 退出 10 并说清缺依赖，
   不再等满 300 秒（`dirname` 也得用 shell shim 顶上，精简 PATH 里那个 exe 跑不起来）
 - 守卫级：把那行检查改名注入 → `not ok`，还原后 9/9
+
+### V-58 守卫在那儿，是我的流程把它绕开了 —— inode 陈旧挂载（2026-09-22）
+
+T021 现场执行时，四台 Linux 机器 `git pull` 之后 `nginx -s reload`，
+三个信号全说成功：`nginx -t` 通过、`signal process started`、入口返回 200 且 `0x4edd`。
+
+而 `grep -c max_fails` 在容器里数出的是 **6**，不是 7。**l1-7 不在它们的 upstream 池里。**
+
+```
+宿主   blockchain/nodes/lan/rpc-proxy.conf     md5 ccca0efa…
+容器内 /etc/nginx/conf.d/karmachain.conf       md5 b187e731…    ← 四台完全一样的旧内容
+```
+
+#### 这件事仓库早就记着，而且是在同一台机器上
+
+`scripts/devnet-start.sh` 的 `warn_stale_mounts`（T020）注释写得完整：
+
+> Docker 对**单个文件**的 bind mount 绑的是 **inode**，不是路径。而 `git pull`／重新渲染
+> 都是"写临时文件 + rename"的原子替换 —— inode 变了，容器的挂载仍指向**旧 inode**……
+> 而 `nginx -s reload` 打印了 `signal process started`，看着像成功 —— **重载的是旧配置**。
+> **这个坑只在 Linux 宿主上存在**：Docker Desktop 按**路径**解析，替换能被看到。
+
+2026-09-09 的实测就在 ubuntu-1 上。这次也是 ubuntu-1 先暴露。
+而"只在 Linux 上存在"这条也再次兑现：**win-1 与 win-2 的容器直接看到了新文件**
+（md5 与宿主逐字节相同、`grep -c` = 7），两台 Windows 一个都不用重建。
+在 Windows 上开发、在 Linux 上部署 —— 正是那段注释说的最坏组合。
+
+#### 真正的缺陷是我的流程
+
+我给出的现场步骤是「六台**只** `git pull`，**不要跑** `devnet-start`」——
+理由是保住判据④（既有容器不重启）。而 `warn_stale_mounts` 就长在 `devnet-start` 里，
+并且**刻意放在幂等分支之前**，注释还专门写了为什么：
+
+> 否则"已在运行"时直接 exit 0，而那恰好是最需要提醒的情形：
+> `git pull` 之后跑一次 devnet-start，它说"无需操作"，你就以为新配置生效了。
+
+**我为了一条判据，把专门为这条路写的检查从路径上摘掉了。**
+补跑 `devnet-start` 之后它一字不差地报了出来，并给出确切的、已填好本机路径的修法。
+
+#### 这是本期第三次同一形状，三次都不是"没有守卫"
+
+| | 形状 |
+|---|---|
+| V-55 | 守卫**声称的性质**比它实际查的范围宽（pathspec 只写了 `scripts/`） |
+| V-57 | 判据**依赖的外部命令**没有被检查（缺 curl 报成"链未就绪"） |
+| V-58 | 守卫在那儿、位置也对，**是执行流程绕开了它** |
+
+前两条改代码能修。第三条改代码修不了 —— 它说明**现场步骤本身需要被审**：
+一条"为了保住判据而跳过某个命令"的指令，必须同时说清那个命令里还带着什么别的判定。
+
+#### 修法与代价
+
+`docker compose -f <compose> up -d --force-recreate rpc` —— 仓库给的这条修法**范围是对的**。
+我先担心带服务名时 `depends_on` 会把节点也重建掉、当场作废判据④，用 `--dry-run` 验了：
+
+```
+不带 --no-deps：  karmachain-l1-1 Running        ← 只报状态，未重建
+                  karmachain-rpc-win-1 Recreate  ← 只有代理
+```
+
+**担心不成立**（Compose 5.5.1），`--no-deps` 加不加都行。四台执行后实测印证：
+`l1-3`/`primary-1`、`l1-4`/`primary-2`、`l1-5`、`l1-6` 的时刻全部逐字符不变。
+
+代价量出来了：重建一台的代理，**它自己的入口不可用数秒**
+（ubuntu-2 实测 4 秒 `ECONNREFUSED`；ubuntu-3/ubuntu-4 的重建只花 1.1/0.7 秒，
+短于 2 秒采样间隔，**未采到失败 ≠ 无中断**）。链与其余六个入口全程无感。
+
+#### 一条可以考虑的根治（未做）
+
+把代理的挂载从**单文件**改成**目录**（`blockchain/nodes/lan/:/etc/nginx/karmachain/:ro`
+再在容器内 include），inode 替换就不再有影响。代价是改生成的 compose 与 nginx 配置布局，
+且**这一次改动本身**需要重建一次所有代理容器。留作后续 —— 本条先把现象与修法钉住。
