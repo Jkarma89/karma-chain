@@ -11,7 +11,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { devnetAvailable, genesisHash } from './lib/devnet.mjs';
-import { startDashboard, waitFirstPoll } from './lib/dashboard.mjs';
+import { startDashboard, waitFirstPoll, waitForSnapshot } from './lib/dashboard.mjs';
 
 const SKIP = !(await devnetAvailable()) ? '开发网未运行 —— 先 scripts/devnet-start' : undefined;
 
@@ -29,8 +29,28 @@ describe('面板 —— 跨机创世一致性', { skip: SKIP, concurrency: 1 }, 
       '基准必须取自 blockchain/genesis/karmachain.genesis.hash，不得另抄一份');
   });
 
+  // **等到每个可达验证者都读到了创世，再断言。**
+  //
+  // 2026-09-21 实测：l1-6（ubuntu-4）某一轮的 `genesisHash` 是 `null`，
+  // 而同一时刻直接问它 `eth_getBlockByNumber("0x0")` 答得好好的 —— 一次瞬时读失败。
+  // 旧写法把那一轮当判决，于是套件报
+  //「l1-6 的创世哈希与基准不符 —— **它跑在另一条链上**」。
+  //
+  // **`null` 是"读不到"，不是"不符"** —— probeNode 的注释里写着这条区分
+  //（"null（未知）与不匹配是两件事，不得混淆"），而这个测试把它们混了。
+  //
+  // 与 SC-003 那条 30 分钟窗口是同一个形状：**把一次读失败当成了判决**。
+  // 修法不是放宽断言 —— 是把观测做到与说法一样强：多等几轮，
+  // 读到了再判"符不符"；**一直读不到**才是另一回事，由下面那条断言管。
+  const withGenesis = (s) => s.nodes
+    .filter((n) => n.countsTowardTolerance && n.reachable)
+    .every((n) => n.genesisHash != null);
+
   test('全部可达的 L1 验证者自报的创世哈希都等于基准（SC-011）', async (t) => {
-    const s = await dash.snapshot();
+    const { snapshot: s, elapsedMs } = await waitForSnapshot(dash, withGenesis, {
+      timeoutMs: 60_000, label: '每个可达验证者都读到创世哈希',
+    });
+    t.diagnostic(`等到全部读到创世用了 ${elapsedMs}ms`);
     const validators = s.nodes.filter((n) => n.countsTowardTolerance);
     const reachable = validators.filter((n) => n.reachable);
 
@@ -41,14 +61,22 @@ describe('面板 —— 跨机创世一致性', { skip: SKIP, concurrency: 1 }, 
 
     assert.ok(reachable.length > 0, '至少要有一个可达验证者，否则本用例在空转');
     for (const n of reachable) {
+      // 分开说：`null` 是读不到（上面已经等过 60 秒），`false` 才是真的不符。
+      // 把两者写成同一句话，会让一次读失败被报成"分叉"—— 那是本仓库最重的一个结论。
+      assert.notEqual(n.genesisMatchesBaseline, null,
+        `${n.id}（${n.domain}）**读不到**创世哈希（等了 60 秒仍为 null）——`
+        + '这不是分叉，是取不到 —— 先看那台机器的 RPC 是不是在抖。');
       assert.equal(n.genesisMatchesBaseline, true,
-        `${n.id}（${n.domain}）的创世哈希与基准不符 —— 它跑在另一条链上`);
+        `${n.id}（${n.domain}）的创世哈希与基准**不符** —— 它跑在另一条链上`);
       assert.equal(n.genesisHash.toLowerCase(), genesisHash().toLowerCase());
     }
   });
 
   test('不报分叉，也不报"创世未知"', async () => {
-    const s = await dash.snapshot();
+    // 同上：`unknownGenesis` 在某一轮为真可能只是那一轮没读到。
+    const { snapshot: s } = await waitForSnapshot(dash, withGenesis, {
+      timeoutMs: 60_000, label: '每个可达验证者都读到创世哈希',
+    });
     assert.equal(s.chainIdentity.forkDetected, false);
     assert.equal(s.chainIdentity.unknownGenesis, false,
       '可达的验证者都该取到创世 —— 若为 true，说明有节点已引导但取不到创世区块');

@@ -153,11 +153,43 @@ export async function validatorsServing(excludeIds = []) {
   }));
 }
 
-/** 便捷形式：返回「未在服务」的那些验证者的说明，全在服务时为空数组。 */
-export async function spreadProblems(excludeIds = [], label = '') {
+/**
+ * 故障有没有扩散到其余验证者 —— **一次探测不作数，要复核**。
+ *
+ * ## 为什么
+ *
+ * 2026-09-19 的 SC-003 三十分钟窗口：**30 笔交易全部确认**，而第 8 分钟
+ * 三台不同机器（win-2、ubuntu-1、ubuntu-2）**同时**报"不可达"一次，
+ * 于是整轮被判成「故障扩散了」。三台同机率挂掉的概率，远低于**观测方抖了一下**。
+ *
+ * 004 早就记过这个形状：「本机连不上它，但网络里其他节点与它有连接 ——
+ * 是本机到它的网络路径问题，不是节点故障」。而这里是**单点、单次**探测就下结论，
+ * 既不重探也不向对等求证。
+ *
+ * ## 修法不是放宽断言
+ *
+ * 「故障扩散」是一个很重的结论，而**从一次读失败得不出它**。
+ * 所以把观测做到与说法一样强：只对**看起来不好的那几个**复核一次，
+ * 两次都不成才算。正常路径上一次复核都不会发生（没有可疑对象就直接返回）。
+ *
+ * 与 dashboard-genesis-parity 那条是同一个形状：**把一次读失败当成了判决**。
+ *
+ * @param {number} confirmAfterMs 复核前等多久 —— 给瞬时抖动一点恢复时间
+ */
+export async function spreadProblems(excludeIds = [], label = '', { confirmAfterMs = 3_000 } = {}) {
   const rows = await validatorsServing(excludeIds);
-  return rows.filter((r) => !r.serving)
-    .map((r) => `${label}${r.id}（${r.domain}）${r.detail} —— 故障扩散了`);
+  const suspect = rows.filter((r) => !r.serving);
+  if (!suspect.length) return [];
+
+  await new Promise((r) => setTimeout(r, confirmAfterMs));
+  const again = await validatorsServing(excludeIds);
+  const byId = new Map(again.map((r) => [r.id, r]));
+
+  return suspect
+    .filter((r) => byId.get(r.id) && !byId.get(r.id).serving)
+    .map((r) => `${label}${r.id}（${r.domain}）${byId.get(r.id).detail}`
+      + ` —— 故障扩散了（${Math.round(confirmAfterMs / 1000)} 秒后复核仍然如此；`
+      + `第一次探测时是「${r.detail}」）`);
 }
 
 /**
