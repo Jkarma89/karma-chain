@@ -2151,3 +2151,51 @@ win-1 没装 `jq`，真脚本跑不到这些行，所以用 PATH 前置的 `dock
 `neither` → 退出 10 并给出出口；`KARMACHAIN_WORKDIR` 已设 → 提示改口。
 失败路径都在 `mkdir keyDir` 之前退出，不会留下半个密钥目录（已核对仓库未被污染）。
 **只做 `bash -n` 是不够的** —— 前两条缺陷都在语法上完全正确。
+
+#### 根因确认：daemon 是 snap 装的（同日追加）
+
+上面「两种身份都不通」那一支真的出现了，于是把两件事分开测：
+
+```
+$ docker run --rm --entrypoint sh -v "$D:/out" karmachain/node:local \
+    -c 'id; (echo hello > /out/x && echo 容器写成功) || echo 容器写失败; ls -la /out'
+uid=0(root) gid=0(root) groups=0(root)
+→ 容器写成功
+-rw-r--r-- 1 root root    6 Sep 21 15:22 x
+
+$ ls -la "$D"          # 宿主
+drwx------  2 azmy azmy 4096  9月 22 00:22 .
+drwxrwxrwt 21 root root 4096  9月 22 00:22 ..     ← **空的**
+```
+
+容器那一侧写成功、文件也在；宿主这一侧什么都没有。**挂载根本没生效。**
+
+```
+$ snap list | grep docker
+docker    29.8.0    3613    latest/stable    canonical**
+$ docker info -f '{{.DockerRootDir}}'
+/var/snap/docker/common/var-lib-docker
+```
+
+**daemon 是 snap 装的**，严格约束挂不了 `$HOME` 之外的路径。`-v /tmp/tmp.XXXX:/out`
+被静默换成一个容器侧的空目录、属主 root —— 这一次解释了前面两次的全部现象：
+
+| 身份 | 现象 | 为什么 |
+|---|---|---|
+| 带 `--user 1000` | `cannot create /out/mount-check: Permission denied` | 以 uid 1000 写一个属主 root 的目录 |
+| 不带（容器 root） | 写成功，宿主看不到 | 写进了容器自己那一侧 |
+
+而 `which -a docker` 第一个是 `/usr/bin/docker`（apt 装的**客户端**），它连的却是
+snap 的 daemon。**客户端与服务端来自两套装法** —— 所以 `docker build` 一切正常，
+镜像摘要还与 win-1 逐字相同，只有 bind mount 会露馅。
+
+修法不是再加一条提示，而是**换掉默认值**：工作目录默认放 `$HOME`（两种装法都能挂），
+`KARMACHAIN_WORKDIR` 仍作为出口。同时让失败分支从 `DockerRootDir` 认出 snap 并**直接点名**，
+不再让人从三种成因里自己猜 —— 顺带提醒仓库也必须在 `$HOME` 之下，否则起节点时同一个问题会再来。
+
+**这条留给后面的账**：ubuntu-5 上 `docker compose` 未必可用 ——
+apt 的 `docker.io` 不带 compose v2 插件。起 l1-7 之前要先确认，
+`docker compose version` 不通就装 `docker-compose-v2`（或改用 snap 的 `docker.compose`）。
+
+四种情形都用桩验过：snap 点名 / 非 snap 泛化提示 / 已设 WORKDIR 时转向 daemon 本身 /
+成功路径工作目录落在 `$HOME` 下并退出 0。

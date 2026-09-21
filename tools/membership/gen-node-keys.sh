@@ -100,14 +100,34 @@ ${DOCKER} image inspect "${IMAGE}" >/dev/null 2>&1 || {
 NETWORK_ID="$(jq -er .avalanche.networkId blockchain/protocol.json)"
 CHAIN_ID="$(jq -er .chain.chainId blockchain/protocol.json)"
 
-# 临时目录默认在 /tmp，但**有些 docker 装法 bind-mount 不了 /tmp**（snap 装的 docker
-# 受严格约束；远程或 rootless daemon 的 /tmp 也不是宿主这个 /tmp）。
-# 那种情形下容器跑得很好、往 /out 写得很好，而宿主这边看到的是空目录 ——
-# 于是下面的判据会以为 avalanchego 什么都没生成。留一个出口，并在探测到时指出它。
+# ## 临时目录默认放在 $HOME，不是 /tmp
+#
+# 2026-09-21 在 ubuntu-5 上实测：那台机器的 docker **daemon 是 snap 装的**
+# （`snap list` 有 `docker 29.8.0 canonical`，`docker info` 的
+# `DockerRootDir=/var/snap/docker/common/var-lib-docker`），而 snap 的严格约束
+# **挂不了 $HOME 之外的路径**。`-v /tmp/tmp.XXXX:/out` 被静默换成一个容器侧的
+# 空目录、属主 root，于是：
+#
+#   - 带 `--user 1000` → `cannot create /out/mount-check: Permission denied`
+#   - 不带（容器 root）→ 写成功，但写在容器自己那一侧，**宿主永远看不到**
+#
+# 实测把这两件分开了：容器里 `echo hello > /out/x` 成功、`ls -la /out` 里有那个文件，
+# 而宿主 `ls -la` 那个目录是空的。客户端是 apt 装的、服务端是 snap 的，
+# 所以 `docker build` 一切正常 —— 只有 bind mount 会露馅。
+#
+# $HOME 在两种装法下都能挂（snap 有 home 接口，普通 docker 本来就不受限），
+# 所以**默认就用 $HOME**。本脚本的用途正是"在一台陌生的新机器上跑第一次" ——
+# 不该要求对方先知道某个环境变量才跑得起来。
+#
+# 私钥在这里只是过路：最终落点是仓库里的 keyDir，而仓库也在 $HOME 下，
+# 信任边界没有变宽。trap 会清掉它。
 if [ -n "${KARMACHAIN_WORKDIR:-}" ]; then
   mkdir -p "${KARMACHAIN_WORKDIR}"
   WORK="$(mktemp -d -p "${KARMACHAIN_WORKDIR}")"
+elif [ -n "${HOME:-}" ] && [ -w "${HOME}" ]; then
+  WORK="$(mktemp -d "${HOME}/.karmachain-keygen.XXXXXX")"
 else
+  # $HOME 不可用（某些 CI/容器环境）—— 回落到 /tmp，并由下面的往返探测兜住
   WORK="$(mktemp -d)"
 fi
 RUNLOG="$(mktemp)"
@@ -159,20 +179,38 @@ else
   echo "    带 --user $(id -u):$(id -g) → 不通" >&2
   echo "    不带 --user               → 也不通（写不进，或宿主读不回）" >&2
   echo "" >&2
-  # 已经设过 KARMACHAIN_WORKDIR 还失败，就不该再劝人去设它 ——
-  # 那是一句朝错误方向的提示，而那比没有提示更坏（2026-09-21 用桩当场演示到）。
-  if [ -n "${KARMACHAIN_WORKDIR:-}" ]; then
-    echo "  工作目录是 ${WORK}（来自 KARMACHAIN_WORKDIR）—— 换目录这条路已经试过了。" >&2
-    echo "  所以问题不在 /tmp，而在这套 docker 的挂载或身份映射本身。先看它是什么：" >&2
-    echo "    docker info -f '{{.SecurityOptions}}'; docker context show; echo \"\${DOCKER_HOST:-（未设）}\"" >&2
-    echo "  若是远程 daemon，密钥必须在**它所在的那台机器**上生成 —— 换台机器跑本脚本。" >&2
-  else
-    echo "  工作目录当前是 ${WORK}。某些装法挂不了 /tmp —— 换到家目录下重试：" >&2
-    echo "    KARMACHAIN_WORKDIR=\"\$HOME/karmachain-keygen\" KARMACHAIN_DOMAIN=${KARMACHAIN_DOMAIN:-<边界名>} $0 ${INDEX}" >&2
-    echo "" >&2
-    echo "  再看一眼这套 docker 是什么：" >&2
-    echo "    docker info -f '{{.SecurityOptions}}'; docker context show" >&2
-  fi
+  # daemon 的根目录能认出 snap 装法（实测 /var/snap/docker/common/var-lib-docker）。
+  # 认出来就直接说，而不是让人从三种成因里自己猜 ——
+  # 2026-09-21 在 ubuntu-5 上正是这一种，而当时的提示只说"某些装法"。
+  DOCKER_ROOT="$(${DOCKER} info -f '{{.DockerRootDir}}' 2>/dev/null || true)"
+  case "${DOCKER_ROOT}" in
+    /var/snap/*)
+      echo "  **这套 docker 的 daemon 是 snap 装的**（DockerRootDir=${DOCKER_ROOT}）。" >&2
+      echo "  snap 的严格约束挂不了 \$HOME 之外的路径：bind mount 会被静默换成一个" >&2
+      echo "  容器侧的空目录，于是容器写得成功而宿主什么也看不到。" >&2
+      echo "" >&2
+      echo "  工作目录当前是 ${WORK}。它必须在 \$HOME 之下：" >&2
+      echo "    KARMACHAIN_WORKDIR=\"\$HOME/karmachain-keygen\" KARMACHAIN_DOMAIN=${KARMACHAIN_DOMAIN:-<边界名>} $0 ${INDEX}" >&2
+      echo "" >&2
+      echo "  仓库也必须在 \$HOME 之下，否则后面起节点时同一个问题会再来一次。" >&2
+      ;;
+    *)
+      # 已经设过 KARMACHAIN_WORKDIR 还失败，就不该再劝人去设它 ——
+      # 那是一句朝错误方向的提示，而那比没有提示更坏（2026-09-21 用桩当场演示到）。
+      if [ -n "${KARMACHAIN_WORKDIR:-}" ]; then
+        echo "  工作目录是 ${WORK}（来自 KARMACHAIN_WORKDIR）—— 换目录这条路已经试过了。" >&2
+        echo "  所以问题不在目录位置，而在这套 docker 的挂载或身份映射本身。先看它是什么：" >&2
+        echo "    docker info -f '{{.SecurityOptions}}'; docker context show; echo \"\${DOCKER_HOST:-（未设）}\"" >&2
+        echo "  若是远程 daemon，密钥必须在**它所在的那台机器**上生成 —— 换台机器跑本脚本。" >&2
+      else
+        echo "  工作目录当前是 ${WORK}。换一个位置重试：" >&2
+        echo "    KARMACHAIN_WORKDIR=\"\$HOME/karmachain-keygen\" KARMACHAIN_DOMAIN=${KARMACHAIN_DOMAIN:-<边界名>} $0 ${INDEX}" >&2
+        echo "" >&2
+        echo "  再看一眼这套 docker 是什么：" >&2
+        echo "    docker info -f '{{.SecurityOptions}}'; docker context show" >&2
+      fi
+      ;;
+  esac
   exit ${EXIT_DEPS}
 fi
 
