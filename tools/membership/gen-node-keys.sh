@@ -100,8 +100,18 @@ ${DOCKER} image inspect "${IMAGE}" >/dev/null 2>&1 || {
 NETWORK_ID="$(jq -er .avalanche.networkId blockchain/protocol.json)"
 CHAIN_ID="$(jq -er .chain.chainId blockchain/protocol.json)"
 
-WORK="$(mktemp -d)"
-cleanup() { rm -rf "${WORK}"; }
+# 临时目录默认在 /tmp，但**有些 docker 装法 bind-mount 不了 /tmp**（snap 装的 docker
+# 受严格约束；远程或 rootless daemon 的 /tmp 也不是宿主这个 /tmp）。
+# 那种情形下容器跑得很好、往 /out 写得很好，而宿主这边看到的是空目录 ——
+# 于是下面的判据会以为 avalanchego 什么都没生成。留一个出口，并在探测到时指出它。
+if [ -n "${KARMACHAIN_WORKDIR:-}" ]; then
+  mkdir -p "${KARMACHAIN_WORKDIR}"
+  WORK="$(mktemp -d -p "${KARMACHAIN_WORKDIR}")"
+else
+  WORK="$(mktemp -d)"
+fi
+RUNLOG="$(mktemp)"
+cleanup() { rm -rf "${WORK}" "${RUNLOG}"; }
 trap cleanup EXIT
 
 echo "在本机生成 node-${INDEX} 的 staking 材料（约 30 秒）…" >&2
@@ -110,14 +120,65 @@ echo "在本机生成 node-${INDEX} 的 staking 材料（约 30 秒）…" >&2
 # `--user` 让容器以**调用者**的身份写文件。少了它，avalanchego 以 root 生成
 # staker.key（权限 0600、属主 root），后面这个脚本以普通用户 cp 就**读不出来** ——
 # 而那时报的是一句 Permission denied，看不出根因在容器的运行身份上。
+# 容器的输出**不能扔掉**。初版是 `>/dev/null 2>&1`，于是 docker run 自己的失败
+# （镜像跑不起来、挂载被拒、--user 不被接受…）一点痕迹都不留，而下面的判据
+# 会报出「avalanchego 没有生成 staker.crt」—— 一句指向 avalanchego 的话，
+# 而 avalanchego 可能根本没被启动过。2026-09-21 在 ubuntu-5 上就是这样：
+# 连 avago.log 都不存在，`tail` 报「没有那个文件或目录」。
+# 本脚本前面为「docker 不可用」与「镜像不存在」写了整段分辨，这一步却把证据丢了。
+#
+# `mount-check` 是给宿主看的：容器最先写它。它在容器里成功、而宿主看不见，
+# 就说明 bind mount 没有把内容传回来 —— 这与 avalanchego 失败是两件完全不同的事。
+set +e
 ${DOCKER} run --rm --entrypoint sh --user "$(id -u):$(id -g)" \
   -e NETWORK_ID="${NETWORK_ID}" -v "${WORK}:/out" "${IMAGE}" -c '
+  set -e
+  id
+  echo ok > /out/mount-check
+  ls -ld /out
   mkdir -p /out/data
   timeout 25 /avalanchego/build/avalanchego \
     --network-id="${NETWORK_ID}" --data-dir=/out/data \
     --http-host=127.0.0.1 --http-port=29999 --staking-port=29998 \
     --bootstrap-ips= --bootstrap-ids= >/out/avago.log 2>&1 || true
-' >/dev/null 2>&1
+  ls -la /out /out/data 2>&1
+' >"${RUNLOG}" 2>&1
+RUN_STATUS=$?
+set -e
+
+if [ ${RUN_STATUS} -ne 0 ]; then
+  echo "" >&2
+  echo "**容器没跑起来**（docker run 退出 ${RUN_STATUS}）—— 与 avalanchego 无关。输出：" >&2
+  sed 's/^/    /' "${RUNLOG}" >&2
+  echo "" >&2
+  echo "  常见成因：镜像与本机架构不符；--user 不被这套 docker 接受；挂载被拒。" >&2
+  exit ${EXIT_DEPS}
+fi
+
+if [ ! -f "${WORK}/mount-check" ]; then
+  echo "" >&2
+  echo "**容器跑完了，但它写进 /out 的东西宿主看不见** —— bind mount 没有生效。" >&2
+  echo "  这不是 avalanchego 的问题：它的日志与密钥都写在容器那一侧，然后一起消失了。" >&2
+  echo "" >&2
+  echo "  容器自己的视角（它认为写成功了）：" >&2
+  sed 's/^/    /' "${RUNLOG}" >&2
+  echo "" >&2
+  echo "  三种成因，按可能性排：" >&2
+  echo "    1. docker 是 snap 装的 —— 严格约束下挂载不了 /tmp。" >&2
+  echo "       用 \$HOME 下的目录重试：" >&2
+  echo "         KARMACHAIN_WORKDIR=\"\$HOME/karmachain-keygen\" KARMACHAIN_DOMAIN=${KARMACHAIN_DOMAIN:-<边界名>} $0 ${INDEX}" >&2
+  echo "    2. DOCKER_HOST 指向远程或 rootless daemon —— 那边的 /tmp 不是这边的 /tmp。" >&2
+  echo "       检查：docker context show; echo \"\${DOCKER_HOST:-（未设）}\"" >&2
+  echo "    3. 宿主 /tmp 是某种不可共享的挂载（noexec/tmpfs 命名空间隔离）。同样用第 1 条的出口。" >&2
+  exit ${EXIT_DEPS}
+fi
+
+if [ ! -s "${WORK}/avago.log" ]; then
+  echo "" >&2
+  echo "**挂载是通的，但 avalanchego 没有产生任何日志。** 容器输出：" >&2
+  sed 's/^/    /' "${RUNLOG}" >&2
+  exit ${EXIT_INCOMPLETE}
+fi
 
 STAKING="${WORK}/data/staking"
 for f in staker.crt staker.key signer.key; do
