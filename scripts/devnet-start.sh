@@ -52,6 +52,23 @@ RPC="http://127.0.0.1:${KARMACHAIN_RPC_PORT}${KARMACHAIN_RPC_PATH}"
 }
 
 command -v docker >/dev/null 2>&1 || { echo "devnet-start: docker not found — install Docker Desktop (Windows: WSL2 backend) or Docker Engine + Compose v2" >&2; exit 10; }
+
+# 整个就绪判据都压在 curl 上（`chain_id()` 与 `assert_chain_on_pchain` 都用它问 RPC），
+# 而那些调用都带着 `2>/dev/null`。**curl 不在的话，它们静默返回空字符串** ——
+# 于是轮询永远不匹配，等满 300 秒，最后报出一句「300s 内未就绪」，
+# 并附上一段关于「至少 6 个在线」的解释。那段解释在这种情形下完全指错方向。
+#
+# 2026-09-22 在 ubuntu-5 上实测：节点 healthy、在 1606 高度服务、本机代理从别的机器
+# 问过去是 HTTP 200 且返回 0x4edd —— 而 devnet-start 连续两次报「未就绪」。
+# 那台机器上按 `apt-get install docker.io jq git` 装的，Ubuntu Server 的精简安装不带 curl。
+#
+# 退出码 10 的语义就是「前置依赖缺失」，而它本来就在本脚本的退出码表里 ——
+# 这一路失败本该走那条路，而不是伪装成超时。
+command -v curl >/dev/null 2>&1 || {
+  echo "devnet-start: curl not found —— 就绪判据要靠它问 RPC，缺了它只会等满超时" >&2
+  echo "  安装：sudo apt-get install -y curl   （或 dnf/apk/brew 对应的包）" >&2
+  exit 10
+}
 # "连不上守护进程"与"没权限跟它说话"是两件事，报同一句话会把人引错方向。
 #
 # 2026-09-09 实测：在 ubuntu-1 上不加 sudo 跑本脚本，得到「Docker daemon is not running」

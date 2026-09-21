@@ -189,6 +189,29 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
       + '  前者的措辞会把人引向 PATH 而不是权限。\n'
       + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
   });
+  // 2026-09-22 在 ubuntu-5 上：`devnet-start.sh` 的就绪判据全压在 `curl` 上，
+  // 而那些调用都带 `2>/dev/null`。那台机器按 `apt-get install docker.io jq git` 装的，
+  // **没有 curl** —— 于是 chain_id() 静默返回空字符串，轮询永远不匹配，
+  // 等满 300 秒后报「300s 内未就绪」，还附上一段关于「至少 6 个在线」的解释。
+  // 当时节点 healthy、在服务，本机代理从别的机器问过去 HTTP 200 且返回 0x4edd。
+  // 一句朝错误方向的诊断，让人去查链和法定人数，而真正缺的是一个包。
+  //
+  // 退出码 10「前置依赖缺失」本来就在这些脚本的退出码表里 —— 这一路失败该走那条路。
+  // 守的是这个类，不是那一个文件：外部命令决定成败时，缺了它必须**当场说**，
+  // 不能让它伪装成超时或"链有问题"。
+  test('用到 curl 的 scripts/*.sh 必须先检查 curl 在不在', () => {
+    const offenders = readdirSync(SCRIPTS)
+      .filter((f) => f.endsWith('.sh'))
+      .map((f) => ({ f, text: readFileSync(join(SCRIPTS, f), 'utf8') }))
+      .filter(({ text }) => /(^|[^\w-])curl\s/m.test(text))
+      .filter(({ text }) => !text.includes('command -v curl'))
+      .map(({ f }) => f);
+    assert.deepEqual(offenders, [],
+      `以下脚本用了 curl 却没有前置检查：\n  ${offenders.join('\n  ')}\n`
+      + '  缺了它这些调用会静默返回空字符串（它们都带 2>/dev/null），\n'
+      + '  症状是等满超时后报"未就绪"—— 而那句话指向链，不指向缺包。\n'
+      + '  修法：在 docker 检查旁边加 command -v curl || { …; exit 10; }');
+  });
 
   // 上面那条 `2>$null` 守卫只证明"没用错写法"，**没有**证明 Invoke-Quiet 真的管用 ——
   // 于是它第一版的 bug 溜了过去（`2>&1` 拦不住 EAP=Stop 升级出来的终止性 NativeCommandError，
