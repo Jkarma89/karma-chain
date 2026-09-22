@@ -335,6 +335,36 @@ while :; do
     echo "  Chain ID  : ${KARMACHAIN_CHAIN_ID_HEX}"
     echo "  Height    : ${height}"
     echo "  Nodes     : ${KARMACHAIN_NODE_IDS}"
+    # ## READY 说的是"本机那条 RPC 入口通了"，**不是"本机的节点好了"**
+    #
+    # 就绪判据问的是 127.0.0.1:<入口端口>，而那是本机的代理，它的 upstream 里有
+    # **全部**节点。nginx 轮询，所以那一声应答很可能来自**别的机器**。
+    #
+    # 2026-09-22 在 ubuntu-6（第八台）上实测到这个含糊：从零起一个新节点，
+    # 4 秒就打印了 `READY (failure domain ubuntu-6)`。l1-8 确实好了 ——
+    # 但那是我**直接问它**才知道的，不是这条横幅证明的。
+    # 反过来说：**l1-8 若压根没同步成功，这里照样会打印 READY。**
+    # 在一条以"加机器"为主题的特性里，新机器上最该确认的恰恰是这一条。
+    #
+    # 所以把本机节点**自己的判断**打进来（healthcheck --state，与失败分支同一路径，
+    # 不重算第二份逻辑）。**刻意只报不拦**：沿用既有教训 ——
+    # 打在正常路径上的诊断守卫必须保守，问不到就跳过，不把 READY 变成失败。
+    # 分批启动时本机节点可能仍在引导，那不是故障。
+    self=''
+    for n in $KARMACHAIN_NODE_IDS; do
+      c="karmachain-$n"
+      docker inspect --format '{{.State.Status}}' "$c" 2>/dev/null | grep -q running || continue
+      # MSYS_NO_PATHCONV=1 的理由见下方失败分支里那段注释（Git Bash 会改写 / 开头的参数）
+      line="$(env MSYS_NO_PATHCONV=1 docker exec "$c" sh -c \
+        '/opt/karmachain/healthcheck.sh --state | jq -r "\"\(.state) — \(.detail)\""' 2>/dev/null)" || continue
+      [ -n "$line" ] && self="${self}
+              ${n}: ${line}"
+    done
+    if [ -n "$self" ]; then
+      echo "  本机节点  : （自报，与上面那条入口应答是两件事）${self}"
+    else
+      echo "  本机节点  : 问不到自报状态 —— 上面那条 READY 只说明**入口**通了"
+    fi
     # **按声明算，并且说出来。** 本脚本只拿得到生成物里的数（目标机器上没有 node，
     # 这是 gen-node-keys.sh 那条设计约束的延续），而容错的真实分母是
     # **P 链上带权重的成员数** —— 有成员正在加入时两者会不同，且方向偏乐观。

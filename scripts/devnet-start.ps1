@@ -149,7 +149,36 @@ while ($true) {
         Write-Host "  Chain ID  : $($ctx.KARMACHAIN_CHAIN_ID_HEX)"
         Write-Host "  Height    : $h"
         Write-Host "  Nodes     : $($ctx.KARMACHAIN_NODE_IDS)"
-        Write-Host "  容错      : $($ctx.KARMACHAIN_MAX_OFFLINE_VALIDATORS) 个验证者可离线"
+        # READY 说的是"本机那条 RPC 入口通了"，**不是"本机的节点好了"** ——
+        # 判据问的是本机代理，而它的 upstream 里有**全部**节点，轮询之下那一声
+        # 应答很可能来自别的机器。2026-09-22 在第八台（ubuntu-6）上实测到这个含糊：
+        # 新节点从零起，4 秒就打印了 READY。节点确实好了，但那是**直接问它**才知道的。
+        # 反过来说：节点若压根没同步成功，这里照样会打印 READY。
+        # 所以把本机节点自己的判断打进来 —— **只报不拦**（正常路径上的诊断要保守）。
+        $selfLines = @()
+        foreach ($n in $ctx.KARMACHAIN_NODE_IDS.Split(' ')) {
+            $st = Invoke-Quiet { docker inspect --format '{{.State.Status}}' "karmachain-$n" }
+            if ($st -ne 'running') { continue }
+            # 直接调容器里的 healthcheck 拿 JSON，在 PowerShell 侧解析 ——
+            # 不套 `sh -c` 里再套 jq 的转义，那一层嵌套引号在 5.1 上很容易出错。
+            $raw = Invoke-Quiet { docker exec "karmachain-$n" /opt/karmachain/healthcheck.sh --state }
+            if (-not $raw) { continue }
+            try {
+                $o = ($raw -join "`n" | ConvertFrom-Json)
+                $selfLines += "              {0}: {1} — {2}" -f $n, $o.state, $o.detail
+            } catch { }
+        }
+        if ($selfLines.Count -gt 0) {
+            Write-Host "  本机节点  : （自报，与上面那条入口应答是两件事）"
+            $selfLines | ForEach-Object { Write-Host $_ }
+        } else {
+            Write-Host "  本机节点  : 问不到自报状态 —— 上面那条 READY 只说明**入口**通了"
+        }
+        # 与 .sh 对齐：容错这个数是**按声明算**的，而真实分母是 P 链上带权重的成员数。
+        # 此前 .ps1 只打印数字、没有这两句限定 —— 于是 Windows 边界上看到的是一个
+        # 没有限定的乐观数字（2026-09-22 补齐，属 .sh/.ps1 等价契约）。
+        Write-Host "  容错      : $($ctx.KARMACHAIN_MAX_OFFLINE_VALIDATORS) 个验证者可离线（按声明的 $($ctx.KARMACHAIN_VALIDATOR_IDS.Split(' ').Count) 个算）"
+        Write-Host '              链上成员数以 npm run membership:status 为准 —— 有成员正在加入时两者不同'
         Write-Host ''
         Write-Host '  Next: scripts/devnet-status.ps1  |  scripts/devnet-stop.ps1'
         exit 0
