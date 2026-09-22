@@ -52,6 +52,11 @@
         "id": "l1-7",
         "role": "l1-validator",
         "validatorIndex": 7
+      },
+      {
+        "id": "l1-8",
+        "role": "l1-validator",
+        "validatorIndex": 8
       }
     ],
     "deployments": {
@@ -76,7 +81,8 @@
               "primary-1",
               "primary-2",
               "l1-6",
-              "l1-7"
+              "l1-7",
+              "l1-8"
             ],
             "sharedFailureFactors": [
               "host:single-machine"
@@ -85,7 +91,7 @@
         ]
       },
       "lan": {
-        "description": "每台机器一个独立故障边界，每边界恰好 1 个 L1 验证者（台数见下方的边界表，此处不复述以免随成员增减而过期）。2026-09-08 换过硬件并对**当时那五台**（win-1、win-2、ubuntu-1、ubuntu-2、ubuntu-3）清点：MAC 互不相同、无虚拟机厂商 OUI、win-1 上已无 vmware-vmx 进程 —— 此前（2026-09-07）声明的 5 个边界里有 3 个是 win-1/win-2 上的 VMware 客户机，那次的 hypervisor 因素已随硬件更换消除。ubuntu-1/ubuntu-2 的 MAC OUI 为 DC:A6:32（Raspberry Pi Trading），即 arm64 —— 节点镜像走 TARGETARCH，binaries.env 备有 arm64 的 sha256。2 个 Primary 节点放在 Ubuntu 机器上：它们是验证者的引导目标，而 Windows 上的容器运行时需要用户登录才启动（ADR-0006）。清点方法与维护责任见 docs/adr/0007-failure-domain-independence.md。 ubuntu-4（2026-09-14 加入，承载 l1-6）与 ubuntu-5（2026-09-21 加入，承载 l1-7）由部署者**声明**为独立物理机，`sharedFailureFactors` 因此为空 —— 但它们**未经**上述 MAC/OUI 清点：「声明为独立」与「清点过」是两件事，而 R-12 的教训正是前者会给出在现实里为假的绿灯。要提升到「清点过」，按 docs/adr/0007-failure-domain-independence.md 的方法补做。",
+        "description": "每台机器一个独立故障边界，每边界恰好 1 个 L1 验证者（台数见下方的边界表，此处不复述以免随成员增减而过期）。2026-09-08 换过硬件并对**当时那五台**（win-1、win-2、ubuntu-1、ubuntu-2、ubuntu-3）清点：MAC 互不相同、无虚拟机厂商 OUI、win-1 上已无 vmware-vmx 进程 —— 此前（2026-09-07）声明的 5 个边界里有 3 个是 win-1/win-2 上的 VMware 客户机，那次的 hypervisor 因素已随硬件更换消除。ubuntu-1/ubuntu-2 的 MAC OUI 为 DC:A6:32（Raspberry Pi Trading），即 arm64 —— 节点镜像走 TARGETARCH，binaries.env 备有 arm64 的 sha256。2 个 Primary 节点放在 Ubuntu 机器上：它们是验证者的引导目标，而 Windows 上的容器运行时需要用户登录才启动（ADR-0006）。清点方法与维护责任见 docs/adr/0007-failure-domain-independence.md。 ubuntu-4（2026-09-14 加入，承载 l1-6）、ubuntu-5（2026-09-21 加入，承载 l1-7）与 ubuntu-6（2026-09-22 加入，承载 l1-8）由部署者**声明**为独立物理机，`sharedFailureFactors` 因此为空 —— 但它们**未经**上述 MAC/OUI 清点：「声明为独立」与「清点过」是两件事，而 R-12 的教训正是前者会给出在现实里为假的绿灯。要提升到「清点过」，按 docs/adr/0007-failure-domain-independence.md 的方法补做。",
         "failureDomains": [
           {
             "id": "win-1",
@@ -151,6 +157,15 @@
               "l1-7"
             ],
             "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-6",
+            "platform": "linux",
+            "address": "192.168.1.33",
+            "nodes": [
+              "l1-8"
+            ],
+            "sharedFailureFactors": []
           }
         ]
       }
@@ -168,7 +183,7 @@
     "nodeCount": 2
   },
   "validators": {
-    "count": 7,
+    "count": 8,
     "nodes": [
       {
         "index": 1,
@@ -232,6 +247,23 @@
           "proofOfPossession": "0x842f02b52a4f4d1a19fe83d5815466be3624d82b072d33067c94eb05f24333c07233be95e83408f89a8dda17e349e4ab0fd80ad159c418152738f9f55b14f1f10abdf07854bb248f9de84908016d9f04f4576f0121843a0ce3996b8d0f089a08",
           "reportedBy": "ubuntu-5 (192.168.1.32)",
           "reportedAt": "2026-09-21"
+        }
+      },
+      {
+        "index": 8,
+        "httpPort": 21674,
+        "stakingPort": 21675,
+        "keyDir": "blockchain/validators/dev/node-8/",
+        "identity": {
+          "origin": "joined",
+          "nodeId": "NodeID-2TM5ESCWHKLnKodKwkVVu6XVMkfQodd27",
+          "blsPublicKey": "0xa0a8db7ec3ef687d93ba0a94a1499f2f841e6a2e8933fd076c90ae6545654244144682cd0fd54c8a1719371fdc6aff3d",
+          "certSha256": "53ab38cf84a43d03c11a7f8f48c535ade7914e7c6411f3db4a029faf01f8b27e",
+          "keySha256": "02238ab7d714c0e8ec66b617dc238425657855212fd34fd2384ca0c3fcd416be",
+          "signerSha256": "ce0f2065e7fd154054e375134f2e713d67100d4de99eb80fd588b3c3906372e8",
+          "proofOfPossession": "0xb38b76a931fbdad3026c7a41fa66e32f4b8ac0ec31df29237e1cc34c0c88227a616684e7210ffbff3277a14b0c04647e13d7fd9cc33c153349dae3ee9b0a7b3c5d80928709b01285db7c6d3626c4a1ef2840d564cb82d5cfd48871cbe82e6c99",
+          "reportedBy": "ubuntu-6 (192.168.1.33)",
+          "reportedAt": "2026-09-22"
         }
       }
     ]

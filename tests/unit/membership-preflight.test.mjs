@@ -102,18 +102,33 @@ describe('基线：不动任何东西时前置检查通过（否则下面三组�
 });
 
 describe('FR-013：加入会让某个故障边界超过 ⌊n/4⌋ → 拦下', () => {
-  test('把两个验证者塞进同一个边界后被拦下，且理由指向 T-5', async () => {
+  // 2026-09-22：原先固定"并两个边界" —— 那假定了上限是 1。
+  // n 到 8 之后上限变成 2（⌊8/4⌋），并两个只得到 2 个验证者，**不再越界**，
+  // 于是这条红了。而报出来的正是它自己那句自检：「构造没有真的违反 T-5」——
+  // 那句话写得好：它让一个失去意义的用例**变红**，而不是悄悄变成恒真。
+  // 修法是让构造也派生：一直并下去，直到真的越界。
+  test('把足够多的验证者塞进同一个边界后被拦下，且理由指向 T-5', async () => {
     const config = clone(loadProtocol());
     const dep = config.topology.deployments[config.topology.activeDeployment];
-    // 把第二个边界的节点全并进第一个 —— 于是第一个边界的验证者数必然超限
-    const [a, b] = dep.failureDomains;
-    a.nodes = [...a.nodes, ...b.nodes];
-    b.nodes = [];
+    const isValidator = (id) => config.topology.nodes.some((n) => n.id === id && n.role === 'l1-validator');
+    const limit = Math.floor(
+      config.topology.nodes.filter((n) => n.role === 'l1-validator').length / 4,
+    );
+
+    // 依次把后面的边界并进第一个，直到第一个边界的验证者数**超过**上限
+    const [a] = dep.failureDomains;
+    for (const b of dep.failureDomains.slice(1)) {
+      if (a.nodes.filter(isValidator).length > limit) break;
+      a.nodes = [...a.nodes, ...b.nodes];
+      b.nodes = [];
+    }
     dep.failureDomains = dep.failureDomains.filter((d) => d.nodes.length);
 
     // 先确认这个构造真的违反了 T-5，否则下面的断言测的是别的东西
     const ft = deriveTopology(config).faultTolerance;
-    assert.equal(ft.declaredWithinLimit, false, '构造没有真的违反 T-5 —— 用例失去意义');
+    assert.equal(ft.declaredWithinLimit, false,
+      `构造没有真的违反 T-5 —— 用例失去意义（上限 ${limit}，`
+      + `第一个边界有 ${a.nodes.filter(isValidator).length} 个验证者）`);
 
     const pre = await run({ config, fetchImpl: fakeFetch() });
     assert.equal(pre.ok, false, 'T-5 越界必须拦下（FR-013）');

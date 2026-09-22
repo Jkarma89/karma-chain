@@ -108,21 +108,29 @@ describe('拓扑约束', () => {
     assert.equal(errs.length, 0, `单边界不该触发容错约束，但报了：${errs.join('; ')}`);
   });
 
+  // 2026-09-22：原先这里写死「2 个验证者 > 上限 1」，并只枚举 l1-1…l1-5。
+  // 加到第 8 个验证者时它红了，**而红的原因与被测性质无关**：
+  // 一是 l1-6/l1-7/l1-8 落在边界之外触发了 T-4；
+  // 二是上限已经从 1 变成 2（⌊8/4⌋），塞 2 个不再越界。
+  // 本文件开头那段注释早就说过第一类，这次补上第二类：
+  // **上限本身也要派生**，否则 n 每跨过一个 4 的倍数，这条就废一次。
   test('T-5：多边界下任一边界超过 ⌊n/4⌋ 个验证者即违规', () => {
+    const limit = Math.floor(VALIDATOR_IDS.length / 4);
+    const over = VALIDATOR_IDS.slice(0, limit + 1);          // 恰好越界一个
+    const used = [...over, PRIMARY_IDS[0]];
     const bad = withDeployment([
-      dom('win-1', ['l1-1', 'l1-2', 'primary-1']),   // 2 个验证者 > 上限 1
-      dom('win-2', ['l1-3', 'primary-2']),
-      dom('u-1', ['l1-4']),
-      dom('u-2', ['l1-5']),
+      dom('win-1', [...over, PRIMARY_IDS[0]]),
+      ...restDomains(used, 'u-'),
     ]);
     const errs = errorsOf(bad);
     const hit = errs.find((e) => e.includes("'win-1'"));
-    assert.ok(hit, `应当指出 win-1 违规，实际：${errs.join('; ')}`);
+    assert.ok(hit, `应当指出 win-1 违规（上限 ${limit}，塞了 ${over.length} 个），实际：${errs.join('; ')}`);
     // 文案依 contracts/cli-interface.md：边界 id、实际数量、上限、以及把哪个节点挪走
-    assert.match(hit, /含 2 个 L1 验证者/, '应指出实际数量');
-    assert.match(hit, /上限为 1/, '应指出上限');
+    assert.match(hit, new RegExp(`含 ${over.length} 个 L1 验证者`), '应指出实际数量');
+    assert.match(hit, new RegExp(`上限为 ${limit}`), '应指出上限');
     assert.match(hit, /查询门槛 75%/, '应给出上限的来由');
-    assert.match(hit, /把 l1-2 移到另一个边界，或增加边界数量/, '必须给出可执行的修正方向，并点名具体节点');
+    assert.match(hit, new RegExp(`把 ${over.at(-1)} 移到另一个边界，或增加边界数量`),
+      '必须给出可执行的修正方向，并点名具体节点');
     // 退出码 13 的映射靠这个标记，不靠散文 —— 改文案不得让判据静默失效
     assert.ok(hit.startsWith(TOPOLOGY_VIOLATION_TAG), `违规消息须带 ${TOPOLOGY_VIOLATION_TAG} 标记，实际：${hit}`);
   });
@@ -147,8 +155,15 @@ describe('拓扑约束', () => {
 });
 
 describe('容错推导', () => {
-  test('f ≤ ⌊n/4⌋：n=5 时可容忍 1 个', () => {
-    assert.equal(deriveTopology(BASE).faultTolerance.maxOfflineValidators, 1);
+  // 2026-09-22 改名并改判据。原先它叫「n=5 时可容忍 1 个」，而断言读的是**活的声明**：
+  //     assert.equal(deriveTopology(BASE).faultTolerance.maxOfflineValidators, 1);
+  // 声明从 5 个长到 6、7 个时它一直是绿的 —— 因为 ⌊6/4⌋ 与 ⌊7/4⌋ 恰好都等于 1。
+  // 到第 8 个才红。也就是说**它从来没有测过它名字说的那件事**，
+  // 两年的绿色来自巧合而不是正确。n=4…12 的整张表另有 fault-tolerance-range 守着。
+  test('活的声明派生出的可离线数 = ⌊n/4⌋', () => {
+    const n = VALIDATOR_IDS.length;
+    assert.equal(deriveTopology(BASE).faultTolerance.maxOfflineValidators, Math.floor(n / 4),
+      `声明里有 ${n} 个验证者，可离线数应当是 ⌊${n}/4⌋ = ${Math.floor(n / 4)}`);
   });
 
   // 显式针对 local 形态，**不依赖当前生效的是哪个形态** ——
@@ -180,20 +195,25 @@ describe('容错推导', () => {
 });
 
 describe('共享失效因素告警', () => {
-  test('两个边界共享同一因素、合计验证者超上限时告警，但不阻断', () => {
+  // 2026-09-22：原先两个边界各 1 个验证者、合计 2，靠"上限 1"才越界。
+  // 上限变成 2（⌊8/4⌋）之后 2 就不越界了，于是告警消失、这条红了。
+  // 告警的条件是**合并后超上限**，所以要越界的份量也得派生。
+  test('若干边界共享同一因素、合计验证者超上限时告警，但不阻断', () => {
+    const limit = Math.floor(VALIDATOR_IDS.length / 4);
     const shared = { platform: 'windows', sharedFailureFactors: ['update-window:patch-tuesday'] };
-    const used = [VALIDATOR_IDS[0], PRIMARY_IDS[0], VALIDATOR_IDS[1], PRIMARY_IDS[1]];
+    const group = VALIDATOR_IDS.slice(0, limit + 1);         // 合并后恰好越界一个
+    const used = [...group, PRIMARY_IDS[0]];
     const p = withDeployment([
-      dom('win-1', [VALIDATOR_IDS[0], PRIMARY_IDS[0]], shared),
-      dom('win-2', [VALIDATOR_IDS[1], PRIMARY_IDS[1]], shared),
+      ...group.map((id, i) => dom(`w-${i + 1}`, i === 0 ? [id, PRIMARY_IDS[0]] : [id], shared)),
       ...restDomains(used, 'u-'),
     ]);
+    // 每个边界只 1 个验证者，所以**声明层面**不越界 —— 越界只在合并之后出现。
     assert.deepEqual(errorsOf(p), [], '共享失效因素不得阻断校验');
 
     const r = analyze(p, 'test');
-    assert.equal(r.warnings.length, 1, '应当产生一条告警');
+    assert.equal(r.warnings.length, 1, `应当产生一条告警（合并后 ${group.length} 个 > 上限 ${limit}）`);
     assert.match(r.warnings[0], /update-window:patch-tuesday/);
-    assert.match(r.warnings[0], /同时损失 2 个验证者/);
+    assert.match(r.warnings[0], new RegExp(`同时损失 ${group.length} 个验证者`));
   });
 
   test('共享因素但合计不超上限时不告警', () => {
