@@ -43,7 +43,13 @@ describe('① spreadProblems：可疑的要复核，两次都不成才算', () =
       '必须先挑出"看起来不好的那几个" —— 否则每一轮都要多探一遍全部节点');
     assert.match(fn, /if \(!suspect\.length\) return \[\]/,
       '没有可疑对象时必须直接返回：正常路径上不该有任何额外开销');
-    assert.match(fn, /await validatorsServing\(excludeIds\)[\s\S]{0,400}await validatorsServing\(excludeIds\)/,
+    // 2026-09-22：那两次调用改名成了 `probe(excludeIds)`（默认值仍是 validatorsServing，
+    // 加注入点是为了让新加的四路求证判定可单测）。**行为没变，是本条的前提过期了** ——
+    // 所以改前提，不放宽断言。
+    // 而"探了两次"这件事现在另有一条**行为**断言：
+    // tests/unit/e2e-spread-corroboration.test.mjs 用计数的 probe 直接数调用次数。
+    // 文本匹配只能证明"写着两次"，数不出真的调了几次 —— 两条一起才算把这条性质守住。
+    assert.match(fn, /await probe\(excludeIds\)[\s\S]{0,600}await probe\(excludeIds\)/,
       '只探了一次 —— 那样一次网络抖动就会被报成「故障扩散了」，'
       + '而 2026-09-19 实测那一轮的 30 笔交易全部确认');
   });

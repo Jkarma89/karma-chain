@@ -133,7 +133,7 @@ export function pickLocalVictims(count = 1, { requireDomainPeers = false } = {})
  * @returns [{ id, domain, serving, detail }]
  */
 export async function validatorsServing(excludeIds = []) {
-  const { probeNode } = await import('../../../tools/inspect/node-status.mjs');
+  const { probeNode, expectedNodeId } = await import('../../../tools/inspect/node-status.mjs');
   let blockchainId = null;
   try {
     blockchainId = JSON.parse(readFileSync(
@@ -147,6 +147,10 @@ export async function validatorsServing(excludeIds = []) {
     id: n.id,
     domain: n.domain,
     serving: Boolean(probes[i].reachable) && probes[i].height != null,
+    // 身份与对等列表**一并带出来** —— spreadProblems 要用它们向对等求证。
+    // 不可达时探不到自报的 NodeID，回落到生成物里声明的那个（面板同一做法）。
+    nodeId: probes[i].nodeId ?? expectedNodeId(n.id),
+    peerNodeIds: probes[i].peerNodeIds ?? [],
     detail: !probes[i].reachable
       ? '不可达'
       : probes[i].height == null ? '可达但尚未服务 L1' : `服务中（高度 ${probes[i].height}）`,
@@ -174,22 +178,76 @@ export async function validatorsServing(excludeIds = []) {
  *
  * 与 dashboard-genesis-parity 那条是同一个形状：**把一次读失败当成了判决**。
  *
+ * ## 复核只解决了一半（2026-09-22 补完）
+ *
+ * 「3 秒后再看一次」挡住了**瞬时**抖动，挡不住**持续**的观测方问题：
+ * 观测方到某台机器的路径坏了五秒，两次探测都失败，于是照样断言「故障扩散了」。
+ * 而 004 那条判据的另一半正是为此写的：**本机探不到 且 其余节点的对等列表里也没有**，
+ * 才算它真的缺席；只是本机探不到的，是本机到它的路径问题，链里还有它。
+ *
+ * 所以复核之后再向**还在服务的那些节点**求证 —— 它们的对等列表里有没有这个可疑对象。
+ * 四种结果分开处置：
+ *
+ *   证人看得见它        → 诊断，**不算失败**（观测方的路径问题）
+ *   证人也看不见        → **失败**：这才是故障扩散
+ *   一个证人都没有      → **失败**：不是求证不了，是验证者全都不在服务
+ *   拿不到它的 NodeID   → 诊断，**求证不了就不宣布扩散**
+ *
+ * 最后一条是刻意的：「故障扩散」是很重的结论，**求证不了不等于确认**。
+ * 把不确定当成定论，正是这条 e2e 原先的毛病 —— 而 2026-09-19 那次
+ * 三台机器同时报"不可达"、30 笔交易却全部确认，就是它的代价。
+ *
  * @param {number} confirmAfterMs 复核前等多久 —— 给瞬时抖动一点恢复时间
+ * @param {(msg:string)=>void} onNote 诊断输出口。默认打到 stderr 并以 `#` 开头
+ *        （TAP 把它当注释），**不会被静默丢掉** —— 调用方没传也看得见。
  */
-export async function spreadProblems(excludeIds = [], label = '', { confirmAfterMs = 3_000 } = {}) {
-  const rows = await validatorsServing(excludeIds);
+export async function spreadProblems(excludeIds = [], label = '', {
+  confirmAfterMs = 3_000,
+  onNote = (m) => console.error(`# ${m}`),
+  // 注入点**只为可测**：这四路判定是本函数的全部价值，而它原先无法单测 ——
+  // 一条不会变红的判定比没有判定更坏。默认就是真探测，调用方不受影响。
+  probe = validatorsServing,
+} = {}) {
+  const rows = await probe(excludeIds);
   const suspect = rows.filter((r) => !r.serving);
   if (!suspect.length) return [];
 
   await new Promise((r) => setTimeout(r, confirmAfterMs));
-  const again = await validatorsServing(excludeIds);
+  const again = await probe(excludeIds);
   const byId = new Map(again.map((r) => [r.id, r]));
+  const stillBad = suspect.filter((r) => byId.get(r.id) && !byId.get(r.id).serving);
+  if (!stillBad.length) return [];
 
-  return suspect
-    .filter((r) => byId.get(r.id) && !byId.get(r.id).serving)
-    .map((r) => `${label}${r.id}（${r.domain}）${byId.get(r.id).detail}`
-      + ` —— 故障扩散了（${Math.round(confirmAfterMs / 1000)} 秒后复核仍然如此；`
-      + `第一次探测时是「${r.detail}」）`);
+  // 证人 = 复核那一轮里**还在服务**的节点。它们与可疑对象有连接，
+  // 就说明链里还有它 —— 坏的是观测方到它的那条路。
+  const witnesses = again.filter((r) => r.serving);
+  const seenByPeers = new Set(witnesses.flatMap((r) => r.peerNodeIds));
+
+  const failures = [];
+  for (const r of stillBad) {
+    const now = byId.get(r.id);
+    const head = `${label}${r.id}（${r.domain}）${now.detail}`;
+    const tail = `（${Math.round(confirmAfterMs / 1000)} 秒后复核仍然如此；`
+      + `第一次探测时是「${r.detail}」）`;
+    const id = now.nodeId ?? r.nodeId;
+
+    if (!witnesses.length) {
+      failures.push(`${head} —— **全部验证者都不在服务**：`
+        + `没有任何证人可以求证，而这本身就是要报的事${tail}`);
+    } else if (!id) {
+      onNote(`${head} —— 求证不了：拿不到它的 NodeID（自报与声明都没有），`
+        + `无法在 ${witnesses.length} 个证人的对等列表里找它。`
+        + `**不据此宣布故障扩散**${tail}`);
+    } else if (seenByPeers.has(id)) {
+      onNote(`${head} —— 但 ${witnesses.length} 个仍在服务的验证者**看得见它**`
+        + `（对等列表里有 ${String(id).slice(0, 20)}…）`
+        + ` —— 是观测方到它的路径问题，**不是故障扩散**${tail}`);
+    } else {
+      failures.push(`${head} —— **故障扩散了**：${witnesses.length} 个仍在服务的`
+        + `验证者的对等列表里**也没有**它${tail}`);
+    }
+  }
+  return failures;
 }
 
 /**

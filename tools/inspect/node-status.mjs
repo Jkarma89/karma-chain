@@ -428,7 +428,9 @@ export function readContainers(rawText) {
   } catch { return {}; }
 }
 
-const expectedNodeId = (id) => {
+// 导出：e2e 的 spreadProblems 要用它给**不可达**的节点补上 NodeID ——
+// 探不到自报值时回落到生成物里声明的那个，才能向对等求证（面板同一做法）。
+export const expectedNodeId = (id) => {
   try { return JSON.parse(readFileSync(resolve(IDENTITY_DIR, `${id}.identity.json`), 'utf8')).nodeId; } catch { return null; }
 };
 
