@@ -32,6 +32,16 @@ const FORBIDDEN = [
   { re: /\b75\b/, why: '75% 查询门槛 —— 同上' },
   { re: /\b80\b/, why: 'n=5 时零余量的百分比 —— 是结果，不是输入' },
   { re: /\b60\b/, why: 'n=5 时停摆的百分比 —— 是结果，不是输入' },
+  // 2026-09-22 实测漏网的那一条：写死的不是**阈值**，是容错的**输入**。
+  // poll.mjs 里 `summarize(rows, { validatorCount: 0, maxOfflineValidators: 0 })`
+  // 让那句人读的总结变成「-1/0 验证者在线…可离线 0 个…基准为 0 个」，
+  // 并据此断言「超出上限、推断已停止出块」—— 而同一份快照的结构化字段说的是
+  // 「7 个成员、可离线 1 个、余量 0、链继续出块」。
+  // **对着一条正在出块的链宣布它停了**，比写死一个百分比严重得多：
+  // 阈值写死要等 n 变了才错，这一个是**一直**错。
+  // 本守卫标题说的是"不得写死档位阈值"，而它真正该守的性质更宽 ——
+  // 档位判定的**任何输入**都不能是字面量。
+  { re: /(?:validatorCount|maxOfflineValidators)\s*:\s*\d/, why: '容错的输入被写死 —— 档位、门槛、那句总结全从它算，写死即恒错' },
 ];
 
 // **刻意不扫裸的 `5`（验证者总数）。** 2026-09-10 加过一条 `/\b5\b/`，它立刻抓到了
@@ -103,10 +113,18 @@ describe('这道守卫本身会变红吗', () => {
     'const THRESHOLD = 0.75;',
     'if (percent < 80) alarm();',
     'const total = 5;',
+    // 原先样本里**没有 60** —— 于是 /\b60\b/ 那条规则的变红检查一直在空转
+    // （下面那个 `continue` 会把它静默跳过）。2026-09-22 顺手补上。
+    'if (percent < 60) stopped();',
+    // 新规则的样本：写死容错的输入
+    'summarize(rows, { validatorCount: 0, maxOfflineValidators: 0 });',
   ].join('\n');
 
+  // **不许静默跳过。** 原先这里是 `if (!re.test(…)) continue` ——
+  // 一条没有配样本的规则会被无声地放过，于是它的变红检查从未真的跑过，
+  // 而 /\b60\b/ 恰好就是这种情形。
+  // 一条不会变红的守卫比没有守卫更坏，因为它还提供了虚假的安心。
   for (const { re, why } of FORBIDDEN) {
-    if (!re.test(stripNonCode(bad))) continue;
     test(`能抓到违规写法中的 ${re.source}`, () => {
       assert.ok(re.test(stripNonCode(bad)), `${re.source} 抓不到违规源码 —— 守卫失效（${why}）`);
     });

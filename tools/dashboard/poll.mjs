@@ -5,7 +5,13 @@
 // 判据一律复用 002 的既有实现（FR-004）：
 //   - probeNode()  取节点自报的事实（从不请求 /ext/health —— 见 ../README.md）
 //   - classify()   把观测归入 RecoveryState
-//   - summarize()  在线数与容错上限的关系（原样保留供对照）
+//   - summarize() **不在这里调用**：它要的容错基准（P 链上带权重的成员数）
+//     在这一层还没算出来。原先这里传了 `{ validatorCount: 0, maxOfflineValidators: 0 }`，
+//     于是那句话变成「-1/0 验证者在线…可容忍 0 个离线…基准为 0 个」，并据此断言
+//     「超出上限、推断已停止出块」—— 而同一份快照的结构化字段说的是
+//     「7 个成员、可离线 1 个、余量 0、链继续出块」。**文案与字段互相矛盾，
+//     而文案是人真正会读的那一行。** 2026-09-22 在 n=7、l1-1 连通度不足时实测到。
+//     现在由 server.mjs 用**快照自己的** faultTolerance 算，两者同源。
 //   - readContainers() 容器事实，带 120 秒 TTL
 //   - deriveTopology() / faultTolerance() 从 protocol.json 派生拓扑与容错上限
 //
@@ -16,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { loadProtocol, deriveTopology, REPO_ROOT } from '../protocol/load.mjs';
 import {
-  probeNode, classify, summarize, readContainers,
+  probeNode, classify, readContainers,
 } from '../inspect/node-status.mjs';
 
 const IDENTITY_DIR = resolve(REPO_ROOT, 'blockchain', 'nodes');
@@ -223,8 +229,6 @@ export async function pollOnce({ nodes, blockchainId, prev = {}, intervalSeconds
     heights: Object.fromEntries(rows.map((r) => [r.id, r.height])),
     reachableNodes: probes.filter((p) => p.reachable).length,
     containerFactsAvailable: Object.keys(containers).length > 0,
-    // 原样保留既有 summarize 的那句话，供人对照面板的档位是否与它一致
-    summaryLine: summarize(rows, { validatorCount: 0, maxOfflineValidators: 0 }).line,
   };
 }
 

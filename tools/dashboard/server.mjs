@@ -16,6 +16,10 @@ import { dirname } from 'node:path';
 import {
   loadContext, pollOnce, observerViewpoint, readMemberSetCached, readPrimaryStakeCached,
 } from './poll.mjs';
+// 那句人读的总结与面板的结构化字段**必须同源**，否则它们会各说各话
+// （2026-09-22 实测：文案说"已停止出块"，字段说"余量 0、继续出块"）。
+// 所以在快照建好之后、用**快照自己的** faultTolerance 与 nodes 去算它。
+import { summarize } from '../inspect/node-status.mjs';
 import { buildSnapshot } from './snapshot.mjs';
 // 公开投影（US6）：显式字段白名单，方向刻意是挑出允许的而非删掉不允许的。
 import { toPublicView } from './public-view.mjs';
@@ -169,10 +173,16 @@ export function createPoller({ ctx, intervalSeconds }) {
         available: polled.containerFactsAvailable,
         reason: polled.containerFactsAvailable ? null : '缺失、旧格式或已过期（120 秒 TTL）',
       },
-      summaryLine: polled.summaryLine,
       memberSet,
       pchainStake,
     });
+    // **同源**：summarize 拿到的正是快照里那份按 P 链收窄过的容错与节点行 ——
+    // 不是声明侧的数，也不是第二份独立计算。于是"6/7、余量 0"与 tier=zero-margin
+    // 不可能再互相矛盾。blocksAdvanced 这一层拿不到，留空 ——
+    // summarize 会据此如实加上"本网按需出块，闲着时高度不涨，这不是停摆的证据"。
+    state.snapshot.summaryLine = summarize(
+      state.snapshot.nodes, state.snapshot.faultTolerance,
+    ).line;
     state.prevHeights = polled.heights;
     state.rounds += 1;
     return Date.now() - started;

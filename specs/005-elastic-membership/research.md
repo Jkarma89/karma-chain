@@ -2413,3 +2413,99 @@ l1-2 与 l1-4。推进之后聚到 5/6，而**没签的换成了 l1-1** ——
 
 `devnet-verify`：`7/7 validators online, tolerance 1 (75% query threshold), full margin`。
 从 5 个到 7 个，**可离线数全程是 1**。要抬到 2 必须到 n=8 —— 还差一台机器。
+
+### V-60 面板对着一条正在出块的链宣布它停了 —— 容错的**输入**被写死成 0（2026-09-22）
+
+注册完 l1-7 后起面板查看状态，`summaryLine` 是这样的：
+
+```
+-1/0 验证者在线（上限：可容忍 0 个离线） [注意：只观测到 7 个计入容错的验证者，基准为 0 个]
+—— **超出上限**：l1-1 离线，按共识参数**推断已停止出块**（安全停摆：不分叉、区块零回滚…）
+```
+
+而**同一份快照的结构化字段**说的是另一回事：
+
+```
+tier "zero-margin" / participating 6 / threshold 6 / validatorMargin 0 / faultTolerance {7, 1}
+```
+
+即"达到门槛、余量 0、链继续出块"—— 而链确实在出块（高度 1687，几分钟前 soak 还在确认交易）。
+**文案与它自己的字段互相矛盾，而文案是人真正会读的那一行。**
+
+#### 根因：一处写死
+
+```js
+// tools/dashboard/poll.mjs:227
+summaryLine: summarize(rows, { validatorCount: 0, maxOfflineValidators: 0 }).line,
+```
+
+`summarize()` 用 `total = validatorCount`、`max = maxOfflineValidators` 算：
+
+| 表达式 | 传 0 时 | 症状 |
+|---|---|---|
+| `online = total - offline.length` | `0 - 1 = -1` | `-1/0 验证者在线` |
+| `withinTolerance = offline.length <= max` | `1 <= 0` → 假 | `超出上限…推断已停止出块` |
+| `counted.length !== total` | `7 !== 0` → 真 | `基准为 0 个` |
+
+全部症状都由这一处解释。注释写的用意是"原样保留既有 summarize 的那句话，
+**供人对照面板的档位是否与它一致**"——而传 0 之后，那句话与档位**永远**不一致。
+一个为了对照而存在的东西，自己是错的。
+
+#### 同一个函数，`node-status` 喂对了、面板喂了 0
+
+`tools/inspect/node-status.mjs:540` 调的是 `summarize(scoped.rows, scoped.faultTolerance, …)`
+—— 按 P 链收窄过的那份，旁边还记着"退回声明是 V-31 那个假警报的成因"。
+所以判据本身是对的，错的只是面板这一路的**入参**。
+
+#### 为什么它长期不响
+
+`pollOnce()` 这一层**拿不到**容错基准：n 要取 P 链上带权重的成员数，
+而那是 `buildSnapshot()` 里 `scopeToChainMembers()` 才算出来的。
+写死 0 是"先让它编译过去"的痕迹，而它产出的是一句**语法正确、语义完全错误**的话。
+
+修法不是把 0 换成 `ctx.faultTolerance`（那是**声明**侧的数，V-31 的假警报正是退回声明造成的），
+而是**让文案与字段同源**：在 `server.mjs` 里用**快照自己的** `faultTolerance` 与 `nodes` 算它。
+修后实测：
+
+```
+6/7 验证者在线（上限：可容忍 1 个离线） —— 链继续出块，但**余量为 0**：再有一个验证者离线即停摆
+```
+
+与 `tier=zero-margin`、`participating 6/threshold 6`、`margin 0` 一致。
+
+#### 守卫在那儿，作用域第三次比它声称的性质窄
+
+`tests/unit/dashboard-no-hardcode.test.mjs` 的标题就是「面板内不得写死档位阈值」，
+而它的 `FORBIDDEN` 只列了 `0.75 / 75 / 80 / 60` —— **百分比阈值**。
+这次写死的是档位判定的**输入**，落在模式之外。
+而且它更严重：阈值写死要等 n 变了才错，输入写死是**一直**错。
+
+已加规则 `/(?:validatorCount|maxOfflineValidators)\s*:\s*\d/`，
+全仓扫描**零假阳性**（唯一命中就是那个缺陷）。变红检查：把那句塞回 `poll.mjs`
+→ 守卫点出 `poll.mjs:198` 与原文；还原后 13/13。
+
+#### 顺带：这道守卫自己的变红检查有一条一直在空转
+
+自检那节写的是：
+
+```js
+for (const { re, why } of FORBIDDEN) {
+  if (!re.test(stripNonCode(bad))) continue;      // ← 没有样本就静默跳过
+```
+
+而 `bad` 样本里 **没有 60** —— 于是 `/\b60\b/` 那条规则的变红检查**从未真的跑过**。
+一条"没配样本"的规则被无声放过，正是本仓库反复栽的那个坑的元层版本：
+**检查器的检查器也会空转**。已补齐样本并把 `continue` 换成断言 ——
+从此"没有样本"本身就是失败。
+
+#### 这一条真实存在的告警不是虚警
+
+`notParticipatingIds: ["l1-1"]` 是**对的**。实测：l1-1 只有 4 个对等
+（两个 Primary + l1-7 + 本机聚合器），而 l1-2/l1-5 也看不见它 —— 双向断开。
+其余 6 个互相连通 = 6/7 = 85.7% ≥ 75%，所以链照常出块，l1-1 也经 l1-7 与 Primary 收到区块、
+高度一致。**但余量为 0：再掉一个就停。**
+
+l1-1 的日志显示这在 win-1 上**一整天都在反复**（09:49、10:17、11:08、13:53、
+13:57 一度 0 个对等、14:01、17:15、20:07、20:11），与注册无关。
+avalanchego 自己的健康检查要求 80% 连接权重，而节点的 `healthcheck.sh` 判的是
+"在服务、高度对" —— 两者分歧正是面板补上的那一格。
