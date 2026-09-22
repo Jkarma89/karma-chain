@@ -1328,7 +1328,7 @@ git commit -am "..." && git push    # 各机器靠 git pull 同步
 ```bash
 docker build -f docker/aggregator/Dockerfile \
   --build-arg TARGETARCH=$(dpkg --print-architecture) -t karmachain/aggregator:local .
-docker run -d --rm --name karmachain-aggregator -p 8646:8646 \
+docker run -d --rm --name karmachain-aggregator -p 8646:8646 -p 8647:8647 \
   -v "$PWD/blockchain:/repo/blockchain:ro" karmachain/aggregator:local
 curl -s http://127.0.0.1:8646/health     # "up" 只说进程活着 —— **不等于可用**
 ```
@@ -1346,8 +1346,28 @@ docker run --rm --network compose_default karmachain/verify:local node -e "fetch
 # signature_aggregator_connected_stake_weight_percentage{subnetID="…"} 100
 ```
 
+⚠ **刚起来时那条指标根本不存在，而不是 0。** 2026-09-22 实测：聚合器起满 90 秒、
+`/health` 一直是 `up`，而 `grep connected_stake` **输出为空** —— 只有
+`signature_aggregator_failures_to_connect_to_sufficient_stake` 那个计数器在。
+那条带 `subnetID` 标签的指标**要到首次聚合之后才出现**（聚合一次之后立刻就有，实测 100）。
+
+所以"看指标"这个判据在**最需要它的时刻**（刚起来、还没用过）是空的。
+而"空"与"0"是两件完全不同的事：前者是**没测到**，后者是**测到了、很糟**。
+把空当成 0 会让人去查 `allow-private-ips`，而那时根本还没有任何证据指向配置。
+
+**随时可用的判据：真聚合一次、数签名者。** 聚合**不写链**、可无代价重做
+（这也是第二步能随时重试的原因）。拿链上任一个 active 成员的 validationID
+构造一条确认消息交给它，够门槛就说明它可用：
+
+```
+✅ 聚合成功：5 个签名者，耗时 545ms      # 7 个等权成员、门槛 67% → 需要 5 个
+```
+
+2026-09-22 实测：起满 90 秒后这样一试，545 毫秒聚到 5 个，**随后**指标才显示
+连上签名集合 100% 的权重。**先有可用的证据，后有指标** —— 顺序是反的。
+
 **低于门槛（67%）就收不齐签名**，而那与 `allow-private-ips` 无关 —— 等一会儿即可。
-只有它**长期停在 0** 才去查那个配置。`devnet-member` 的失败消息现在会自己报出这个数，
+只有它**长期停在 0**（注意：是 0，不是「读不到」）才去查那个配置。`devnet-member` 的失败消息现在会自己报出这个数，
 并据此把「刚起来还没连上」与「某个验证者不签」分开说。
 
 不在本机时用 `KARMACHAIN_AGGREGATOR_URL` 指过去。
