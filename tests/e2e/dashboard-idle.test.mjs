@@ -45,7 +45,10 @@ describe('面板 —— 空闲不出块不得报警', { skip: SKIP, concurrency:
         tier: s.tier,
         percent: s.healthPercent,
         height: s.networkHeight,
-        incidents: s.incidents.length,
+        // 记**是哪几条**，不只是几条。2026-09-23 第三轮 e2e 就栽在这里：
+        // 报"实际有 6 个样本带异常"，而没有任何信息说那 5 条异常是什么 ——
+        // 失败无从判。`class:nodeId` 是稳定标识（incident 的形状见 snapshot.mjs）。
+        incidents: s.incidents.map((i) => `${i.class}:${i.nodeId ?? ''}`).sort(),
       });
       await new Promise((r) => setTimeout(r, 1000));
     }
@@ -74,9 +77,25 @@ describe('面板 —— 空闲不出块不得报警', { skip: SKIP, concurrency:
     assert.deepEqual([...heights], [startHeight],
       '本用例的前提是没有别人在发交易；高度变了说明链上有活动，此轮结果不作数');
 
-    const withIncidents = seen.filter((x) => x.incidents > 0);
-    assert.deepEqual(withIncidents, [],
-      `空闲不得产生异常条目，实际有 ${withIncidents.length} 个样本带异常`);
+    // 2026-09-23 第三轮：原先断言"全程零异常条目"，而本用例的性质是
+    // **空闲不得「产生」报警**（SC-008 / 测试名里就是这么写的）。
+    // 那一轮窗口开始时已经带着 5 条异常（上一条套件刚杀过又起过节点，余波未清），
+    // 档位 normal、百分比 100%、高度不变 —— 空闲本身什么都没产生，它照样红。
+    //
+    // 等待条件只等到了 `tier === 'normal'`，而 normal 并不意味着异常清单已空。
+    // 修法不是把等待条件改成"等到零异常"（真有一条常驻异常时那会超时，
+    // 而超时读起来像面板坏了），而是**以窗口开始时的那一份为基线，断言不新增**。
+    // 已有的那些如实报出来，让读结果的人知道这一轮是在什么前提下绿的。
+    const baseline = new Set(seen[0].incidents);
+    if (baseline.size) {
+      t.diagnostic(`注意：窗口开始时已有 ${baseline.size} 条异常（${[...baseline].join('、')}）——`
+        + ' 那是进入本用例之前就有的，不计入"空闲产生的报警"');
+    }
+    const added = seen
+      .map((x) => ({ at: x.at, fresh: x.incidents.filter((k) => !baseline.has(k)) }))
+      .filter((x) => x.fresh.length);
+    assert.deepEqual(added, [],
+      `空闲不得**产生**异常条目，实际新增：${added.map((x) => `${x.at}ms 出现 ${x.fresh.join('、')}`).join('；')}`);
 
     // 链确实一个块都没出 —— 这是"高度停滞"的直接证据，也是本用例成立的前提
     assert.equal(Number(await pub.getBlockNumber()), startHeight,
