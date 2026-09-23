@@ -39,7 +39,7 @@ import { resolve } from 'node:path';
 import {
   DOMAIN, DOMAIN_COUNT, DOMAIN_ADDRESSES, MAX_OFFLINE_VALIDATORS,
   clientsFor, rpcOfDomain, nodesOfDomain, validatorsOfDomain,
-  sendTxVia, sh, devnetAvailable,
+  sendTxVia, sh, devnetAvailable, attemptTx, TRANSPORT_BUDGET,
   script,
   SHELL_SKIP,
   restoreOrReport,
@@ -175,18 +175,36 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
           '本机 RPC 代理应当随边界一起消失；它还在说明 devnet-stop 没有停掉整个边界');
 
         const failures = [];
+        const transport = [];   // 传输层问题单独计 —— 它说的是观测方的网络，不是链
         const heights = [];
         let sent = 0;
 
         for (let minute = 1; minute <= MINUTES; minute++) {
           const roundStart = Date.now();
 
-          // SC-005 要的是 100%，因此不重试 —— 重试会把"第一次失败"藏起来。
+          // 原先这里写着：「SC-005 要的是 100%，因此**不重试** —— 重试会把"第一次失败"藏起来。」
+          // 那条决定是对的，但它针对的是**链给出的判决**（5xx、回执没来）——
+          // 那些一次都不重试，下面的 attemptTx 也确实不重试它们。
+          //
+          // 2026-09-23 第四轮 e2e 暴露出它覆盖不到的一类：第 30 分钟报 `HTTP request failed`，
+          // **没有状态码**，而链一直在出块（高度 2165 → 2184 → …）。
+          // 断的是 win-1 → win-2 那条链路 —— 观测方自己的网络，当天第三次抖
+          // （另两次见 V-60 与同一轮的空闲用例）。
+          // 那不是关于链的结论，而真实客户端遇到它就会重试。
+          //
+          // 所以：**传输层重试一次**，链侧仍然零容忍；两类分开计，
+          // 传输层超预算时判"**此轮不作数**"，而不是判产品有问题。
           sent += 1;
-          try {
-            heights.push(await sendTxVia(observer));
-          } catch (e) {
-            failures.push(`第 ${minute} 分钟：交易未确认（${e.message.slice(0, 120)}）`);
+          const r = await attemptTx(() => sendTxVia(observer));
+          if (r.ok) {
+            heights.push(r.height);
+            if (r.retried) {
+              transport.push(`第 ${minute} 分钟：首次无应答，重试后成功`);
+            }
+          } else {
+            const where = r.kind === 'chain' ? failures : transport;
+            const what = r.kind === 'chain' ? '交易未确认' : '入口无应答（重试后仍然）';
+            where.push(`第 ${minute} 分钟：${what}（${String(r.error.message).slice(0, 120)}）`);
             try { heights.push(Number(await observer.pub.getBlockNumber())); }
             catch { heights.push(heights.at(-1) ?? heightBefore); }   // 占位，保持与分钟对齐
           }
@@ -197,17 +215,31 @@ describe(`场景 F —— 边界 ${DOMAIN} 整体失效，${MINUTES} 分钟观�
           }
 
           if (minute % 5 === 0 || minute === 1) {
-            t.diagnostic(`  第 ${minute}/${MINUTES} 分钟：高度 ${heights.at(-1)}，失败 ${failures.length} 次`);
+            t.diagnostic(`  第 ${minute}/${MINUTES} 分钟：高度 ${heights.at(-1)}，失败 ${failures.length} 次`
+              + (transport.length ? `，传输层 ${transport.length} 次` : ''));
           }
 
           if (minute < MINUTES) {
             const wait = 60_000 - (Date.now() - roundStart);
-            if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+            if (wait > 0) await new Promise((r2) => setTimeout(r2, wait));
           }
         }
 
+        if (transport.length) {
+          t.diagnostic(`传输层问题 ${transport.length} 次（预算 ${TRANSPORT_BUDGET}）：\n  ${transport.join('\n  ')}`);
+        }
+
+        // ① 链侧零容忍 —— 这才是 SC-005 要的那个 100%
         assert.deepEqual(failures, [],
           `成功率必须是 100%，实际有 ${failures.length}/${sent} 次问题：\n  ${failures.join('\n  ')}`);
+
+        // ② 传输层超预算 → **此轮不作数**，而不是判产品有问题。
+        //    观测方到入口的链路反复断时，这一轮量到的不是被测性质。
+        assert.ok(transport.length <= TRANSPORT_BUDGET,
+          `本机到观测入口的链路在窗口内出问题 ${transport.length} 次（预算 ${TRANSPORT_BUDGET}）——`
+          + `\n  **此轮结果不作数**：量到的是观测方的网络，不是链的可用性。`
+          + `\n  先查本机到 ${observer.label ?? '观测入口'} 的网络再跑。`
+          + `\n  ${transport.join('\n  ')}`);
 
         for (let i = 1; i < heights.length; i++) {
           assert.ok(heights[i] >= heights[i - 1],

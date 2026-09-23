@@ -307,6 +307,77 @@ export const script = (name, ...args) => {
 export const start = () => script('devnet-start.sh');
 
 /**
+ * 沿 `error.cause` 链取 HTTP 状态码。与 probe-tx.mjs 同一做法 ——
+ * viem 把传输层错误包一层再抛，包装后 `shortMessage` 一样但 `status` 丢了。
+ */
+function httpStatusOf(err) {
+  for (let e = err, i = 0; e != null && i < 8; e = e.cause, i += 1) {
+    if (Number.isInteger(e.status)) return e.status;
+  }
+  return null;
+}
+
+/**
+ * 这次失败是**传输层没有应答**，还是**链给出了判决**？
+ *
+ * 两者指向完全不同的结论，而 viem 对它们抛的是同一句 `HTTP request failed`：
+ *
+ *   - 有状态码（502/503/504）→ 代理**活着**，是它背后没有健康上游 → **链侧**
+ *   - 回执超时 / 回执非 success → 交易进去了但没被确认 → **链侧**
+ *   - 既没有状态码也不是链上的判决 → 连接被拒 / 超时 → **我到入口这条路**
+ *
+ * 这条分辨不是新立的：`tools/dashboard/probe-tx.mjs` 为它写了整段注释，
+ * `tools/test/availability-soak.mjs` 把四个结局分开计。此处沿用同一条线。
+ */
+export function isTransportFailure(err) {
+  if (httpStatusOf(err) != null) return false;
+  const m = String(err?.shortMessage ?? err?.message ?? err);
+  if (/waiting for transaction|receipt|revert|status/i.test(m)) return false;
+  return true;
+}
+
+/**
+ * 发一笔交易，**传输层失败重试一次**。
+ *
+ * 为什么重试：真实客户端就会重试，而"我到入口这条路抖了一下"不是关于链的结论。
+ * 2026-09-23 第四轮 e2e 实测：场景 F 的 30 分钟窗口里 29 分钟全部确认，
+ * 只有第 30 分钟报 `HTTP request failed`（**没有应答**，不是 5xx），而链一直在出块。
+ * 那一次断的是 win-1 → win-2 的链路 —— 观测方自己的网络，当天第三次抖。
+ *
+ * 为什么**只对传输层**重试：5xx 与"回执没来"都是链给出的判决，重试会把真问题磨平。
+ *
+ * @returns {{ok:true, height:number, retried?:boolean}
+ *          | {ok:false, kind:'chain'|'transport', error:Error, retried?:boolean}}
+ */
+export async function attemptTx(send, { retryDelayMs = 2_000 } = {}) {
+  try {
+    return { ok: true, height: await send() };
+  } catch (first) {
+    if (!isTransportFailure(first)) return { ok: false, kind: 'chain', error: first };
+    await new Promise((r) => { setTimeout(r, retryDelayMs); });
+    try {
+      return { ok: true, height: await send(), retried: true };
+    } catch (second) {
+      return {
+        ok: false,
+        kind: isTransportFailure(second) ? 'transport' : 'chain',
+        error: second,
+        retried: true,
+      };
+    }
+  }
+}
+
+/**
+ * 一个 30 分钟窗口里允许几次"重试之后仍然没有应答"。
+ *
+ * 1 次 ≈ 观测方抖了几秒，那是环境噪声；2 次及以上说明**本机到入口的链路**才是主角，
+ * 而那时这一轮量到的不是被测性质 —— 判"此轮不作数"，而不是判产品有问题。
+ * 与空闲用例对观测侧异常的处置同构（见 dashboard-idle.test.mjs）。
+ */
+export const TRANSPORT_BUDGET = 1;
+
+/**
  * 注入故障之前，**先确认这条链是满的** —— 与那把串行锁是一对姊妹前提。
  *
  * 锁管的是"现在只有我在动节点"；这一条管的是"我动手之前，别人没先把它弄坏"。
