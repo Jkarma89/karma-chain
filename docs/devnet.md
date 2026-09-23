@@ -1547,28 +1547,60 @@ docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate
 
 ### 13.2 怎么加
 
-在新机器上：
+在新机器上（**只需要 Docker 与 git**）：
 
 ```bash
 git clone <仓库> && cd karma-chain
-# 代理：用任一既有边界的配置即可 —— 它只是转发，不绑定身份
+
+# ① 代理：用任一既有边界的配置即可 —— 它只是转发，不绑定身份
 docker run -d --name karmachain-rpc -p 8545:8545 \
   -v "$PWD/blockchain/nodes/lan/rpc-proxy.conf:/etc/nginx/conf.d/karmachain.conf:ro" \
   nginx:alpine
-# 面板
-npm ci && npm run dashboard
+
+# ② 面板：本地建一次工具镜像，再用它跑
+docker build -f docker/verify/Dockerfile -t karmachain/verify:local .
+mkdir -p .devnet
+docker run -d --name karmachain-dashboard -p 21680:21680 \
+  -e KARMACHAIN_RPC_URL=http://<本机地址>:8545/ext/bc/karmachain/rpc \
+  -v "$PWD/blockchain:/workspace/blockchain:ro" \
+  -v "$PWD/tools:/workspace/tools:ro" \
+  -v "$PWD/.devnet:/workspace/.devnet" \
+  karmachain/verify:local node tools/dashboard/server.mjs --port 21680
 ```
 
-放行入站 8545（若要别的机器经它访问）与面板端口。**不需要**放行 21650–21671 ——
+放行入站 8545（若要别的机器经它访问）与面板端口。**不需要**放行 21650–21675 ——
 那些是共识端口，这台机器不参与共识。
+
+> **为什么不用 `scripts/devnet-dashboard.sh`。** 它的前置里有一步是找本机运行中的
+> `karmachain-rpc-<边界>` 容器，好把面板接到**节点所在的容器网络**上。
+> 而观察机不在部署描述里、没有边界 id，上面起的代理也叫 `karmachain-rpc`（无后缀）——
+> 于是那条脚本必然失败，并给出一句指向 `KARMACHAIN_DOMAIN` 的提示，
+> 而在这台机器上那句话是**误导**的：它根本不该有边界 id。
+> 观察机上的面板只需按 IP 直连各节点，默认 bridge 网络就够，所以直接 `docker run`。
+> 2026-09-23 做 T056 时撞到并记下（research V-72）。
+>
+> `.devnet/` 与 `node_modules/` 都在 `.gitignore` 里，所以上面任何一步都不会弄脏
+> `git status` —— 那是 §13.3 的判据。
 
 ### 13.3 怎么确认它真的零改动
 
 ```bash
 git status            # 必须是干净的 —— 有改动就说明你做的不是"只加观察机"
-npm run render:check  # 生成物与 protocol.json 一致
 ```
 
 `git status` 干净是这一条的判据：**只加观察/入口机不产生任何仓库改动**。
 一旦你发现要改 `deployment.json` 才能让它工作，那就不是观察机 ——
 回头看它是不是在参与共识。
+
+再从它自己的入口确认链确实可用：
+
+```bash
+curl -s -X POST -H 'content-type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+  http://127.0.0.1:8545/ext/bc/karmachain/rpc      # 期望 "0x4edd"
+curl -s http://127.0.0.1:21680/api/snapshot        # 面板快照
+```
+
+> `npm run render:check` 也能验生成物一致，但它要 Node，而这台机器按上面的做法
+> **只装了 Docker**。生成物是否漂移由承载节点的机器与 CI 守着，观察机不必重复验 ——
+> 它连改都改不到（`git status` 为空已经说明这一点）。

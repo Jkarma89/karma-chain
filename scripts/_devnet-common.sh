@@ -64,7 +64,12 @@ devnet_require_verify_image() {
     echo "本机没有工具镜像 karmachain/verify:local —— 它是**本地构建**的，不在任何 registry 上。" >&2
     echo "  先建一次（每台机器各建一次，之后改代码无需重建 —— 源码是运行时挂载的）：" >&2
     echo "" >&2
-    echo "    docker compose --profile verify build verify" >&2
+    echo "    docker build -f docker/verify/Dockerfile -t karmachain/verify:local ." >&2
+    echo "" >&2
+    echo "  （也可以 'docker compose --profile verify build verify'，但那要 compose v2 插件；" >&2
+    echo "   apt 的 docker.io 不带它，缺了会报一句 'unknown flag: --profile' ——" >&2
+    echo "   那句话指向参数，而真正缺的是插件。2026-09-23 在一台新观察机上撞到。" >&2
+    echo "   上面那条 docker build 没有这个前提，所以放在前面。）" >&2
     echo "" >&2
     echo "  若 docker 报 'pull access denied … may require docker login'，那句话是误导的：" >&2
     echo "  不是权限问题，就是本机还没建过这个镜像。" >&2
