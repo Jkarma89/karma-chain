@@ -1300,11 +1300,33 @@ $env:KARMACHAIN_DOMAIN='<本机边界>'; .\scripts\devnet-dashboard.ps1
 
 四步 ACP-77 流程，**每步之间停下来**。工具从链上读进度，中断后重跑即可续。
 
+**⓪ 目标机器的前置**
+
+```bash
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2 jq git curl
+sudo usermod -aG docker $USER      # 加完必须**重新登录**，否则 docker 不可用
+```
+
+判据两条，**都要看**：
+
+```bash
+snap list 2>/dev/null | grep -i docker && echo "⚠ 有 snap 版 docker —— 先 sudo snap remove docker"
+docker info -f 'Root={{.DockerRootDir}}'      # 必须是 /var/lib/docker
+```
+
+> **snap 版 docker 会让下一步静默失败。** 它的严格约束挂不了 `$HOME` 之外的路径：
+> `-v /tmp/xxx:/out` 被换成一个容器侧的空目录，于是容器写得很好而宿主什么也看不到。
+> 2026-09-21 在一台新机器上为此耗了好几轮（research V-61）。
+> 卸掉 snap 版之后 apt 的 daemon 不会自己起来，要
+> `sudo systemctl enable --now docker.socket docker`，并再查一次上面那个 `Root`。
+>
+> `curl` 是后面 `devnet-start` 的就绪判据要用的；缺了它会等满 300 秒然后报一句
+> 指向链的错（research V-57）。这里一次装齐。
+
 **① 目标机器上生成密钥（私钥不离开那台机器）**
 
 ```bash
-# 在新机器上
-git clone <仓库> && cd karma-chain
+cd ~ && git clone <仓库> && cd karma-chain      # 仓库放 $HOME 下
 docker build -f docker/node/Dockerfile \
   --build-arg TARGETARCH=$(dpkg --print-architecture) -t karmachain/node:local .
 KARMACHAIN_DOMAIN=<边界名> tools/membership/gen-node-keys.sh <节点序号>
@@ -1313,17 +1335,75 @@ KARMACHAIN_DOMAIN=<边界名> tools/membership/gen-node-keys.sh <节点序号>
 它打印一段 JSON（**只有公开材料**：NodeID、BLS 公钥、proof of possession、三个 sha256）。
 私钥留在那台机器的 `blockchain/validators/dev/node-N/`，**不提交、不外传**。
 
-**② 把公开材料写进声明并重新渲染**
+**② 把公开材料写进声明并重新渲染 —— 一共五处，少一处校验器就拦**
 
-把那段 JSON 的 `identity` 块贴进 `blockchain/deployment.json` 的 `validators.nodes[]`，
-在 `topology.nodes` 与对应形态的 `failureDomains` 里补上节点，然后：
+在 `blockchain/deployment.json` 里：
+
+1. `validators.count` **加一**
+2. `validators.nodes[]` 追加一项：`index`、`httpPort`、`stakingPort`、`keyDir`，
+   再把上一步那段 JSON 的 `identity` 块原样放进去。
+   端口接着上一个验证者往后排（HTTP/staking 交替，各占两个）
+3. `topology.nodes` 追加 `{ id, role: "l1-validator", validatorIndex }`
+4. **当前形态**（如 `lan`）的 `failureDomains` 新开一个边界装它 ——
+   塞进既有边界会让那个边界有 2 个验证者，n 不够大时违反 T-5
+5. **`local` 形态也要安置它**，加进它唯一的那个边界（**不能新开** ——
+   T-5 只在边界数 > 1 时生效，多开一个会让原本合法的单边界立刻违规）
+
+第 1、5 两处最容易漏。漏了不会静默通过，校验器会明说：
+
+```
+constraint: topology has N l1-validator nodes but validators.count is M
+constraint: deployment "local": node(s) not assigned to any failure domain: l1-N
+```
+
+然后：
 
 ```bash
 npm run render && npm test          # 生成物与守卫都要过
-git commit -am "..." && git push    # 各机器靠 git pull 同步
+git commit -am "..." && git push
 ```
 
-**③ 起签名聚合器**（按需容器，用完就停；任意一台能连到 Primary staking 端口的机器）
+**③ 同步到其余机器，并把新节点起来**
+
+> **这一步漏了不会报错，而新节点永远进不了负载池。** 2026-09-22 记（research V-58）。
+
+各机器（含新机器）：
+
+```bash
+cd ~/karma-chain && git pull
+```
+
+代理的配置变了（upstream 里多了新节点），而**怎么让它生效分两种**：
+
+- **Linux 宿主**：必须**重建代理容器**。Docker 对单文件 bind mount 绑的是 **inode**，
+  而 `git pull` 是"写临时文件 + rename"的原子替换 —— inode 变了，容器仍指着旧的。
+  `docker restart` 与 `up -d` 都无效，`nginx -s reload` 会打印 `signal process started`
+  **看着像成功，重载的却是旧配置**：
+
+  ```bash
+  DOM=<本机边界>
+  docker compose -f docker/compose/lan-$DOM.yml up -d --force-recreate rpc
+  docker exec karmachain-rpc-$DOM grep -c max_fails /etc/nginx/conf.d/karmachain.conf
+  ```
+  最后那个数必须等于当前验证者数。只重建 `rpc` 一个服务，节点容器不受影响
+  （实测：带服务名时依赖只被报成 `Running`，不会重建）。
+
+- **Windows（Docker Desktop）**：文件共享层按**路径**解析，`git pull` 直接可见，
+  只需 `docker exec karmachain-rpc-<域> nginx -s reload`。同样用上面那条 `grep -c` 核。
+
+**顺序要紧**：代理的同步排在**新节点可服务之后** —— 早一步等于往负载池里
+放一个连不上的成员（客户端拿到的是延迟而不是错误，但没必要赌）。
+
+在新机器上起节点：
+
+```bash
+KARMACHAIN_DOMAIN=<新边界> scripts/devnet-start.sh
+```
+
+> 它打印的 `READY` 说的是"**本机那条 RPC 入口通了**"，而入口的 upstream 里有全部节点 ——
+> 那一声应答可能来自别的机器。横幅里的"本机节点"一节才是本机节点自己的判断，看那一行。
+
+**④ 起签名聚合器**（按需容器，用完就停；任意一台能连到 Primary staking 端口的机器）
 
 ```bash
 docker build -f docker/aggregator/Dockerfile \
@@ -1372,7 +1452,7 @@ docker run --rm --network compose_default karmachain/verify:local node -e "fetch
 
 不在本机时用 `KARMACHAIN_AGGREGATOR_URL` 指过去。
 
-**④ 走四步**
+**⑤ 走四步**
 
 ```bash
 scripts/devnet-member.sh add --node-id NodeID-…      # Windows: scriptsdevnet-member.ps1 add …
@@ -1389,6 +1469,17 @@ scripts/devnet-member.sh add --node-id NodeID-…      # Windows: scriptsdevnet-
 | ② | 收集 L1 验证者签名 | **不写链**，失败可无代价重做 |
 | ③ | P 链 `RegisterL1ValidatorTx` | **唯一花钱的一步**（实测手续费 0.0000469 AVAX + 给新成员约 0.1 AVAX 持续费用）。成功后若④失败，链上是「P 链认了、合约没认」 |
 | ④ | 合约 `completeValidatorRegistration` | 合约交易，失败即回滚；可直接重试 |
+
+
+> **第三步大概率会先撞上一次「P 链高度滞后」。** P 链按 `getHeight()-1` 验 Warp 消息，
+> 所以验证集合整体落后一格：位图按当前成员编号，而链按上一格的成员验，聚合公钥对不上
+> （实测：少收签名报"权重不够"，收齐了报 `signature is invalid` —— **多收签名不管用**）。
+> P 链**不会自己出块**，所以"等一会儿"也不管用。
+>
+> 工具会把这件事说清楚，并给出带 `--nudge` 的那条命令：它先发一笔最无害的交易
+> （转一点 AVAX **给自己**，不碰成员、权益与合约，手续费几千 nAVAX）把高度推一格，
+> 再继续注册。`--nudge` **刻意不吃 `--yes`** —— 那是工具替你多发的一笔交易，
+> 不在你要做的四步里，所以必须显式要它。两次真实注册都走了这一步（V-44 / V-65）。
 
 前置检查会拦下三类情况，**都不动链**：两个 Primary 不都在线、新成员的机器没起来、
 以及**这次注册会把链停掉**（分母涨而门槛没涨，见 11.1）。
