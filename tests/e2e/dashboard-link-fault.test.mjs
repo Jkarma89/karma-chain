@@ -21,6 +21,7 @@
 import { test, describe, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { devnetAvailable } from './lib/devnet.mjs';
+import { maxOffline } from '../../tools/membership/tolerance.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
 import { loadContext } from '../../tools/dashboard/poll.mjs';
 import { tierCopy } from '../../tools/dashboard/public/copy.mjs';
@@ -82,7 +83,15 @@ describe('面板 —— 单链路故障不得误报成节点下线', { skip: SKI
     // **这三条是本用例的意义所在**
     assert.equal(s.healthPercent, 100, '健康度不得因本机的链路问题而下降');
     assert.equal(s.tier, 'normal');
-    assert.equal(s.validatorMargin, 1, '余量不得被虚报为 0 —— 那会让人以为链快停了');
+    // 2026-09-23：原先写的是 `assert.equal(s.validatorMargin, 1, '余量不得被虚报为 0')`
+    // —— 消息说"不得为 0"，断言说"必须是 1"，而 1 只是 n=5…7 时的 ⌊n/4⌋。
+    // n 到 8 之后满额是 2，这条就红了，红的理由与被测性质无关。
+    // 本用例要的是：**本机的链路故障不该减少任何参与，所以余量应当是满的**。
+    // 独立算一次，不取快照自己的 faultTolerance —— 那样就成了自证。
+    const fullMargin = maxOffline(s.membership?.chainCount ?? s.faultTolerance.validatorCount);
+    assert.equal(s.validatorMargin, fullMargin,
+      `余量应当是满的（⌊n/4⌋ = ${fullMargin}）—— 本机连不上它不等于它离开了共识；`
+      + '虚报成更小的数会让人以为链快停了');
 
     assert.equal(s.incidents.filter((i) => i.class === 'consensus-margin').length, 0,
       '不得产生共识余量告警');

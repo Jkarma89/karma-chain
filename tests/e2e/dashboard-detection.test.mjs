@@ -155,7 +155,13 @@ describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP ?? SHELL_S
     t.diagnostic(`恢复过程中出现过的档位：${[...seen].join(' / ')}，耗时 ${Math.round(elapsedMs / 1000)}s`);
     assert.ok(!seen.has('stopped'),
       `恢复过程中出现了 stopped —— 一个正在回来的节点不该让面板报"链已停止"。实际序列含：${[...seen].join(' / ')}`);
-    assert.equal(s.validatorMargin, 1);
+    // 2026-09-23：原先是裸的 `assert.equal(s.validatorMargin, 1);` —— 没有消息、
+    // 写死 1，而 1 只是 n=5…7 时的 ⌊n/4⌋。全员归队后余量应当是**满的**，
+    // n=8 时那是 2，于是这条红了，而它测的东西（恢复之后回到满额）完全成立。
+    // 与上一条 subtest 同样处理：当场算，不抄常数。
+    const full = maxOffline(served);
+    assert.equal(s.validatorMargin, full,
+      `全员归队后余量应当回到满额 ⌊n/4⌋ = ${full}（n = ${served}）`);
     assert.equal(s.tier, 'normal');
   });
 
