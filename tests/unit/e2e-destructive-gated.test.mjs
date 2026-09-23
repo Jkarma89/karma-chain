@@ -23,6 +23,7 @@
 // 而且会真的打掉节点 —— 一条为了验证"破坏是安全的"而去破坏的测试，代价不对。
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { isKillTarget } from '../e2e/lib/devnet.mjs';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPO_ROOT } from '../../tools/protocol/load.mjs';
@@ -158,11 +159,20 @@ describe('④ 破坏性套件必须**串行** —— 一条只写在文档里的
   });
 
   for (const f of needLock) {
-    test(`${f} 在 before 里取锁`, () => {
-      assert.ok(srcOf(f).includes('before(() => acquireDestructiveLock('),
-        `${f} 没有取锁 —— 两轮故障注入并发时，各自的判据都建立在
-`
-        + '  "现在只有我在动节点"这个前提上，而那个前提不成立。');
+    test(`${f} 在 before 里取锁，并核实链是满的`, () => {
+      const src = srcOf(f);
+      // 2026-09-23：原先查的是 `before(() => acquireDestructiveLock(` 这一行字面量。
+      // 加第二条前提之后那一行变成了 `before(async () => { … ; await … })`，
+      // 于是这条红了 —— **行为没变，是前提过期**。所以改前提，不放宽。
+      assert.match(src, /before\([\s\S]{0,160}?acquireDestructiveLock\(/,
+        `${f} 没有取锁 —— 两轮故障注入并发时，各自的判据都建立在`
+        + '"现在只有我在动节点"这个前提上，而那个前提不成立。');
+      // 姊妹前提：锁管"只有我在动"，这条管"我动手之前别人没先把它弄坏"。
+      // 2026-09-23 那轮完整 e2e 就是缺这一条：l1-2 开跑时已经卡住，
+      // 而没有任何东西检查它 —— 四条失败看起来像产品缺陷，其实全是回声。
+      assert.ok(src.includes('requireFullMargin('),
+        `${f} 没有核实链是满的。在已经退化的链上注入故障，量到的不是被测性质 ——`
+        + '\n  是别人的故障加上我的故障。加 `await requireFullMargin(SUITE_LABEL);` 到取锁之后。');
     });
   }
 
@@ -177,17 +187,27 @@ describe('④ 破坏性套件必须**串行** —— 一条只写在文档里的
       '要按持有者进程还在不在判断陈旧 —— 只看文件在不在会把崩溃留下的锁当成活的');
   });
 
-  test('killAll 不杀聚合器 —— 它不是节点，而且 start() 不会把它带回来', () => {
-    const LIB = readFileSync(resolve(E2E, 'lib/devnet.mjs'), 'utf8');
-    // **查那个集合里真的有它，而不是"文件里提到过"。**
-    // 第一版写的是 `assert.match(LIB, /NOT_A_NODE/)` + `/karmachain-aggregator/` ——
-    // 而把 Set 清空之后这两个字符串仍在（注释里就有），守卫照旧全绿（变红检查抓到）。
-    // 这是本轮第三次犯同一个错：**断言"提到过"，而不是断言"做了"。**
-    const QUOTE = String.fromCharCode(39);
-    const wanted = `new Set([${QUOTE}karmachain-aggregator${QUOTE}])`;
-    assert.ok(LIB.includes(wanted),
-      `killAll 的排除集合里没有 karmachain-aggregator（找 ${wanted}）。`
-      + '过滤条件 name=karmachain- 也匹配它，而杀掉之后 devnet-start 不会把它带回来 ——'
-      + ' 下一次成员变更就会以退出码 10 失败，而这一轮从没打算动它');
+  // 2026-09-23：原先这条查的是黑名单的**字面量**
+  //     `new Set(['karmachain-aggregator'])`
+  // 它当初是为了避免"断言提到过"而特意查字符串的 —— 方向对，但仍然是**文本**。
+  // 而文本查不出它真正该守的性质：**哪些容器会被杀**。
+  //
+  // 实证：面板（karmachain-dashboard）同前缀，黑名单里没有它，于是被一起杀了，
+  // 而它是 --rm 起的 —— 是移除，不是停掉，start() 不会带它回来。
+  // 2026-09-23 完整 e2e 实测，场景 B 第一轮就清掉了它。
+  // 这条守卫全程是绿的，因为它查的字符串一直在。
+  //
+  // 改成黑名单→白名单之后，判据也改成**行为**：直接问那个谓词。
+  test('killAll 的目标是白名单：本机节点 + RPC 代理，其余一律不碰', () => {
+    assert.equal(isKillTarget('karmachain-l1-1'), true, '节点容器必须在内');
+    assert.equal(isKillTarget('karmachain-primary-1'), true, 'Primary 也是节点');
+    assert.equal(isKillTarget('karmachain-rpc-win-1'), true,
+      'RPC 代理是故意在内的 —— 场景 A 要的是「全都崩掉」，crash-recovery 按 节点数+1 断言');
+    assert.equal(isKillTarget('karmachain-aggregator'), false,
+      '聚合器是按需容器，start() 不会把它带回来 —— 杀掉之后下一次成员变更会以退出码 10 失败');
+    assert.equal(isKillTarget('karmachain-dashboard'), false,
+      '面板是 --rm 起的：杀掉即移除，恢复逻辑（管节点）救不回它');
+    assert.equal(isKillTarget('karmachain-whatever-new'), false,
+      '白名单的意义就在这里：将来加的辅助容器默认安全，要杀它必须显式写进来');
   });
 });

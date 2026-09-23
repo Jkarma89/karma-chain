@@ -23,7 +23,7 @@ import {
   spreadProblems,
   SHELL_SKIP,
   restoreOrReport,
- acquireDestructiveLock,
+ acquireDestructiveLock, requireFullMargin,
 } from './lib/devnet.mjs';
 
 const MINUTES = Number(process.env.KARMACHAIN_SC003_MINUTES ?? 30);
@@ -58,7 +58,10 @@ describe(`SC-003 —— 单验证者离线，${MINUTES} 分钟观测窗口`, { s
   // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
   // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
   // 一条只写在文档里的规矩，不会在有人违反时变红。
-  before(() => acquireDestructiveLock(SUITE_LABEL));
+  // 两条姊妹前提，缺一判据都不成立：
+  //   锁   —— 现在只有我在动节点（V-44）
+  //   满额 —— 我动手之前，别人没先把它弄坏（2026-09-23 那轮 e2e 的教训）
+  before(async () => { acquireDestructiveLock(SUITE_LABEL); await requireFullMargin(SUITE_LABEL); });
   before(() => {
     assert.equal(containerState(VICTIM), 'running', `${VICTIM} 应当在运行，测试才有意义`);
   });

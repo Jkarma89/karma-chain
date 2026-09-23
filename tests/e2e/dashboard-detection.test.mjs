@@ -17,7 +17,7 @@ import {
   script,
   SHELL_SKIP,
   restoreOrReport,
- acquireDestructiveLock,
+ acquireDestructiveLock, requireFullMargin,
 } from './lib/devnet.mjs';
 import { maxOffline } from '../../tools/membership/tolerance.mjs';
 import { startDashboard, waitForSnapshot, waitFirstPoll } from './lib/dashboard.mjs';
@@ -43,7 +43,10 @@ describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP ?? SHELL_S
   // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
   // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
   // 一条只写在文档里的规矩，不会在有人违反时变红。
-  before(() => acquireDestructiveLock(SUITE_LABEL));
+  // 两条姊妹前提，缺一判据都不成立：
+  //   锁   —— 现在只有我在动节点（V-44）
+  //   满额 —— 我动手之前，别人没先把它弄坏（2026-09-23 那轮 e2e 的教训）
+  before(async () => { acquireDestructiveLock(SUITE_LABEL); await requireFullMargin(SUITE_LABEL); });
   let dash;
   let victim;
   /** 在服务的验证者数 —— 第一条用例测出来，后面几条按它算期望值 */
@@ -79,49 +82,62 @@ describe('面板 —— 10 秒内发现验证者离线', { skip: SKIP ?? SHELL_S
     assert.equal(s.chainIdentity.forkDetected, false, '五台创世应当一致');
   });
 
-  test('停 1 个验证者 → ≤10 秒内 (n-1)/n / zero-margin，且链仍能确认交易（SC-002）', async (t) => {
-    // 停**一个**能落到 zero-margin，前提是 ⌊n/4⌋ = 1。n 到 8 时上限变 2，
-    // 停一个只会把余量从 2 降到 1，档位仍是 normal —— 下面的 waitForSnapshot
-    // 会一直等不到而超时，那种失败读起来像面板坏了，其实是用例的前提不再成立。
-    // 所以先把前提说出来。
-    assert.equal(maxOffline(served), 1,
-      `现在 n = ${served}，⌊n/4⌋ = ${maxOffline(served)} —— 停 1 个不再是"用尽余量"。`
-      + ' 本用例要改成停 ⌊n/4⌋ 个，或把这一档交给 dashboard-stopped-tier 那套跨机构造。');
+  test('停 1 个验证者 → ≤10 秒内发现，档位与余量按 ⌊n/4⌋ 派生，且链仍能确认交易（SC-002）', async (t) => {
+    // 2026-09-23：原先这里断言 `maxOffline(served) === 1`，把"停一个"与"用尽余量"
+    // 绑死了。n 到 8 之后 ⌊n/4⌋ = 2，停一个只把余量从 2 降到 1，档位仍是 normal ——
+    // 那条自检如实地红了（它写得对：**先说出前提，而不是让 waitForSnapshot 超时**，
+    // 超时读起来像面板坏了）。
+    //
+    // 但按它给的第一个选项"改成停 ⌊n/4⌋ 个"会让本用例在**只承载 1 个验证者的机器上
+    // 直接跳过**，而 T-5 保证跨机形态下每台至多 1 个 —— 那等于永远不跑。
+    // 所以改成：**发现时延**这一半任意 n 都验（那才是 FR-018 的正题），
+    // **档位与余量**按 f 派生，f=1 时仍然要求 zero-margin。
+    const f = maxOffline(served);
+    const expected = Math.round(((served - 1) / served) * 100);
+    // 等的是"这一个被发现了"，不是某个特定档位 —— 档位是结论，不该拿来当触发条件。
+    const expectedTier = f === 1 ? 'zero-margin' : 'normal';
 
     const before = Number(await pub.getBlockNumber());
     node('kill', victim);
 
     const { snapshot: s, elapsedMs, samples } = await waitForSnapshot(
-      dash, (x) => x.tier === 'zero-margin', { label: 'zero-margin' },
+      dash, (x) => x.healthPercent === expected,
+      { label: `${served - 1}/${served} = ${expected}%` },
     );
     t.diagnostic(`档位序列：${samples.map((x) => `${x.at}ms:${x.tier}/${x.healthPercent}%`).join(' → ')}`);
-    t.diagnostic(`发现时延 ${elapsedMs} ms`);
+    t.diagnostic(`发现时延 ${elapsedMs} ms；n=${served}，⌊n/4⌋=${f}，期望档位 ${expectedTier}`);
 
     assert.ok(elapsedMs <= 10_000,
       `发现时延 ${elapsedMs} ms 超过 10 秒（FR-018 / SC-002）`);
     // 期望值当场算出来，而不是抄一个 n=5 时代的常数。
     // 面板那边也是算的（deriveTier 的"零字面阈值"），两边各算一次才有交叉验证的意义。
-    const expected = Math.round(((served - 1) / served) * 100);
     assert.equal(s.healthPercent, expected,
       `停 1 个之后应为 ${served - 1}/${served} = ${expected}%`);
-    assert.equal(s.validatorMargin, 0, '余量已用尽');
-    assert.equal(s.participating, s.threshold, '参与数恰好等于查询门槛');
+    assert.equal(s.tier, expectedTier,
+      `n=${served} 时 ⌊n/4⌋=${f}，停 1 个之后余量 ${f - 1} —— 档位应为 ${expectedTier}`);
+    assert.equal(s.validatorMargin, f - 1, `余量应从 ${f} 降到 ${f - 1}`);
+    if (f === 1) {
+      assert.equal(s.participating, s.threshold, '余量用尽时，参与数恰好等于查询门槛');
+      assert.ok(
+        s.incidents.some((i) => i.class === 'consensus-margin'),
+        '零余量必须产生一条 consensus-margin 异常',
+      );
+    } else {
+      assert.ok(s.participating > s.threshold,
+        `还有 ${f - 1} 个余量时，参与数必须**高于**门槛 —— 否则余量这个数在骗人`);
+    }
 
     // **这一半才是本用例的意义所在**：面板说"仍在出块"，就必须真的能出块。
     const height = await sendTx();
     assert.ok(height > before,
-      `zero-margin 档下链必须仍在出块：${before} -> ${height}。`
-      + '若这里失败，说明 80% 那一档的文案在骗人');
+      `${expectedTier} 档下链必须仍在出块：${before} -> ${height}。`
+      + '若这里失败，说明那一档的文案在骗人');
     t.diagnostic(`链仍在出块：${before} → ${height}`);
 
     // 该节点必须被归入"须处置"的一类，而不是"要等"
     const row = s.nodes.find((n) => n.id === victim);
     assert.equal(row.participatesInConsensus, false);
     assert.equal(row.incidentClass, 'node-infra', `${victim} 的异常分类应指向"去那台机器"`);
-    assert.ok(
-      s.incidents.some((i) => i.class === 'consensus-margin'),
-      '零余量必须产生一条 consensus-margin 异常',
-    );
   });
 
   test('恢复期间 catching-up 不改变档位与百分比（SC-010）', async (t) => {

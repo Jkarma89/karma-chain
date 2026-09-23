@@ -14,7 +14,7 @@ import {
   script,
   SHELL_SKIP,
   restoreOrReport,
- acquireDestructiveLock,
+ acquireDestructiveLock, requireFullMargin,
 } from './lib/devnet.mjs';
 
 // 靶子必须是**本机真的有容器**的验证者 —— docker 只能操作本机。
@@ -58,7 +58,10 @@ describe('V-03 —— 引导中途被强制终止',
   // **破坏性套件必须串行**（研究 V-44）。`--test-concurrency=1` 只保证一次运行内
   // 文件串行，挡不住"两次运行同时打同一条链" —— 2026-09-19 我就是那么干的。
   // 一条只写在文档里的规矩，不会在有人违反时变红。
-  before(() => acquireDestructiveLock(SUITE_LABEL));
+  // 两条姊妹前提，缺一判据都不成立：
+  //   锁   —— 现在只有我在动节点（V-44）
+  //   满额 —— 我动手之前，别人没先把它弄坏（2026-09-23 那轮 e2e 的教训）
+  before(async () => { acquireDestructiveLock(SUITE_LABEL); await requireFullMargin(SUITE_LABEL); });
   before(async () => {
     if (!await devnetAvailable()) throw new Error('开发网不可用 —— 先运行 scripts/devnet-start.sh');
   });

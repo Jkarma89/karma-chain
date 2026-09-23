@@ -307,6 +307,42 @@ export const script = (name, ...args) => {
 export const start = () => script('devnet-start.sh');
 
 /**
+ * 注入故障之前，**先确认这条链是满的** —— 与那把串行锁是一对姊妹前提。
+ *
+ * 锁管的是"现在只有我在动节点"；这一条管的是"我动手之前，别人没先把它弄坏"。
+ * 两者缺一，判据都不成立。
+ *
+ * ## 这条是 2026-09-23 那轮完整 e2e 逼出来的
+ *
+ * 那一轮开跑时 `l1-2`（win-2）就已经卡在起始高度、只剩 3 个对等 —— 而没有任何东西
+ * 检查这件事。于是第 13 条停掉 win-1 整个边界时，链上同时缺了两个：
+ * **6/8 = 75%，正好卡在查询门槛上、余量为零**。后果是两条 30 分钟窗口用例
+ * 报出 `27/30`、`28/30` 次交易未确认，另有两条面板用例报"余量不得被虚报为 0"
+ * 与"节点从未被动过"。
+ *
+ * **四条失败看起来都像产品缺陷，而它们全是前提被破坏的回声。**
+ * 在一条已经退化的链上注入故障，量到的不是被测性质，是别人的故障加上我的故障。
+ *
+ * 所以宁可**停住并说清楚**，也不要跑出一份读不出结论的红。
+ * 这与"打在正常路径上的诊断守卫必须保守"不冲突 —— 那说的是**正常**路径；
+ * 这里是**破坏性**路径的入口，而它本来就该挑剔。
+ */
+export async function requireFullMargin(label = '') {
+  const rows = await validatorsServing();
+  const bad = rows.filter((r) => !r.serving);
+  if (!bad.length) return;
+  const who = bad.map((r) => `${r.id}（${r.domain}）${r.detail}`).join(NEWLINE + '    ');
+  throw new Error(
+    `**动手之前这条链就不是满的** —— ${bad.length}/${rows.length} 个验证者不在服务：`
+    + `${NEWLINE}    ${who}`
+    + `${NEWLINE}  ${label ? `（${label}）` : ''}破坏性套件的判据建立在"我动手之前一切正常"上。`
+    + `${NEWLINE}  在已经退化的链上注入故障，量到的不是被测性质 ——`
+    + `${NEWLINE}  是别人的故障加上我的故障，而失败会看起来像产品缺陷（2026-09-23 实测）。`
+    + `${NEWLINE}  先把上面那几个弄回来（scripts/devnet-start，或查它们的 P2P 连通性），再跑本套件。`,
+  );
+}
+
+/**
  * **破坏性套件必须串行** —— 这把锁挡的是"两次运行同时打同一条链"。
  *
  * ## 为什么需要它
@@ -366,27 +402,37 @@ export function acquireDestructiveLock(label) {
 }
 
 /**
- * **没有恢复路径时直接拒绝。**
+ * 哪些容器算 `killAll()` 的目标 —— **白名单，不是黑名单**。
  *
- * 2026-09-18（V-44）撞到的不对称：`docker kill` 能跑，不代表我们能把它起回来。
- * 一个会改状态的动作必须自己负责把状态放回去；做不到就别动手
- *（与 `--emergency` 那道双向闸门同一条道理）。
+ * 契约由 crash-recovery 那条断言定死：**本机的节点容器 + 1 个 RPC 代理**
+ * （`killed === local.length + 1`）。代理是故意在内的：场景 A 要的是"全都崩掉"。
+ *
+ * ## 为什么从黑名单改成白名单（2026-09-23）
+ *
+ * 原先是 `NOT_A_NODE = new Set(['karmachain-aggregator'])` —— 排除聚合器，
+ * 而过滤条件 `name=karmachain-` 把**所有**同前缀容器都捞进来。于是面板
+ * （`karmachain-dashboard`）被一起杀了，而它是 `--rm` 起的：不是停掉，是**移除**，
+ * `start()` 也不会把它带回来。
+ *
+ * 2026-09-23 完整 e2e 实测到：场景 B（50 轮强制终止）第一轮就把面板清掉了；
+ * 等场景 A 跑到时只剩 2 个容器，于是它那条计数断言照常通过 ——
+ * **缺陷被一条通过的断言掩盖了**，因为破坏发生在断言之前的另一个套件里。
+ *
+ * 黑名单的毛病就在这里：**每加一个辅助容器，就要有人记得去补它**。
+ * 白名单反过来 —— 新容器默认安全，要杀它必须显式写进来。
+ * （与公开投影那份"显式字段白名单"同一条道理。）
  */
+const NODE_CONTAINERS = new Set(topology.topologyNodes.map((n) => `karmachain-${n.id}`));
+export const isKillTarget = (name) => NODE_CONTAINERS.has(name)
+  // 代理名由生成物决定（`karmachain-rpc-<边界>`），按前缀认即可，不必知道本机是哪个边界
+  || /^karmachain-rpc-/.test(name);
+
 export function killAll() {
   if (!SHELL) throw new Error(`拒绝执行 killAll()：起不回来。${SHELL_SKIP}`);
-  // **只杀节点容器 —— 聚合器不算。**
-  //
-  // 过滤条件 `name=karmachain-` 比这个函数的说法宽：它也匹配 `karmachain-aggregator`，
-  // 而聚合器是**按需容器**，`start()`（devnet-start）不会把它带回来。
-  // 于是跑完一轮崩溃恢复之后，下一次成员变更会以退出码 10 报「找不到聚合器」——
-  // 那句话是对的，但它本不该发生：这一轮从没打算动它。
-  //
-  // 2026-09-21 实测到（验证 V-44 那把锁时顺带发现）。
-  const NOT_A_NODE = new Set(['karmachain-aggregator']);
   const ids = sh('docker', ['ps', '--format', '{{.ID}} {{.Names}}', '--filter', 'name=karmachain-'])
     .trim().split(/\r?\n/).filter(Boolean)
     .map((line) => line.trim().split(/\s+/))
-    .filter(([, name]) => !NOT_A_NODE.has(name))
+    .filter(([, name]) => isKillTarget(name))
     .map(([id]) => id);
   if (ids.length) sh('docker', ['kill', ...ids]);
   return ids.length;
