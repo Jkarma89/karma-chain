@@ -230,7 +230,25 @@ docker exec karmachain-rpc-<边界名> grep -c max_fails /etc/nginx/conf.d/karma
 
 ## ⑧ 起签名聚合器
 
-按需容器，用完就停。放在任意一台能连到 Primary staking 端口的机器上。
+> ### ⑧ 和 ⑨ 在**同一台机器**上做，而且就用你刚起好的那台新机器
+>
+> 前面 ①–⑦ 有几步是"每台机器都要做"，⑧⑨ 不是 —— 它们**只在一台机器上做一次**。
+>
+> 用新机器最省事：⑥ 刚把它的节点栈起起来了，⑧⑨ 需要的条件它已经满足。
+> 换别的机器也行，但那台必须**同时**满足下面四条（脚本会逐条检查，缺哪条就报哪条）：
+>
+> 1. 有 Docker，并且有这个仓库（⑤ 已经 `git pull` 过）
+> 2. **本机的节点栈正在跑** —— 工具要接到 `karmachain-rpc-<本机边界>` 所在的容器网络
+> 3. 本机建过工具镜像 `karmachain/verify:local`（**每台机器各建一次**，见下）
+> 4. 聚合器在本机，或者用 `KARMACHAIN_AGGREGATOR_URL` 指过去
+>
+> 工具镜像本机还没有的话先建一次（新机器上通常都还没有）：
+>
+> ```bash
+> docker build -f docker/verify/Dockerfile -t karmachain/verify:local .
+> ```
+
+按需容器，用完就停。它要能连到两个 Primary 的 staking 端口。
 
 ```bash
 docker build -f docker/aggregator/Dockerfile \
@@ -249,11 +267,24 @@ docker run -d --rm --name karmachain-aggregator -p 8646:8646 -p 8647:8647 \
 > "读不到"和"0"是两件完全不同的事：前者是没测到，后者是测到了、很糟。
 > 所以别在这儿花时间找指标 —— 等够时间直接往下走，第 ⑨ 步的工具自己会报这个数。
 
+> **起完它多半还要把它接到节点网络上。** 上面那条 `docker run` 没带 `--network`，
+> 于是它落在 docker 的默认网络里；而第 ⑨ 步的工具跑在容器中、**按容器名**连它
+> （宿主的 `127.0.0.1:8646` 不是那个容器的 `127.0.0.1`）。
+> 第 ⑨ 步会检查这件事，不在同一网络时它会把确切的命令打给你，形如：
+>
+> ```bash
+> docker network connect <节点网络名> karmachain-aggregator
+> ```
+>
+> 照它打出来的那条敲即可 —— 网络名各机器不同，别猜。
+
 不在本机时用 `KARMACHAIN_AGGREGATOR_URL` 指过去。
 
 ---
 
 ## ⑨ 走 ACP-77 四步
+
+**和 ⑧ 同一台机器**（就是上面那四条的那台）。命令要带上**本机的边界名**：
 
 **要填的是你那台机器的完整 NodeID**（第 ② 步打印过，也已经写进了 `deployment.json`）。
 不确定就让它打出来：
@@ -264,10 +295,14 @@ node -e "console.log(require('./blockchain/deployment.json').validators.nodes.at
 ```
 
 ```bash
-scripts/devnet-member.sh add --node-id <上面打印出来的那一整串>
+KARMACHAIN_DOMAIN=<本机边界名> scripts/devnet-member.sh add --node-id <上面打印出来的那一整串>
 ```
 
 Windows 上是 `scripts\devnet-member.ps1 add --node-id <同上>`，两份等价。
+
+> **`KARMACHAIN_DOMAIN` 别漏。** 漏了它会回落到默认边界，脚本就去找一个本机根本不存在的
+> 容器，报「找不到运行中的 `karmachain-rpc-<某个别的边界>`」—— 那句话看起来像"网络没起来"，
+> 而真正缺的是这个变量。在新机器上做时**一定**要带（新机器绝不会是默认边界）。
 
 **反复跑同一条命令，每次它做一步然后停下来。** 进度是从链上读的，中断了重跑就接着走。
 
@@ -338,6 +373,9 @@ scripts/devnet-status.sh
 | 第 ③ 步报 `signature is invalid` / 权重不够 | P 链高度滞后，用 `--nudge` | ⑨ |
 | 第 ④ 步静默失败，什么都看不到 | 要把链配置临时调到 `debug` 才有输出 | [`§5.4`](./devnet.md) |
 | `docker run` 报 `name … already in use` | 别处已经有一个聚合器在跑，直接用它（`KARMACHAIN_AGGREGATOR_URL`），或先 `docker rm -f karmachain-aggregator` | ⑧ |
+| 报「找不到运行中的 `karmachain-rpc-<别的边界>`」 | 漏了 `KARMACHAIN_DOMAIN=<本机边界名>` | ⑨ |
+| 报「本机没有工具镜像 `karmachain/verify:local`」 | 每台机器各建一次，命令它自己会打出来 | ⑧ |
+| 报「`karmachain-aggregator` 不在节点网络上」 | 照它打出来的 `docker network connect` 敲一次 | ⑧ |
 | 别的机器 `git pull` 之后起不了新节点，说缺 flags / compose | ④ 用了 `git commit -am`，新建的文件没进去 | ④ |
 | **`devnet-verify` 全绿，但成员数没变** | 它对"还没注册完"判 OK，判据在 `membership:status` | ⑩ |
 | 别的 | | [`§11.2`](./devnet.md)、[`§6`](./devnet.md) |
