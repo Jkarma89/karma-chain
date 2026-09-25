@@ -144,8 +144,14 @@ constraint: deployment "local": node(s) not assigned to any failure domain: l1-N
 
 ```bash
 npm run render && npm test
-git commit -am "feat: 加入 l1-<序号>" && git push
+git add -A && git commit -m "feat: 加入 l1-9" && git push      # 把 9 换成你的序号
 ```
+
+> **这里必须是 `git add -A`，不能用 `git commit -am`。** `npm run render` 会**新建**几个文件
+> （`blockchain/nodes/l1-<序号>.identity.json`、两个 `*.flags.json`、
+> `docker/compose/lan-<边界名>.yml`），而 `-a` 只管**已跟踪**的文件，新建的一个都不收。
+> 漏了它们别的机器 `git pull` 之后起不了新节点。
+> 提交前 `git status --short` 应当没有剩下的 `??`。
 
 **判据**：两条都得绿。`npm run render` 会重新生成代理配置、compose、节点 flags ——
 **不要手改生成物**，漂移测试会拦。
@@ -206,6 +212,22 @@ docker exec karmachain-rpc-<边界名> grep -c max_fails /etc/nginx/conf.d/karma
 
 ---
 
+> ## ⚠ 走到这里，链上还什么都没发生
+>
+> 文件里是 9、代理里是 9、`devnet-status` 里 `l1-9` 也已经 healthy 并追平 ——
+> **而链上的成员仍然是 8。** 到 ⑦ 为止你做的全部是"把机器准备好"；
+> 让它**成为成员**是 ⑧⑨ 两步的事，那才是唯一会改变链上事实的地方。
+>
+> 任何时候想确认自己走到哪儿了，只认这一条：
+>
+> ```bash
+> npm run membership:status      # 它会直接说"链上成员 N，声明成员 M"
+> ```
+>
+> 两个数不相等就是**还没做完**，不管别处显示什么。
+
+---
+
 ## ⑧ 起签名聚合器
 
 按需容器，用完就停。放在任意一台能连到 Primary staking 端口的机器上。
@@ -233,11 +255,19 @@ docker run -d --rm --name karmachain-aggregator -p 8646:8646 -p 8647:8647 \
 
 ## ⑨ 走 ACP-77 四步
 
+**要填的是你那台机器的完整 NodeID**（第 ② 步打印过，也已经写进了 `deployment.json`）。
+不确定就让它打出来：
+
 ```bash
-scripts/devnet-member.sh add --node-id NodeID-…
+node -e "console.log(require('./blockchain/deployment.json').validators.nodes.at(-1).identity.nodeId)"
+# NodeID-9W8oKQCRXNKbiZbznW3sj2F1X26B2eCR2   ← 形如这样的一整串，照抄
 ```
 
-Windows 上是 `scripts\devnet-member.ps1 add --node-id NodeID-…`，两份等价。
+```bash
+scripts/devnet-member.sh add --node-id <上面打印出来的那一整串>
+```
+
+Windows 上是 `scripts\devnet-member.ps1 add --node-id <同上>`，两份等价。
 
 **反复跑同一条命令，每次它做一步然后停下来。** 进度是从链上读的，中断了重跑就接着走。
 
@@ -269,10 +299,10 @@ docker rm -f karmachain-aggregator          # 聚合器用完就停
 **四条验收，缺一条都不算做完：**
 
 ```bash
-# 1. 成员数变了，而且三侧（声明 / 合约 / P 链）一致
+# 1. 成员数变了，而且三侧（声明 / 合约 / P 链）一致 —— **这一条是判据，别的都不是**
 npm run membership:status
 
-# 2. 全链检查全绿，容错行显示新的 n
+# 2. 全链检查，容错行应显示新的 n
 scripts/devnet-verify.sh
 
 # 3. 既有节点没重启 —— 与 ⓪ 的基线**逐字符**比对；"还在跑"不是判据
@@ -283,6 +313,16 @@ scripts/devnet-status.sh
 ```
 
 第 3 条要在每台既有机器上各跑一次 —— `docker` 只看得见本机的容器。
+
+> **第 2 条不能单独当判据 —— 注册没走完时它也是绿的。**
+> `devnet-verify` 对"声明了但还不是链上成员"判 `[OK]`，总结照样是
+> `READY … 0 failed`，只在 `node` / `validator` 那两行的正文里提一句
+> 「另有 1 个声明了但不是链上成员」。它这么判是为了退成员的场景
+> （被移除的节点不是故障），但它把"已被移除"和"还没注册完"合成了一类。
+>
+> 所以**以第 1 条为准**：`membership:status` 对同一个事实报的是 `⚠ 1 处漂移`。
+> 2026-09-25 实测：一个人走完 ①–⑦ 后跑了这两条，看见 `READY / 0 failed` 就认为做完了，
+> 而那时链上成员还是 8。
 
 ---
 
@@ -297,6 +337,9 @@ scripts/devnet-status.sh
 | 第 ② 步报 `accumulatedWeight: 0` | 聚合器还没连上验证者 | ⑧ |
 | 第 ③ 步报 `signature is invalid` / 权重不够 | P 链高度滞后，用 `--nudge` | ⑨ |
 | 第 ④ 步静默失败，什么都看不到 | 要把链配置临时调到 `debug` 才有输出 | [`§5.4`](./devnet.md) |
+| `docker run` 报 `name … already in use` | 别处已经有一个聚合器在跑，直接用它（`KARMACHAIN_AGGREGATOR_URL`），或先 `docker rm -f karmachain-aggregator` | ⑧ |
+| 别的机器 `git pull` 之后起不了新节点，说缺 flags / compose | ④ 用了 `git commit -am`，新建的文件没进去 | ④ |
+| **`devnet-verify` 全绿，但成员数没变** | 它对"还没注册完"判 OK，判据在 `membership:status` | ⑩ |
 | 别的 | | [`§11.2`](./devnet.md)、[`§6`](./devnet.md) |
 
 **退出码**：`0` 成功 / `10` 前置依赖缺失 / `30` 前置检查未过（**没动链**）/
