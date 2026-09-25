@@ -316,11 +316,23 @@ Windows 上是 `scripts\devnet-member.ps1 add --node-id <同上>`，两份等价
 前置检查会拦下三类情况，**一步都不动链**：两个 Primary 不都在线、新成员的机器没起来、
 以及**这次注册会把链停掉**。
 
-> **第三步大概率会先失败一次，报 `signature is invalid` 或"权重不够"。这是正常的，不是你做错了。**
-> P 链按 `getHeight()-1` 验 Warp 消息，验证集合整体落后一格，聚合公钥对不上 ——
-> **多收签名不管用**，"等一会儿"也不管用（P 链不会自己出块）。
-> 工具会给你带 `--nudge` 的那条命令：它先发一笔最无害的交易（转一点 AVAX **给自己**，
-> 不碰成员、权益与合约）把 P 链高度推一格，再继续注册。
+> **走到第二、三步时，工具大概率会停下来要你加 `--nudge`。这是正常的，不是你做错了。**
+> 它会说「P 链验证用的集合比当前集合落后一格」，然后**到此为止，不再往下问**
+> （退出码 30，链未改动）。
+>
+> 原因：P 链按 `getHeight()-1` 验 Warp 消息，验证集合整体落后一格，聚合公钥对不上 ——
+> **多收签名不管用**（收满也报 `signature is invalid`），"等一会儿"也不管用
+> （P 链不会自己出块）。唯一的出路是把 P 链高度推一格。
+>
+> 照它打出来的那条重跑即可：
+>
+> ```bash
+> KARMACHAIN_DOMAIN=<本机边界名> scripts/devnet-member.sh add --node-id <你的 NodeID> --nudge
+> ```
+>
+> 它会先发一笔最无害的交易（转一点 AVAX **给自己**，不碰成员、权益与合约）把高度推一格，
+> 再继续注册。**第 ① 步的成果仍在链上，不会重做。**
+>
 > `--nudge` **刻意不吃 `--yes`** —— 那是工具替你多发的一笔交易，必须你显式要它。
 
 ---
@@ -370,7 +382,8 @@ scripts/devnet-status.sh
 | 校验器说 `count is M` 或 `not assigned to any failure domain` | ③ 的第 1 处或第 5 处漏了 | ③ |
 | 新节点起来了，但没有请求打到它 | 代理没重建（`nginx -s reload` 骗了你） | ⑦ |
 | 第 ② 步报 `accumulatedWeight: 0` | 聚合器还没连上验证者 | ⑧ |
-| 第 ③ 步报 `signature is invalid` / 权重不够 | P 链高度滞后，用 `--nudge` | ⑨ |
+| 说「P 链验证用的集合落后一格」后停住（退出码 30） | 正常，带 `--nudge` 重跑 | ⑨ |
+| 第 ③ 步报 `signature is invalid` / `unknown validator` | P 链高度滞后，用 `--nudge`；**别重按 y，签名再多也过不去** | ⑨ |
 | 第 ④ 步静默失败，什么都看不到 | 要把链配置临时调到 `debug` 才有输出 | [`§5.4`](./devnet.md) |
 | `docker run` 报 `name … already in use` | 别处已经有一个聚合器在跑，直接用它（`KARMACHAIN_AGGREGATOR_URL`），或先 `docker rm -f karmachain-aggregator` | ⑧ |
 | 报「找不到运行中的 `karmachain-rpc-<别的边界>`」 | 漏了 `KARMACHAIN_DOMAIN=<本机边界名>` | ⑨ |

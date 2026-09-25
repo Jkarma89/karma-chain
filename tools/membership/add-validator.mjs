@@ -1263,6 +1263,24 @@ export async function aggregateConfirmationSignatures({
  *
  * 分隔符不可省：补的零与消息末尾的零无法区分，没有它就不知道消息到哪儿结束。
  */
+/**
+ * P 链验证集合落后一格时，**本次是否必须就此停住**。
+ *
+ * 2026-09-25 实测（T061 第二轮）：一个照着提示走的人连按了三次 `y`，三次都必然失败
+ * （第一次 `unknown validator: NumIndices (7) >= NumFilteredValidators (7)`，
+ * 后两次 `signature is invalid`）。原因不在他 —— 工具先说了"**必须先把 P 链推进一格**，
+ * 多收签名过不去"，紧接着又把那个它刚刚断言不可能成功的动作递到他面前让他确认。
+ *
+ * **一个自己说"这条路走不通"、然后又请你上路的工具，比不说话更坏。**
+ * 说了不可能，就不要再问。
+ *
+ * 只有"推进那一格"这条路本身可用时才拦（`nudgePlanAvailable`）——
+ * 构造不出推进交易时拦下等于把人堵死，那时按零容错继续仍是唯一选择。
+ */
+export function needsNudgeFirst({ lagging, allowNudge, nudgePlanAvailable }) {
+  return Boolean(lagging) && !allowNudge && Boolean(nudgePlanAvailable);
+}
+
 export function packWarpPredicate(signedMessageHex) {
   const raw = Buffer.from(signedMessageHex.replace(/^0x/, ''), 'hex');
   if (!raw.length) throw new Error('packWarpPredicate: 消息是空的');
@@ -1593,7 +1611,10 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
       : BASE_QUORUM_NUM;
 
     if (weights.lagging) {
-      console.error('\n⚠ **P 链验证用的集合比当前集合落后一格**（这是刚退过成员的正常状态）：');
+      // 2026-09-25：原文写的是"刚**退**过成员的正常状态"，而这次是刚**加**完 l1-8
+      // 之后又来加 l1-9 —— 一个照着读的人会以为工具认错了状态，或者以为有人退过成员。
+      // 增、删都会让集合变化，落后一格与方向无关。
+      console.error('\n⚠ **P 链验证用的集合比当前集合落后一格**（刚增或删过成员之后的正常状态）：');
       console.error(`  当前集合    高度 ${weights.height}：${weights.currentCount} 个，合计权重 ${weights.currentTotal}`);
       console.error(`  验证用集合  高度 ${weights.verifyHeight}：${weights.verifyCount} 个，合计权重 ${weights.verifyTotal}`);
       console.error(`  于是门槛按 ${weights.verifyTotal} 算：${BASE_QUORUM_NUM}% × ${weights.verifyTotal} = ${needWeight(weights.verifyTotal)}`
@@ -1628,10 +1649,16 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
         if (nudgePlan) {
           console.error(`\n  干跑：付款 ${nudgePlan.pAddress}，手续费 ${nudgePlan.fee} nAVAX，`
             + `转给自己 ${nudgePlan.amount} nAVAX（动用 ${nudgePlan.utxoCount} 个 UTXO）`);
-          if (!allowNudge) {
+          if (needsNudgeFirst({ lagging: weights.lagging, allowNudge, nudgePlanAvailable: true })) {
             console.error('\n  要推进就带 --nudge 重跑本命令（它会先推掉这一格，再继续注册）：');
             console.error(`  scripts/devnet-member.sh add --node-id ${nodeId} --nudge`);
-          } else {
+            // **到此为止，不再往下问。** 往下是第二步收签名、第三步弹确认 ——
+            // 而上面刚刚断言过：这一格不推，收多少签名都过不去。
+            // 再问一次只会换来一次必然失败的 y（2026-09-25 实测有人连按三次）。
+            console.error('\n**本次到此为止，链未改动。** 不带 --nudge 继续下去必然被 P 链拒收，');
+            console.error('所以不再往下问 —— 带上它重跑，第 ① 步的成果仍在链上，不会重做。');
+            process.exit(EXIT_PRECHECK);
+          } else if (allowNudge) {
             let nudged;
             try {
               nudged = await nudgePChainHeight(nudgeArgs);
