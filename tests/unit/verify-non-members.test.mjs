@@ -54,7 +54,10 @@ describe('② 摘出来的必须被说出来', () => {
     assert.match(SRC, /const nonMemberNote =/, '缺少那句说明的构造函数');
     // node 的两条结论（FAIL / OK）+ validator 的四条结论，一处都不能漏 ——
     // 漏掉的那处就是"静默放过"，而静默放过会掩盖一份过期的声明。
-    const uses = SRC.split('nonMemberNote(nonMembers)').length - 1;
+    // 2026-09-25：调用签名由 `nonMemberNote(nonMembers)` 改成按桶传
+    //（`{ registering, stale }` / `{ stale }`），所以这里数的是**调用**而不是那串字面量。
+    // 原来的写法把判据钉在了一个参数名上 —— 那不是它要守的东西。
+    const uses = SRC.split(/nonMemberNote\(\s*\{/).length - 1;
     assert.ok(uses >= 6,
       `nonMemberNote 只被用了 ${uses} 次 —— node 的 2 条结论加 validator 的 4 条，`
       + '至少 6 处。漏掉的那处就是静默放过');
@@ -63,8 +66,23 @@ describe('② 摘出来的必须被说出来', () => {
   test('那句话把处置指向仓库，而不是机房', () => {
     assert.match(SRC, /不是去那台机器查进程/,
       '这正是原缺陷的要害：旧文案说"去看那台机器"，而那台机器上没什么可查');
-    assert.match(SRC, /清理声明|续完注册/, '要给出真正该做的事');
+    assert.match(SRC, /deployment\.json 里清掉|续完/, '要给出真正该做的事');
     assert.match(SRC, /不是故障/, 'FR-028 的原话要出现在文案里');
+  });
+
+  // 2026-09-25 新增（研究 V-74 第 5 条）：光"说出来"不够 —— **活儿没干完必须判红**。
+  // 上一版把"已被移除"与"还没注册完"合成一类、一律判 OK，于是一个
+  // 声明 9 个、链上只有 8 个的网络输出 `READY … 0 failed`，
+  // 而一个照文档加节点的人据此认为做完了。
+  test('注册没走完的那一桶必须让 validator 判红，不能只写进说明里', () => {
+    assert.match(SRC, /registering:/, '缺少"还没注册完"这一桶');
+    assert.match(SRC, /stale:/, '缺少"已被移除"这一桶');
+    // 判红的分支要**存在**且挂在 registering 上
+    assert.match(
+      SRC.replace(/^\s*(\/\/|\*|\/\*).*$/gm, ''),
+      /if \(registering\.length\)[\s\S]{0,400}?STATUS\.FAIL/,
+      '“还在跑却不是链上成员”必须走 FAIL —— 只把它写进说明等于继续判绿',
+    );
   });
 });
 

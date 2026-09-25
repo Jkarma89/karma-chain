@@ -9,8 +9,8 @@
 import { resolve } from 'node:path';
 import { protocol, derived, rpcUrl, publicClient, walletClient, info, REPO_ROOT_HINT } from './lib/rpc.mjs';
 import { Report, STATUS } from './lib/report.mjs';
-import { categorizeError } from './lib/categories.mjs';
-import { basicChecks } from './checks/basic.mjs';
+import { categorizeError, isConfirmationTimeout, diagnoseEndpointLag, CATEGORIES } from './lib/categories.mjs';
+import { basicChecks, nodeHeights } from './checks/basic.mjs';
 import { chainChecks } from './checks/chain.mjs';
 
 const args = process.argv.slice(2);
@@ -22,6 +22,30 @@ const jsonPath = (() => {
 })();
 
 const SKIP_IN_QUICK = new Set(['contract', 'rpc-methods']);
+
+/**
+ * 「我们读的这个端点是不是落后于全网」的那句话 —— 拿不到数就返回 null（不猜）。
+ *
+ * 判定本身是纯的（`diagnoseEndpointLag`），这里只负责取两个数：
+ * 我们读的那个端点的高度，以及各节点自报的高度。
+ * 整段包在 try 里：**诊断失败不许把原来的失败吃掉**。
+ */
+async function lagNote() {
+  try {
+    const [endpointHeight, heights] = await Promise.all([
+      publicClient.getBlockNumber().then(Number).catch(() => NaN),
+      nodeHeights(),
+    ]);
+    const d = diagnoseEndpointLag({ endpointHeight, nodeHeights: heights });
+    if (!d || !d.endpointBehind) return null;
+    return `\n  ↳ 我们读的这个端点落后全网 ${d.behindBy} 块（端点 ${d.endpointHeight}，全网 ${d.networkHeight}）`
+      + ` —— **交易多半已经进链，读不到的是回执**。`
+      + `落后的节点：${d.laggards.map((n) => `${n.id}@${n.height}`).join('、')}。`
+      + `处置是修那个节点（docs/devnet.md §5.3），不是查 RPC。`;
+  } catch {
+    return null;
+  }
+}
 
 async function main() {
   const report = new Report({ rpcUrl });
@@ -57,12 +81,17 @@ async function main() {
       const result = await check.run(ctx);
       report.add({ id: check.id, ...result });
     } catch (err) {
-      report.add({
-        id: check.id,
-        status: STATUS.FAIL,
-        category: categorizeError(err),
-        detail: (err.shortMessage ?? err.message ?? String(err)).slice(0, 200),
-      });
+      let category = categorizeError(err);
+      let detail = (err.shortMessage ?? err.message ?? String(err)).slice(0, 200);
+      // **「等回执超时」的第二问：写进去了没有？**（研究 V-76）
+      // 2026-09-25 实测：l1-1 落后 3 块卡住，我们经本机代理读、代理正好指着它，
+      // 于是三笔交易**全都进链了**却读不到回执 —— 报出来的是"交易超时"，
+      // 而处置在**那个落后的节点**上。不问这一句，这条消息就把人引向 RPC。
+      if (isConfirmationTimeout(err)) {
+        const note = await lagNote();
+        if (note) { category = CATEGORIES.NODE; detail += note; }
+      }
+      report.add({ id: check.id, status: STATUS.FAIL, category, detail });
     }
   }
 

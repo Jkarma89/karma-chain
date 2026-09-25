@@ -37,8 +37,50 @@ export const CATEGORY_OF_RECOVERY_STATE = Object.freeze({
   'data-corrupt': CATEGORIES.STORAGE,         // 数据库打不开或与创世不符 → 重建该节点的卷
 });
 
+/**
+ * 「等交易确认超时」—— 它是**交易级**失败，不是端点不可达。
+ *
+ * 2026-09-25 实测（研究 V-76）：`l1-1` 落后 3 块卡住，而 `devnet-verify` 经本机代理读，
+ * 代理把读请求发给了它。三笔交易**全都进链了**（其余节点高度正好涨了三块），
+ * 报出来的却是 `[category: rpc] Timed out while waiting for transaction … to be confirmed`。
+ *
+ * `rpc` 把人引向"端点坏了 / 链停了"，而真实处置是**去修那个落后的节点**。
+ * 下面那条通用规则里的 `timed out` 会把它吞进 rpc，所以必须排在它**前面**。
+ */
+export const isConfirmationTimeout = (err) => /timed out while waiting for transaction/i
+  .test(`${err?.shortMessage ?? ''} ${err?.message ?? err}`);
+
+/**
+ * 我们读的那个端点是不是落后于全网 —— **纯函数**，判据自带。
+ *
+ * 这是"交易确认超时"的**第二问**：写进去了没有？
+ * 若端点比全网最高块矮，那么"读不到回执"与"交易没进链"是两件事，
+ * 而前者的处置是修那个节点，不是查 RPC。
+ *
+ * 只在**能同时拿到两边的数**时作答；拿不到就返回 null（不猜）——
+ * 一个猜出来的诊断比没有诊断更坏，它会把人引去修一个没坏的东西。
+ *
+ * @returns {null|{networkHeight:number, endpointHeight:number, behindBy:number,
+ *   endpointBehind:boolean, laggards:{id:string,height:number}[]}}
+ */
+export function diagnoseEndpointLag({ endpointHeight, nodeHeights } = {}) {
+  const rows = (nodeHeights ?? []).filter((n) => Number.isFinite(n?.height));
+  if (!rows.length || !Number.isFinite(endpointHeight)) return null;
+  const networkHeight = Math.max(...rows.map((n) => n.height));
+  return {
+    networkHeight,
+    endpointHeight,
+    behindBy: networkHeight - endpointHeight,
+    endpointBehind: endpointHeight < networkHeight,
+    laggards: rows.filter((n) => n.height < networkHeight)
+      .map((n) => ({ id: n.id, height: n.height })),
+  };
+}
+
 /** 把底层异常粗分到类别，供检查项在 catch 中兜底使用。 */
 export function categorizeError(err) {
+  // **这一条必须排在通用超时之前** —— 见 isConfirmationTimeout 的注释。
+  if (isConfirmationTimeout(err)) return CATEGORIES.TRANSACTION;
   const m = `${err?.code ?? ''} ${err?.cause?.code ?? ''} ${err?.message ?? err}`.toLowerCase();
   if (/econnrefused|enotfound|ehostunreach|etimedout|timed out|socket hang up|fetch failed/.test(m)) return CATEGORIES.RPC;
   if (/does not exist|is not available|method not found|-32601/.test(m)) return CATEGORIES.RPC;

@@ -42,6 +42,22 @@ async function nodeAccess(protocol) {
 /** L1 验证者之间应互联：5 个节点里每个至少看到其余 4 个（spec US5 场景 1：peers ≥ 4）。 */
 export const MIN_L1_PEERS = 4;
 
+/**
+ * 各节点自报的高度 —— 供 `verify-network` 在「等交易确认超时」时诊断用（研究 V-76）。
+ *
+ * **复用同一次 `nodeStatus()`**（模块级记忆化），不额外探一遍：
+ * 诊断发生在失败之后，此时上面几项检查通常已经把它取过了。
+ * 取不到就返回空数组 —— 诊断拿不到数就不作答，而不是猜。
+ */
+export async function nodeHeights() {
+  try {
+    const s = await nodeStatus();
+    return (s.nodes ?? []).map((n) => ({ id: n.id, height: n.height }));
+  } catch {
+    return [];
+  }
+}
+
 export const rpcCheck = {
   id: 'rpc',
   async run({ publicClient }) {
@@ -115,18 +131,59 @@ export const tokenCheck = {
  *   ② 只有**确认为 `false`** 的才摘出来
  *   ③ 摘出来的必须在 OK 的那句话里**被说出来** —— 静默放过会掩盖一份过期的声明
  */
-const splitNonMembers = (rows) => ({
-  nonMembers: rows.filter((r) => r.registeredOnChain === false),
-  rest: rows.filter((r) => r.registeredOnChain !== false),
-});
+/**
+ * ## 2026-09-25 补：**"已被移除"与"还没注册完"必须再分一次桶**（研究 V-74 第 5 条）
+ *
+ * 上面那一版把两者合成一类、一律判 OK。代价在一次真人试验里现形：
+ * 一个照文档加第 9 个验证者的人做完了"把机器准备好"的全部步骤、**还没走注册**，
+ * 此时 `deployment.json` 是 9、代理是 9、`devnet-status` 里新节点也已 healthy，
+ * 唯独链上还是 8 —— 而 `devnet-verify` 输出 `READY … 0 failed`。
+ * 他据此认为做完了。**一个在"活儿没干完"时判绿的验收器，比没有验收器更坏。**
+ *
+ * 两者的性质本来就不同：
+ *   - **已被移除**：活儿干完了，只剩一份过期的声明要清理 → 不是故障，OK + 说出来
+ *   - **还没注册完**：活儿**没干完**，链上成员数还没变 → 必须红
+ *
+ * 判据用「**那台机器还活着吗**」，而不是再去读一次合约：
+ * 退出的规程是"先从集合移除 → 等确认 → **再停进程** → 最后才改声明"，
+ * 所以被移除的那些**进程是停的**；而正在注册的那些**必须在跑**（不跑就没法被注册）。
+ * 这个判据取自本次已经拿到的探测结果，不引入第二个 notion —— 与下面那条注释同理。
+ *
+ * **它会误判的那一种情形，写在这里而不是藏起来**：紧急摘除之后那台机器又被开机了，
+ * 于是"不在集合里却仍在运行"。`devnet-member` 明确把那当作要避免的状态并会拦下
+ * （见 docs/devnet.md §5.4），所以这里把它报成"注册未完成"是可接受的 ——
+ * 两种情形的处置都是"让声明与链上重新一致"。
+ */
+const splitNonMembers = (rows) => {
+  const nonMembers = rows.filter((r) => r.registeredOnChain === false);
+  return {
+    nonMembers,
+    /** 活儿没干完的：还在跑，却不是链上成员 */
+    registering: nonMembers.filter((r) => r.alive === true),
+    /** 只剩声明要清理的：进程已停 */
+    stale: nonMembers.filter((r) => r.alive !== true),
+    rest: rows.filter((r) => r.registeredOnChain !== false),
+  };
+};
 
-/** 摘出来那些要说的那句话 —— 处置指向仓库，不指向机房。 */
-const nonMemberNote = (nonMembers) => (nonMembers.length
-  ? `；另有 ${nonMembers.length} 个声明了但**不是链上成员**`
-    + `（${nonMembers.map((r) => r.label ?? r.id).join('、')}）——`
-    + '它们已被移除或还没注册完，**不是故障**：处置是清理声明或续完注册，'
-    + '不是去那台机器查进程'
-  : '');
+const nameOf = (r) => r.label ?? r.id;
+
+/** 摘出来那些要说的那句话 —— 处置指向仓库或指向"把注册走完"，都不指向机房。 */
+const nonMemberNote = ({ registering = [], stale = [] } = {}) => {
+  const parts = [];
+  if (registering.length) {
+    parts.push(`；${registering.length} 个声明了但**还不是链上成员**`
+      + `（${registering.map(nameOf).join('、')}）——`
+      + '它们在跑却没进集合，**注册没走完**：处置是把 ACP-77 四步续完'
+      + '（`scripts/devnet-member.sh add --node-id …`），不是去那台机器查进程');
+  }
+  if (stale.length) {
+    parts.push(`；另有 ${stale.length} 个声明了但**不是链上成员**且进程已停`
+      + `（${stale.map(nameOf).join('、')}）——`
+      + '已被移除，**不是故障**：处置是把它从 deployment.json 里清掉并重新渲染');
+  }
+  return parts.join('');
+};
 
 export const nodeCheck = {
   id: 'node',
@@ -143,11 +200,15 @@ export const nodeCheck = {
     const all = s.nodes.map((n) => ({
       label: n.id, state: n.state, healthy: n.state === 'healthy',
       waiting: ['catching-up', 'bootstrapping', 'starting'].includes(n.state),
+      // 「那台机器还活着吗」—— 分"已被移除"与"还没注册完"要用它（见 splitNonMembers）
+      alive: !['stopped', 'unreachable'].includes(n.state),
       detail: n.detail, registeredOnChain: n.registeredOnChain,
     }));
-    // 「已被移除 / 还没注册完」先摘出去 —— 它们不是故障（FR-028）。
+    // 「已被移除 / 还没注册完」先摘出去 —— 它们不是**节点**故障（FR-028）。
+    // 注册没走完这件事由 `validator` 那一项判红，本项只把它说出来：
+    // 同一个事实报两遍，正是 2026-09-17 那次（l1-2 被报了两条）的教训。
     // Primary 节点的 registeredOnChain 恒为 null（它们不是 L1 成员），所以不受影响。
-    const { nonMembers, rest: results } = splitNonMembers(all);
+    const { registering, stale, rest: results } = splitNonMembers(all);
     const bad = results.filter((r) => !r.healthy && !r.waiting);
     const waiting = results.filter((r) => r.waiting);
 
@@ -156,7 +217,7 @@ export const nodeCheck = {
         status: STATUS.FAIL,
         category: CATEGORIES.NODE,
         detail: `${bad.length}/${expected} 须处置：${bad.map((b) => `${b.label} ${b.state}（${b.detail}）`).join('; ')}`
-          + nonMemberNote(nonMembers),
+          + nonMemberNote({ registering, stale }),
         data: { nodes: all },
       };
     }
@@ -165,7 +226,7 @@ export const nodeCheck = {
       status: STATUS.OK,
       // 分母用**摘出之后**的数，并把摘掉的那些说出来 —— 否则 "5/6 serving" 会读成少了一个
       detail: `${results.length - waiting.length}/${results.length} nodes serving${note}`
-        + nonMemberNote(nonMembers),
+        + nonMemberNote({ registering, stale }),
       data: { nodes: all },
     };
   },
@@ -192,18 +253,35 @@ export const validatorCheck = {
           nodePeerCount(n),
           nodeId(n),
         ]);
-        return { label: n.label, bootstrapped: bootstrapped === true, peers, nodeId: id, matchesInventory: id === n.nodeId, registeredOnChain };
+        // alive：探测成功就说明那台机器还在应答（见 splitNonMembers）
+        return { label: n.label, bootstrapped: bootstrapped === true, peers, nodeId: id, matchesInventory: id === n.nodeId, registeredOnChain, alive: true };
       } catch (e) {
-        return { label: n.label, bootstrapped: false, peers: 0, error: e.message.slice(0, 80), registeredOnChain };
+        return { label: n.label, bootstrapped: false, peers: 0, error: e.message.slice(0, 80), registeredOnChain, alive: false };
       }
     }));
-    // 同 nodeCheck：已被移除 / 还没注册完的先摘出去，它们不是故障（FR-028）
-    const { nonMembers, rest: results } = splitNonMembers(probed);
+    // 已被移除的先摘出去（不是故障，FR-028）；**注册没走完的由本项判红** —— 见下。
+    const { registering, stale, rest: results } = splitNonMembers(probed);
+    // **"活儿没干完"必须红。** 声明里有它、它也在跑，而链上成员数还没变 ——
+    // 2026-09-25 实测：此时若判绿，人会据此认为加节点做完了（研究 V-74 第 5 条）。
+    // 排在下面各项之前：其余几项判的是"这些成员好不好"，而这一条判的是
+    // "成员集合对不对" —— 后者不成立时，前者判什么都不是验收。
+    if (registering.length) {
+      return {
+        status: STATUS.FAIL,
+        category: CATEGORIES.VALIDATOR,
+        detail: `${registering.length} 个声明的 L1 验证者**还不是链上成员**`
+          + `（${registering.map(nameOf).join('、')}）——`
+          + '它们在跑却没进集合，注册没走完：把 ACP-77 四步续完'
+          + '（`scripts/devnet-member.sh add --node-id …`；进度用 `npm run membership:status` 看）'
+          + nonMemberNote({ stale }),
+        data: { validators: probed },
+      };
+    }
     if (!results.length) {
       return {
         status: STATUS.SKIP,
         detail: `声明的 ${l1.length} 个 L1 验证者**都不是链上成员** —— 无可判定`
-          + nonMemberNote(nonMembers),
+          + nonMemberNote({ stale }),
         data: { validators: probed },
       };
     }
@@ -211,16 +289,16 @@ export const validatorCheck = {
     const lowPeers = results.filter((r) => r.peers < MIN_L1_PEERS);
     const wrongId = results.filter((r) => r.matchesInventory === false);
     if (notBootstrapped.length) {
-      return { status: STATUS.FAIL, category: CATEGORIES.VALIDATOR, detail: `${notBootstrapped.length}/${results.length} not bootstrapped on '${chainAlias}': ${notBootstrapped.map((r) => r.label + (r.error ? ` (${r.error})` : '')).join(', ')}` + nonMemberNote(nonMembers), data: { validators: probed } };
+      return { status: STATUS.FAIL, category: CATEGORIES.VALIDATOR, detail: `${notBootstrapped.length}/${results.length} not bootstrapped on '${chainAlias}': ${notBootstrapped.map((r) => r.label + (r.error ? ` (${r.error})` : '')).join(', ')}` + nonMemberNote({ stale }), data: { validators: probed } };
     }
     if (lowPeers.length) {
-      return { status: STATUS.FAIL, category: CATEGORIES.P2P, detail: `${lowPeers.length}/${results.length} below the ${MIN_L1_PEERS}-peer floor: ${lowPeers.map((r) => `${r.label}=${r.peers}`).join(', ')}` + nonMemberNote(nonMembers), data: { validators: probed } };
+      return { status: STATUS.FAIL, category: CATEGORIES.P2P, detail: `${lowPeers.length}/${results.length} below the ${MIN_L1_PEERS}-peer floor: ${lowPeers.map((r) => `${r.label}=${r.peers}`).join(', ')}` + nonMemberNote({ stale }), data: { validators: probed } };
     }
     if (wrongId.length) {
-      return { status: STATUS.FAIL, category: CATEGORIES.VALIDATOR, detail: `node id mismatch vs committed dev keys: ${wrongId.map((r) => r.label).join(', ')}` + nonMemberNote(nonMembers), data: { validators: probed } };
+      return { status: STATUS.FAIL, category: CATEGORIES.VALIDATOR, detail: `node id mismatch vs committed dev keys: ${wrongId.map((r) => r.label).join(', ')}` + nonMemberNote({ stale }), data: { validators: probed } };
     }
     const peerRange = [...new Set(results.map((r) => r.peers))].sort((a, b) => a - b);
-    return { status: STATUS.OK, detail: `${results.length}/${results.length} L1 validators bootstrapped, peers>=${MIN_L1_PEERS} each (observed ${peerRange.join('/')})` + nonMemberNote(nonMembers), data: { validators: probed } };
+    return { status: STATUS.OK, detail: `${results.length}/${results.length} L1 validators bootstrapped, peers>=${MIN_L1_PEERS} each (observed ${peerRange.join('/')})` + nonMemberNote({ stale }), data: { validators: probed } };
   },
 };
 
