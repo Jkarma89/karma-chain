@@ -21,6 +21,11 @@ import assert from 'node:assert/strict';
 import {
   RPC, pub, sh, sendTx, devnetAvailable, attemptTx, TRANSPORT_BUDGET,
   spreadProblems,
+  // 2026-09-25：这两个曾在一次改动里从导入列表掉出去，而它们在模块**顶层**被调用 ——
+  // 于是整个文件在 import 阶段就 ReferenceError，一条断言都没跑，
+  // 而 e2e 汇总里它只表现为"1 个失败"。**没跑过的测试和跑过并通过的测试，
+  // 在总数上长得一样。** 守卫见 tests/unit/e2e-imports-resolve.test.mjs。
+  pickLocalVictims, localVictimSkip,
   SHELL_SKIP,
   restoreOrReport,
  acquireDestructiveLock, requireFullMargin,
