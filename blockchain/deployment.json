@@ -1,6 +1,6 @@
 {
   "$schema": "./deployment.schema.json",
-  "deploymentVersion": "1.0.0",
+  "deploymentVersion": "1.1.0",
   "topology": {
     "activeDeployment": "lan",
     "nodes": [
@@ -195,7 +195,8 @@
     "rpcPath": "/ext/bc/karmachain/rpc"
   },
   "primaryNetwork": {
-    "nodeCount": 2
+    "nodeCount": 2,
+    "alsoValidatedBy": []
   },
   "validators": {
     "count": 9,

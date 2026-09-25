@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://karmachain.dev/schemas/primary-network-dual-role.schema.json",
+  "title": "兼任 Primary 网络验证者的 L1 节点 —— 功能 005 契约片段（US4 / F-7）",
+  "$comment": "嵌入位置：deployment.schema.json 的 primaryNetwork.properties.alsoValidatedBy。与 002 的 topology、005 的 validator-identity 同样是片段，不是独立配置文件。由 tests/unit/schema-sync.test.mjs 逐字段比对。",
+  "description": "同时兼任 Primary 网络验证者的 L1 验证者节点 id（功能 005 / US4 / F-7）。列在这里的节点渲染时**不设** partial-sync-primary-network —— avalanchego 对「是 Primary 验证者又开着 partial sync」的节点启动即致命错误。空数组时渲染结果与不写这个字段逐字节相同。",
+  "type": "array",
+  "uniqueItems": true,
+  "items": {
+    "type": "string"
+  }
+}

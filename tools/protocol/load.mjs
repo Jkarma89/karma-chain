@@ -159,6 +159,20 @@ export function validateConstraints(p) {
     fail(`topology has ${primaryNodes.length} primary nodes but primaryNetwork.nodeCount is ${p.primaryNetwork.nodeCount}`);
   }
 
+  // `primaryNetwork.alsoValidatedBy`（功能 005 / US4 / F-7）里写的必须是**真实存在的
+  // L1 验证者节点 id**。写错一个名字不会有任何可见后果 —— 渲染器只是查不到、
+  // 照旧给那个节点设上 partial-sync，而人以为自己已经把它摘出来了。
+  // 于是第 5 步把它加进 P 链集合之后，**它下一次启动就起不来**
+  //（`partial sync should not be configured for a validator`，研究 R-07a），
+  // 而那时质押已经锁死 24 小时。**一个拼写错误要到 24 小时不可逆之后才现形，
+  // 必须在这里挡住。**
+  const alsoIds = p.primaryNetwork.alsoValidatedBy ?? [];
+  const validatorIds = new Set(validatorNodes.map((n) => n.id));
+  const unknownAlso = alsoIds.filter((id) => !validatorIds.has(id));
+  if (unknownAlso.length) {
+    fail(`primaryNetwork.alsoValidatedBy references node(s) that are not declared l1-validators: ${unknownAlso.join(', ')}`);
+  }
+
   // validatorIndex 必须恰好覆盖 1..validators.count（端口与 keyDir 由 validators.nodes[] 提供）
   const vIdx = validatorNodes.map((n) => n.validatorIndex).sort((a, b) => a - b);
   const wantIdx = nodes.map((n) => n.index);

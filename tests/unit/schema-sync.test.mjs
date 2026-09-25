@@ -19,6 +19,9 @@ const TOPOLOGY_CONTRACT = resolve(REPO_ROOT, 'specs/002-resilient-validator-netw
 // 功能 005：创世之后加入的验证者的身份（公开材料）。与 002 的 topology 同样是**片段**，
 // 嵌在 validators.nodes.items.properties.identity 上，所以要单独比、并从基础比对里剔除。
 const IDENTITY_FRAGMENT = resolve(REPO_ROOT, 'specs/005-elastic-membership/contracts/validator-identity.schema.json');
+// 功能 005 / US4：兼任 Primary 网络验证者的 L1 节点名单。同样是**片段**，
+// 嵌在 primaryNetwork.properties.alsoValidatedBy 上，所以要单独比、并从基础比对里剔除。
+const DUAL_ROLE_FRAGMENT = resolve(REPO_ROOT, 'specs/005-elastic-membership/contracts/primary-network-dual-role.schema.json');
 const IDENTITY_CONTRACT = resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/chain-identity.schema.json');
 const IDENTITY_RUNTIME = resolve(REPO_ROOT, 'blockchain/chain-identity.schema.json');
 
@@ -53,6 +56,9 @@ describe('protocol.schema.json 与其两个契约同步', () => {
     // **但不是排除掉不管**：剔除之后它必须与 005 的契约片段逐字段相等。
     props.validators = structuredClone(props.validators);
     delete props.validators.properties.nodes.items.properties.identity;
+    // 同上：US4 的 alsoValidatedBy 片段单独比对（见下一条），从基础比对里剔除
+    props.primaryNetwork = structuredClone(props.primaryNetwork);
+    delete props.primaryNetwork.properties.alsoValidatedBy;
     const { $defs, required, ...rest } = runtime;
     const { required: baseRequired, ...baseRest } = base;
     assert.deepEqual({ ...rest, properties: props }, baseRest,
@@ -64,6 +70,20 @@ describe('protocol.schema.json 与其两个契约同步', () => {
     const actual = mergedSchema().properties.validators.properties.nodes.items.properties.identity;
     assert.deepEqual(sortRequired(actual), sortRequired(expected),
       `schema 漂移：identity 片段偏离了 ${IDENTITY_FRAGMENT}`);
+  });
+
+  test('alsoValidatedBy 片段与 005 契约逐字段一致', () => {
+    const { $schema, $id, title, $comment, ...expected } = readJson(DUAL_ROLE_FRAGMENT);
+    const actual = mergedSchema().properties.primaryNetwork.properties.alsoValidatedBy;
+    assert.deepEqual(sortRequired(actual), sortRequired(expected),
+      `schema 漂移：alsoValidatedBy 片段偏离了 ${DUAL_ROLE_FRAGMENT}`);
+  });
+
+  test('alsoValidatedBy 必须是**可选**的 —— 不写它等于一个都不兼任', () => {
+    const pn = mergedSchema().properties.primaryNetwork;
+    assert.ok(!(pn.required ?? []).includes('alsoValidatedBy'),
+      'alsoValidatedBy 被列为必填 —— 那会让"还没走 F-7"的声明变成非法，而那是当前的正常状态');
+    assert.ok(pn.properties.alsoValidatedBy, 'alsoValidatedBy 属性不见了 —— F-7 的名单无处声明');
   });
 
   test('identity 必须是**可选**的（创世那几个不写这一块）', () => {

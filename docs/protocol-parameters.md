@@ -2,7 +2,7 @@
      by tools/protocol/render-docs.mjs — DO NOT EDIT.
      **本文档跨两份声明**，改哪一份取决于改的是什么（见下方"两个来源"）。 -->
 
-# KarmaChain 协议参数（dev · configVersion 1.4.0 · deploymentVersion 1.0.0）
+# KarmaChain 协议参数（dev · configVersion 1.4.0 · deploymentVersion 1.1.0）
 
 宪法第十四条要求记录的全部区块链参数及其取值理由。
 

@@ -202,6 +202,12 @@
         "nodeCount": {
           "type": "integer",
           "minimum": 1
+        },
+        "alsoValidatedBy": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string" },
+          "description": "同时兼任 Primary 网络验证者的 L1 验证者节点 id（功能 005 / US4 / F-7）。列在这里的节点渲染时**不设** partial-sync-primary-network —— avalanchego 对「是 Primary 验证者又开着 partial sync」的节点启动即致命错误。空数组时渲染结果与不写这个字段逐字节相同。"
         }
       }
     }

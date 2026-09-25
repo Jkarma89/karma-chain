@@ -92,6 +92,9 @@ export function renderNodeFlags(p = loadProtocol(), identity = readJson(IDENTITY
   const primaryIdOf = new Map(primaries.map((n, i) => [n.id, primaryNodeIds[i]]));
   const endpointOf = (n) => `${n.address}:${n.stakingPort}`;
 
+  /** 兼任 Primary 网络验证者的 L1 节点 —— 见下面 partial-sync 那一支。 */
+  const alsoValidatedBy = new Set(p.primaryNetwork.alsoValidatedBy ?? []);
+
   const out = {};
   for (const n of nodes) {
     const isValidator = n.role === 'l1-validator';
@@ -134,7 +137,16 @@ export function renderNodeFlags(p = loadProtocol(), identity = readJson(IDENTITY
       flags['index-enabled'] = 'false';
       flags['index-allow-incomplete'] = 'true';
       flags['track-subnets'] = identity.subnetId;
-      flags['partial-sync-primary-network'] = 'true';
+      // **兼任 Primary 网络验证者的那些，不能开 partial sync**（功能 005 / US4 / F-7）。
+      // avalanchego 对这种组合是**启动即致命**：
+      //   `partial sync should not be configured for a validator`
+      // 由此得出一条顺序约束（研究 R-07a 实测）：必须**先**去掉这个标志并重建，
+      // **再**把它加进 P 链验证者集合。反过来做，那个节点下次启动就起不来了。
+      //
+      // 名单来自**声明**（`primaryNetwork.alsoValidatedBy`），不写死在这里 ——
+      // 这是部署描述（ADR-0012），不进 stamp 六项、不递增 configVersion。
+      // 空数组时这一支与改动之前逐字节相同。
+      if (!alsoValidatedBy.has(n.id)) flags['partial-sync-primary-network'] = 'true';
       flags['sybil-protection-enabled'] = 'true';
       flags['plugin-dir'] = CONTAINER.plugins;
       flags['chain-aliases-file'] = `${CONTAINER.config}/aliases.json`;
