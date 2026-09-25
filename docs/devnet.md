@@ -405,6 +405,7 @@ docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate <�
 | node | 宿主侧 TCP 通而 HTTP 空回复 / 容器连不出去 / 节点卡在某个高度不追赶 / 自己能签但别人要不到它的签名 | 都是**同一类**容器网络故障，修法相同：`up -d --force-recreate <服务>`。判据与六次实测见 §5.3 |
 | rpc | 403 `invalid host specified` | 见 §3 Host 头限制 |
 | rpc | `devnet-verify` 报 `connection refused` | 网络未启动或已停止；`scripts/devnet-start` |
+| rpc | `devnet-verify` 报 `Timed out while waiting for transaction … to be confirmed`（`transfer` / `block-production` / `contract` 一起红，而前面的 `node` / `validator` / `fault-tolerance` 全绿） | **多半不是链坏了，是本机代理把读请求发给了一个落后的节点。** 先看面板有没有 `sync-lag`，或比较各节点高度（`scripts/devnet-status`）：若只有一个落后而其余一致，交易其实已经进链（高度会正好涨了你发的那几笔）。处置是修那个节点（§5.3），不是查 RPC。2026-09-25 实测 |
 
 上述每一类都有对应的自动化回归（`tests/e2e/failure-classification.test.mjs`，6/6 通过，SC-011），
 因此"错误信息可操作、类别正确"这件事是被测试守住的，而不是靠人工检查。
