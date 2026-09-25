@@ -1268,6 +1268,9 @@ $env:KARMACHAIN_DOMAIN='<本机边界>'; .\scripts\devnet-dashboard.ps1
 
 ## 11. 扩容与缩容的完整规程（功能 005 / FR-037）
 
+> **要动手加一台机器：[`docs/add-validator.md`](./add-validator.md)** 是那一件事的线性单子 ——
+> 同一套步骤，每步带判据，不解释为什么。本节是它的出处：依据、边界，以及每个坑当初是怎么发现的。
+
 > **先读这一节的第一段。** 加验证者**常常买不到任何容错提升** —— 这是本节最反直觉、
 > 也最容易让人白花力气的一条。
 
@@ -1297,6 +1300,8 @@ $env:KARMACHAIN_DOMAIN='<本机边界>'; .\scripts\devnet-dashboard.ps1
 不是更高的 `f`。值不值得由你定 —— 但不要以为加了就更抗。
 
 ### 11.2 扩容：加一个 L1 验证者
+
+> 只想照着做的人去 [`docs/add-validator.md`](./add-validator.md)；下面这一节是它的出处。
 
 四步 ACP-77 流程，**每步之间停下来**。工具从链上读进度，中断后重跑即可续。
 
@@ -1455,7 +1460,7 @@ docker run --rm --network compose_default karmachain/verify:local node -e "fetch
 **⑤ 走四步**
 
 ```bash
-scripts/devnet-member.sh add --node-id NodeID-…      # Windows: scriptsdevnet-member.ps1 add …
+scripts/devnet-member.sh add --node-id NodeID-…      # Windows 上是 scripts/devnet-member.ps1 add …
 ```
 
 入口脚本把工具跑在容器里，所以**宿主只要有 Docker**。它会先确认聚合器在节点网络上 ——

@@ -45,6 +45,9 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 
 > 跨机部署（多台机器各承载一个故障边界）见 [`docs/devnet.md` §9](docs/devnet.md)。
 > 每台机器执行相同的命令，区别只在 `KARMACHAIN_DOMAIN=<边界 id>`；机器之间**没有编排层面的依赖**。
+>
+> **把一台新机器加成验证者**（不重置链）：照 [`docs/add-validator.md`](docs/add-validator.md) 走 ——
+> 一张线性的单子，每步带判据。为什么这么做在 [`docs/devnet.md` §11](docs/devnet.md)。
 
 ## 目录
 
