@@ -22,6 +22,7 @@ services:
       - karmachain-l1-6-data:/seed/l1-6
       - karmachain-l1-7-data:/seed/l1-7
       - karmachain-l1-8-data:/seed/l1-8
+      - karmachain-l1-9-data:/seed/l1-9
 
 volumes:
   karmachain-l1-1-data:
@@ -44,3 +45,5 @@ volumes:
     name: karmachain-l1-7-data
   karmachain-l1-8-data:
     name: karmachain-l1-8-data
+  karmachain-l1-9-data:
+    name: karmachain-l1-9-data

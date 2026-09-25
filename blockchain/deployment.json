@@ -57,6 +57,11 @@
         "id": "l1-8",
         "role": "l1-validator",
         "validatorIndex": 8
+      },
+      {
+        "id": "l1-9",
+        "role": "l1-validator",
+        "validatorIndex": 9
       }
     ],
     "deployments": {
@@ -82,7 +87,8 @@
               "primary-2",
               "l1-6",
               "l1-7",
-              "l1-8"
+              "l1-8",
+              "l1-9"
             ],
             "sharedFailureFactors": [
               "host:single-machine"
@@ -166,6 +172,15 @@
               "l1-8"
             ],
             "sharedFailureFactors": []
+          },
+          {
+            "id": "ubuntu-7",
+            "platform": "linux",
+            "address": "192.168.1.42",
+            "nodes": [
+              "l1-9"
+            ],
+            "sharedFailureFactors": []
           }
         ]
       }
@@ -183,7 +198,7 @@
     "nodeCount": 2
   },
   "validators": {
-    "count": 8,
+    "count": 9,
     "nodes": [
       {
         "index": 1,
@@ -264,6 +279,23 @@
           "proofOfPossession": "0xb38b76a931fbdad3026c7a41fa66e32f4b8ac0ec31df29237e1cc34c0c88227a616684e7210ffbff3277a14b0c04647e13d7fd9cc33c153349dae3ee9b0a7b3c5d80928709b01285db7c6d3626c4a1ef2840d564cb82d5cfd48871cbe82e6c99",
           "reportedBy": "ubuntu-6 (192.168.1.33)",
           "reportedAt": "2026-09-22"
+        }
+      },
+      {
+        "index": 9,
+        "httpPort": 21676,
+        "stakingPort": 21677,
+        "keyDir": "blockchain/validators/dev/node-9/",
+        "identity": {
+        "origin": "joined",
+        "nodeId": "NodeID-9W8oKQCRXNKbiZbznW3sj2F1X26B2eCR2",
+        "blsPublicKey": "0xb42bc55d84988426e20ff28eac53bce5f1925ec2d564ca40b7fd2a767179413d6409d1953dff42b88beeed41cce872c8",
+        "certSha256": "b25a512ab67a228645e492b5d0d481500c9cd95d698fa08a3da6c3d33edb3185",
+        "keySha256": "c985be460986ff5e75a0904523731c85d2cf1d55c99b13f62c82ef5e365b567c",
+        "signerSha256": "d936c5b375361bf7657410d145c0a7d3e44debe640e6a7879bcb6e00fc1c28db",
+        "proofOfPossession": "0x99cf8052ffef9d6aa291a976fffea5e511d8e831e1277dc9c3701a3ca527839abf48ac86d01caf3742b05166f10cc874129f6e6b688041ff53b7994d1326141d3906a89bd30046bbcd75c36e68c124cd5b3313e642fe242d6e758e50040df924",
+        "reportedBy": "ubuntu-7 (192.168.1.42)",
+        "reportedAt": "2026-09-25"
         }
       }
     ]
