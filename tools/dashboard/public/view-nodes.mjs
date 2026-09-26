@@ -13,15 +13,12 @@
 // `devnet-status` 报 "7/7 nodes NOT healthy" 而链完全可用。
 // 分组呈现 + 一句说明，是为了让看的人不会再做同一个推断。
 import { STATE_COPY, INCIDENT_COPY } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'nodes', title: '逐节点状态', order: 2 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 const dash = '—';
 

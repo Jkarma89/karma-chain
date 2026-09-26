@@ -11,15 +11,12 @@
 //
 // 所以观察者可达性在这里**单独成块**，与链的健康度并列 —— 而不是藏在节点表的某一行里。
 import { tierCopy, STATE_COPY } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'observer', title: '观察者视角', order: 3 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 /** T048：整体失明 —— 整幅提示，且绝不出现"链已停止"。 */
 function renderBlind(s, root) {

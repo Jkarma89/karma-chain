@@ -13,15 +13,12 @@
 // 而 `genesisMatchesBaseline === null`（未取到）**不触发**警报，只登记为"未知" ——
 // 分叉是比下线严重得多的警报，虚报一次之后就没人信它了。
 import { INCIDENT_COPY } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'identity', title: '链身份', order: 5 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 const short = (hash) => (hash ? `${hash.slice(0, 10)}…${hash.slice(-6)}` : '—');
 

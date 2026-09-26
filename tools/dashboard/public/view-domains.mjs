@@ -12,15 +12,12 @@
 // 很直接：按声明的边界判会得到「可容忍 1 个边界整体失效 [OK]」这样
 // **在现实里为假的绿灯**，因为共享供电、共享交换机这类因素会被绿灯掩盖。
 import { INCIDENT_COPY } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'domains', title: '故障边界与异常', order: 4 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 /** T054：两个余量并列，并解释它们为什么可能不同。 */
 function renderMarginExplain(s, root) {

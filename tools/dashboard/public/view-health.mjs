@@ -6,15 +6,12 @@
 // **不做任何判定** —— tier / healthPercent / 两个余量 / incidents 全部取自快照。
 // 文案全部来自 copy.mjs（那样才测得到"不得出现某些话"，见 tests/unit/dashboard-copy）。
 import { tierCopy, recoveryCopy, LIVENESS_KINDS } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'health', title: '链健康度', order: 1 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 /** 探活的界面状态只活在本模块内 —— 它不属于快照。 */
 const probe = { asking: false, running: false, result: null };

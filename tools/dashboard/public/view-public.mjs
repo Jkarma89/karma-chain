@@ -12,15 +12,12 @@
 // 访问的端点。所以这个视图现在的用途是：**可以把这个页面截图或投屏给外部看，
 // 而不泄漏内部事实**。它还不是"第三方自己来访问"。
 import { tierCopy } from './copy.mjs';
+import { el } from './dom.mjs';
 
 export const meta = { id: 'public', title: 'KarmaChain 状态', order: 1 };
 
-const el = (tag, cls, text) => {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text != null) n.textContent = text;
-  return n;
-};
+// `el` 现在是共用的（tools/dashboard/public/dom.mjs）—— 它把 `**…**` 渲染成 <b>，
+// 而此前六份各自的版本只设 textContent，于是星号在页面上是字面显示的。
 
 let cache = null;
 
