@@ -79,6 +79,39 @@ export function worstCaseAfterDomainLoss(holders) {
 /** P 链引导门槛（avalanchego 自报，004 的 V-08 实测）。 */
 export const BOOTSTRAP_QUORUM_PERCENT = 80;
 
+/**
+ * 造一个「P 链的 NodeID → 我们的节点 id 与所在机器」的映射。
+ *
+ * 两处要用它（本工具的影响预测、`devnet-verify` 的 `stake-expiry` 检查），
+ * 所以放在一处导出 —— **两处各写一份必然分歧**，而分歧出来的那份会在
+ * "哪台机器握多少权益"上给出不同答案，那正是整个 F-7 的判据。
+ *
+ * 认不出的 NodeID **不吞掉**：`domain` 退化成 `(未知:…)`，于是它在按机器分组时
+ * 自成一组。这是刻意的 —— 把一个认不出的持有者悄悄并进别人那一组，
+ * 会让"掉一台还剩多少"算出一个偏乐观的数。
+ */
+export function holderMapper(p, d) {
+  const domainOf = new Map(d.topologyNodes.map((n) => [n.id, n.domain ?? '(未归属)']));
+  const nodeIdToId = new Map();
+  for (const v of p.validators.nodes) {
+    try {
+      nodeIdToId.set(identityOf(v).nodeId, d.topologyNodes.find((n) => n.keyDir === v.keyDir)?.id ?? null);
+    } catch { /* 身份不全（创世成员缺密钥目录之类）—— 跳过，别让它把整张表带崩 */ }
+  }
+  // Primary 的 NodeID 只在建链制品里，按数组位置对应（与 render-node-flags 同一约定）
+  const primaryGenesis = readJson(resolve(REPO_ROOT, 'blockchain/chain-identity/primary-network.genesis.json'));
+  const primaries = d.topologyNodes.filter((n) => n.role === 'primary');
+  primaryGenesis.initialStakers.forEach((s, i) => {
+    if (primaries[i]) nodeIdToId.set(s.nodeID, primaries[i].id);
+  });
+  return (nodeID, weight) => ({
+    nodeID,
+    weight: BigInt(weight ?? 0),
+    ourId: nodeIdToId.get(nodeID) ?? null,
+    domain: domainOf.get(nodeIdToId.get(nodeID)) ?? `(未知:${String(nodeID).slice(0, 12)}…)`,
+  });
+}
+
 const pchainCall = (uri) => async (method, params) => {
   const r = await fetch(`${uri.replace(/\/$/, '')}/ext/bc/P`, {
     method: 'POST',
@@ -210,23 +243,7 @@ async function main() {
   console.error(`  ✓ 全部通过（C/X 已引导，NodeID 一致，尚未在集合里）`);
 
   // ── 影响：加入前后，掉任意一台机器还剩多少权益 ────────────────────────────
-  const domainOf = new Map(d.topologyNodes.map((n) => [n.id, n.domain ?? '(未归属)']));
-  const nodeIdToId = new Map();
-  for (const v of p.validators.nodes) {
-    try { nodeIdToId.set(identityOf(v).nodeId, d.topologyNodes.find((n) => n.keyDir === v.keyDir)?.id ?? null); } catch { /* 身份不全，跳过 */ }
-  }
-  const primaryGenesis = readJson(resolve(REPO_ROOT, 'blockchain/chain-identity/primary-network.genesis.json'));
-  const primaries = d.topologyNodes.filter((n) => n.role === 'primary');
-  primaryGenesis.initialStakers.forEach((s, i) => {
-    if (primaries[i]) nodeIdToId.set(s.nodeID, primaries[i].id);
-  });
-
-  const holderOf = (nodeID, weight) => ({
-    nodeID,
-    weight: BigInt(weight),
-    ourId: nodeIdToId.get(nodeID) ?? null,
-    domain: domainOf.get(nodeIdToId.get(nodeID)) ?? `(未知:${nodeID.slice(0, 12)}…)`,
-  });
+  const holderOf = holderMapper(p, d);
   const before = cur.validators.map((v) => holderOf(v.nodeID, v.weight ?? v.stakeAmount ?? 0));
   const weight = stakeAvax * AVAX;
   const after = [...before, holderOf(live.nodeID, weight)];

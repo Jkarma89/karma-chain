@@ -35,7 +35,7 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 | **一次性建链** | `scripts/devnet-bootstrap` |
 | 启动 / 停止 | `scripts/devnet-start` · `scripts/devnet-stop`（**崩溃后直接 start 即可，无需重置**） |
 | 重置到创世 | `scripts/devnet-reset` |
-| 14 项自动化验证 | `scripts/devnet-verify` |
+| 15 项自动化验证 | `scripts/devnet-verify` |
 | 拓扑与容错校验 | `scripts/devnet-topology`（退出码 13 = 违反容错约束） |
 | 重新生成全部派生物 | `scripts/devnet-render`（`--check` 只查漂移） |
 | 节点状态 / 日志 | `scripts/devnet-status` · `scripts/devnet-logs <node>` |
@@ -56,7 +56,7 @@ MetaMask、Foundry `cast`、viem 均可**零配置**连接。完整手册见 **[
 | `blockchain/` | **`protocol.json`（协议参数唯一事实来源）**、生成的 Genesis、DEVELOPMENT ONLY 开发密钥 |
 | `docker/` | `node/` 节点镜像（官方 avalanchego + subnet-evm，**不含 CLI**）、`bootstrap/` 建链镜像（唯一含 CLI）、`compose/` 每故障边界一份的生成物、`verify/` 工具镜像 |
 | `tools/protocol/` | 由 `protocol.json` 派生创世、参数文档、**每节点标志与每边界 compose**、拓扑校验 |
-| `tools/verify/` | 14 项网络验证器（逐项 `[OK]/[FAIL]` + JSON 报告） |
+| `tools/verify/` | 15 项网络验证器（逐项 `[OK]/[FAIL]` + JSON 报告） |
 | `tools/inspect/` | 逐节点恢复状态、链上合约清单 |
 | `tests/` | 单元 / 集成 / 端到端测试 |
 | `scripts/` | 宿主机薄封装（PowerShell + sh，无业务逻辑） |

@@ -17,10 +17,14 @@ const derived = derive(protocol);
 
 const SCHEMA_PATH = resolve(REPO_ROOT, 'specs/001-local-avalanche-devnet/contracts/verification-report.schema.json');
 // 功能 002 在 001 的契约上追加了检查项；基线不改写，增量单独声明后在此合并。
-const ADDITIONS_PATH = resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/verification-report.additions.json');
+const ADDITIONS_PATHS = [
+  resolve(REPO_ROOT, 'specs/002-resilient-validator-network/contracts/verification-report.additions.json'),
+  // 功能 005 / US4：`stake-expiry`。同一种处理方式 —— 基线与 002 的增量都不改写。
+  resolve(REPO_ROOT, 'specs/005-elastic-membership/contracts/verification-report.additions.json'),
+];
 export const CHECK_IDS = (() => {
   const base = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
-  const added = JSON.parse(readFileSync(ADDITIONS_PATH, 'utf8')).addedCheckIds ?? [];
+  const added = ADDITIONS_PATHS.flatMap((p) => JSON.parse(readFileSync(p, 'utf8')).addedCheckIds ?? []);
   return [...base.properties.checks.items.properties.id.enum, ...added];
 })();
 
@@ -112,11 +116,16 @@ describe('verification report', () => {
     ]);
   });
 
-  test('the last generated report (if any) is schema-valid and has 14 checks', () => {
+  test('the last generated report (if any) is schema-valid and has 15 checks', () => {
     const path = resolve(REPO_ROOT, '.devnet/verify-report.json');
     if (!existsSync(path)) return;   // 未跑过验证器时跳过
     const json = JSON.parse(readFileSync(path, 'utf8'));
     assertValid(json, '.devnet/verify-report.json');
-    assert.equal(json.checks.length, 14, 'the verifier must run all 14 checks (13 from 001 + fault-tolerance from 002)');
+    // 13（001）+ fault-tolerance（002）+ stake-expiry（005 / US4，2026-09-26 加）。
+    // **这个数写死是刻意的**：少一项意味着有检查被悄悄摘掉，而摘掉之后
+    // 输出仍然是一片 [OK] —— 一份"少测了一项"的报告和一份"全测过"的报告，
+    // 在 `0 failed` 那一行上长得一模一样。
+    assert.equal(json.checks.length, 15,
+      'the verifier must run all 15 checks (13 from 001 + fault-tolerance from 002 + stake-expiry from 005)');
   });
 });

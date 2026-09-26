@@ -8,7 +8,7 @@
 ```bash
 git clone <repo> && cd karma-chain
 scripts/devnet-start.sh      # Windows: scripts\devnet-start.ps1（首次约 80 秒，含镜像构建约 5 分钟）
-scripts/devnet-verify.sh     # 14 项自动化检查，应输出 "KarmaChain is READY"
+scripts/devnet-verify.sh     # 15 项自动化检查，应输出 "KarmaChain is READY"
 ```
 
 得到：Chain ID **20189** 的 EVM 链，RPC `http://127.0.0.1:8545/ext/bc/karmachain/rpc`，
@@ -33,7 +33,7 @@ scripts/devnet-verify.sh     # 14 项自动化检查，应输出 "KarmaChain is 
 | 启动 | `scripts\devnet-start.ps1` | `scripts/devnet-start.sh` | 建链后每次约 5–15 秒。**没有"恢复快照"这条路径** —— 每个节点从自己的数据卷恢复，上次是否优雅停止与本次能否启动无关 |
 | 停止 | `scripts\devnet-stop.ps1` | `scripts/devnet-stop.sh` | 仅停止容器，**不保存任何东西** —— 因为没有东西需要保存 |
 | 重置 | `scripts\devnet-reset.ps1` | `scripts/devnet-reset.sh` | 删除链数据卷，下次启动回到创世 |
-| 验证 | `scripts\devnet-verify.ps1` | `scripts/devnet-verify.sh` | 14 项自动化检查，约 15 秒；退出码 0 通过 / 1 失败 |
+| 验证 | `scripts\devnet-verify.ps1` | `scripts/devnet-verify.sh` | 15 项自动化检查，约 15 秒；退出码 0 通过 / 1 失败 |
 | 状态 | `scripts\devnet-status.ps1` | `scripts/devnet-status.sh` | 逐节点的恢复状态、高度、peers、所属故障边界；显示在线数与容错上限的关系 |
 | 拓扑 | `scripts\devnet-topology.ps1` | `scripts/devnet-topology.sh` | 校验并展示故障边界与推导出的容错上限；退出码 13 = 违反容错约束 |
 | 重新生成 | `scripts\devnet-render.ps1` | `scripts/devnet-render.sh` | 由 `protocol.json` 重新生成全部派生物；`--check` 只检查漂移 |
@@ -110,11 +110,14 @@ cast block latest --rpc-url $RPC --field number
 ## 3.4 自动化验证
 
 ```bash
-scripts/devnet-verify.sh            # 14 项完整检查（约 15 秒）
+scripts/devnet-verify.sh            # 15 项完整检查（约 15 秒）
 scripts/devnet-verify.sh --quick    # 跳过合约编译与 RPC 方法探测（仅本地迭代，不可用于验收）
 ```
 
-14 项检查：`rpc`、`chain-id`、`network-id`、`token`、`node`（7 个节点均在服务 —— 判据是"能否参与 L1 出块"，不是节点自报的综合健康位）、`validator`（5 个 L1 已 bootstrapped、peers ≥ 4、NodeID 与仓库密钥一致）、`balance`（区块 0 余额精确等于创世）、`transfer`、`receipt`（回执 6 个字段 + 余额守恒）、`block-production`（每笔交易产生新区块）、`contract`（编译部署 `Counter.sol` 并读写验证）、`rpc-methods`（FR-012 十个方法逐一探测）、`protocol-consistency`（运行中创世哈希 == 基准）、`fault-tolerance`（在线验证者数与容错上限的关系）。
+15 项检查：`rpc`、`chain-id`、`network-id`、`token`、`node`（**声明的节点**均在服务 —— 判据是"能否参与 L1 出块"，不是节点自报的综合健康位）、`validator`（全部 L1 已 bootstrapped、peers ≥ 4、NodeID 与仓库密钥一致；**注册没走完的会判红**）、`balance`（区块 0 余额精确等于创世）、`transfer`、`receipt`（回执 6 个字段 + 余额守恒）、`block-production`（每笔交易产生新区块）、`contract`（编译部署 `Counter.sol` 并读写验证）、`rpc-methods`（FR-012 十个方法逐一探测）、`protocol-consistency`（运行中创世哈希 == 基准）、`fault-tolerance`（在线验证者数与容错上限的关系）、`stake-expiry`（P 链质押的到期日，以及到期之后还撑不撑得住"掉一台机器"，见 §11.5）。
+
+> 这段里刻意**不写节点数与验证者数**。它们随成员增减而变，而写死的数字会在某次扩容之后
+> 静静地变成假话 —— 本文档此前就写着"7 个节点""5 个 L1"，而那时链上已经是 11 与 9 了。
 
 输出为逐项 `[OK]/[FAIL]/[SKIP]/[UNSUPPORTED]` 行 + `.devnet/verify-report.json`（结构见 `contracts/verification-report.schema.json`）。**每个失败都带 FR-030 故障类别**，便于快速定位是配置、节点、共识、RPC 还是交易问题。
 
@@ -429,7 +432,7 @@ docker compose -f docker/compose/<形态>-<边界>.yml up -d --force-recreate <�
 | `npm test` | 单元测试（协议参数约束、创世漂移、账户派生、报告 schema、硬编码扫描） | ~1 秒 |
 | `npm run test:integration` | 集成测试（对运行中的链：链身份、创世余额、转账回执、按需出块） | ~15 秒 |
 | `npm run test:secrets` | 秘密扫描（仓库 + 运行时日志） | ~4 秒 |
-| `scripts/devnet-verify.sh` | 14 项网络验证 | ~15 秒 |
+| `scripts/devnet-verify.sh` | 15 项网络验证 | ~15 秒 |
 | `node --test tests/e2e/<name>.test.mjs` | 端到端（见下） | 分钟级 |
 
 不带宿主 Node 时，前三项都可以在容器内跑：`docker compose run --rm verify npm test`。
@@ -922,7 +925,7 @@ docker inspect --format '{{.Name}} {{.Created}} {{.State.StartedAt}}' karmachain
 # 1. 两两可达（在每台机器上各跑一次才覆盖完整矩阵）
 npm run test:integration -- --test-name-pattern="V-06"
 
-# 2. 全链 14 项检查（任一台机器上跑即可，RPC 经本机代理）
+# 2. 全链 15 项检查（任一台机器上跑即可，RPC 经本机代理）
 scripts/devnet-verify
 ```
 

@@ -9,7 +9,7 @@
 //   1. **reset 之后 start 会失败并给出正确的指引**（而不是起一条没有 L1 的链）
 //   2. bootstrap 是**确定性**的：重建后 SubnetID / BlockchainID / 创世哈希与制品逐字相同
 //      （研究 R-04 的核心结论 —— 它使制品可以被漂移测试保护）
-//   3. 往返之后 `devnet-verify` 14 项全通，且高度从创世重新计数
+//   3. 往返之后 `devnet-verify` 15 项全通，且高度从创世重新计数
 //
 // **本测试销毁全链状态**，耗时数分钟。因此默认跳过，须显式 `KARMACHAIN_ALLOW_DESTRUCTIVE=1`。
 // 它与 `KARMACHAIN_ALLOW_DISRUPTIVE` 是两个不同的开关：后者只是打断服务，本测试**丢数据**。
@@ -141,7 +141,7 @@ describe('T091 —— reset → bootstrap → start 往返', { skip: SKIP ?? ski
       `往返后高度应从创世附近重新开始，实际 ${height} —— 若很大说明卷没被真正删除`);
   });
 
-  test('devnet-verify 14 项全通', () => {
+  test('devnet-verify 15 项全通', () => {
     const r = sh('scripts/devnet-verify.sh');
     assert.equal(r.code, 0, `verify 应全通\n${r.out.slice(-2500)}`);
     assert.match(r.out, /KarmaChain is READY/);
