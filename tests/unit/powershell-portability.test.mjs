@@ -189,6 +189,35 @@ describe('宿主薄封装脚本的跨平台可移植性', () => {
       + '  前者的措辞会把人引向 PATH 而不是权限。\n'
       + '  修法：git update-index --chmod=+x <文件…> 然后提交。');
   });
+
+  // 2026-09-26：上面那条**在唯一能拦住我的那一刻是瞎的**。
+  // `git ls-files` 只列**已跟踪**的文件，而新写的 scripts/devnet-primary.sh 当时还没
+  // `git add`。于是 1621 条断言全绿 → 提交 → 记录里赫然是 `create mode 100644`。
+  // 守卫存在、写得也对，**却只在木已成舟之后才有发言权**。
+  //
+  // 未跟踪的 `*.sh` 在 Windows 上被 `git add` 时必然记成 100644（NTFS 没有权限位），
+  // 所以"还没跟踪"这件事本身就足以预测结果 —— 在这里报出来，比提交后再报有用。
+  test('还没被 git 跟踪的 *.sh 也要报出来 —— 否则守卫只在提交之后才有发言权', () => {
+    let out;
+    try {
+      out = execFileSync('git', ['ls-files', '--others', '--exclude-standard', '--', '*.sh'], {
+        cwd: REPO_ROOT, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      return;   // 不是 git 工作树 —— 无从判定，不误报
+    }
+    const pending = out.split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .filter((p) => !p.startsWith('docker/'))
+      .filter((p) => !p.split('/').pop().startsWith('_'));
+    assert.deepEqual(pending, [],
+      `以下 *.sh 还没被 git 跟踪：\n  ${pending.join('\n  ')}\n`
+      + '  在 Windows 上 git add 会把它们记成 100644（NTFS 没有权限位），\n'
+      + '  而 Linux 上 clone 出来直接执行会报权限不够。\n'
+      + '  修法：git add <文件…> && git update-index --chmod=+x <文件…>\n'
+      + '  —— 先 add 再改模式，然后这一条与上一条都会绿。');
+  });
   // 2026-09-22 在 ubuntu-5 上：`devnet-start.sh` 的就绪判据全压在 `curl` 上，
   // 而那些调用都带 `2>/dev/null`。那台机器按 `apt-get install docker.io jq git` 装的，
   // **没有 curl** —— 于是 chain_id() 静默返回空字符串，轮询永远不匹配，
