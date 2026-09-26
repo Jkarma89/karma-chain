@@ -29,6 +29,7 @@
 // 而不必起一条链才能验证「链上有、声明里没有」这种情形 ——
 // 那种情形恰恰最难在真实环境里造出来。
 import { EXIT_DRIFT } from './exit-codes.mjs';
+import { loadConfigOrExit } from './load-or-exit.mjs';
 import { decodeEventLog, keccak256, toHex } from 'viem';
 import { readJson, REPO_ROOT, loadProtocol, deriveTopology } from '../protocol/load.mjs';
 import { identityOf, cb58Encode, cb58Decode } from '../verify/lib/identity.mjs';
@@ -583,7 +584,7 @@ export async function readConsensusMembers({ pchainUrl, subnetId, now = Date.now
 /** 命令行：打印链上成员与漂移分类。 */
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
   const { createPublicClient, http } = await import('viem');
-  const p = loadProtocol();
+  const p = loadConfigOrExit();
   const url = process.env.KARMACHAIN_RPC_URL
     ?? `http://127.0.0.1:${p.endpoints.hostRpcPort}${p.endpoints.rpcPath}`;
   const client = createPublicClient({ transport: http(url) });

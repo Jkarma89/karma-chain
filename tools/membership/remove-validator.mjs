@@ -47,7 +47,7 @@ import { createPublicClient, http } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
+import { readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
 import { identityOf, cb58Decode } from '../verify/lib/identity.mjs';
 import {
   VALIDATOR_MANAGER_ABI, PROXY_ADDRESS, STATUS,
@@ -65,6 +65,7 @@ import {
 // 而 11 / 12 在本仓库另有含义（端口冲突、数据与声明不一致）。
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { loadConfigOrExit } from './load-or-exit.mjs';
 import { ask } from './ask.mjs';
 import { assertChainReachable, reportUnexpected } from './cli-failure.mjs';
 
@@ -686,7 +687,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
     process.exit(EXIT_PRECHECK);
   }
 
-  const config = loadProtocol();
+  const config = loadConfigOrExit();
   const identity = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
   const rpcUrl = process.env.KARMACHAIN_RPC_URL
     ?? `http://127.0.0.1:${config.endpoints.hostRpcPort}${config.endpoints.rpcPath}`;

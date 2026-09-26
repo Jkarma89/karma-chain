@@ -30,10 +30,11 @@
 // 退出码与其余成员工具同一套（tools/membership/exit-codes.mjs）。
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { REPO_ROOT, loadProtocol, deriveTopology, readJson } from '../protocol/load.mjs';
+import { REPO_ROOT, deriveTopology, readJson } from '../protocol/load.mjs';
 import { identityOf } from '../verify/lib/identity.mjs';
 import { ask } from './ask.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { loadConfigOrExit } from './load-or-exit.mjs';
 
 /** Primary 网络的 subnetID —— 全零，固定值。 */
 export const PRIMARY_NETWORK_ID = '11111111111111111111111111111111LpoYY';
@@ -152,7 +153,7 @@ async function main() {
   const stakeAvax = BigInt(arg('stake-avax', '1000000'));
   const dryRun = flag('dry-run');
 
-  const p = loadProtocol();
+  const p = loadConfigOrExit();
   const d = deriveTopology(p);
   const node = d.topologyNodes.find((n) => n.id === nodeArg);
 

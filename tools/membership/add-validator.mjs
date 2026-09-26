@@ -37,7 +37,7 @@ import { createPublicClient, createWalletClient, http, keccak256, toHex, decodeE
 import { privateKeyToAccount } from 'viem/accounts';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { loadProtocol, readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
+import { readJson, REPO_ROOT, deriveTopology } from '../protocol/load.mjs';
 import {
   identityOf, joinedValidators, nodeIdToBytes, cb58Encode,
 } from '../verify/lib/identity.mjs';
@@ -52,6 +52,7 @@ import { toleranceChange, toleranceAfterAdd } from './tolerance.mjs';
 // 各挑各的号会让"退出码 12"在一处是"节点数据不属于这条链"、在另一处是"P 链交易失败"。
 export { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
 import { EXIT_OK, EXIT_PRECHECK, EXIT_STEP_FAILED, EXIT_ABORTED } from './exit-codes.mjs';
+import { loadConfigOrExit } from './load-or-exit.mjs';
 import { ask } from './ask.mjs';
 import { assertChainReachable, reportUnexpected } from './cli-failure.mjs';
 
@@ -260,6 +261,14 @@ export async function precheck({
   }
 
   // ── T-5：每个故障边界的验证者数不得超过 ⌊n/4⌋（FR-013）──────────────────
+  //
+  // **走真实入口时这一支到不了** —— `loadConfigOrExit()` 调的 `loadProtocol()`
+  // 里有同一条约束，而它更早、报得更具体（点名边界、给出上限的推导、说把哪个节点
+  // 移走）。2026-09-26 的 SC-009 活链验证实测：真实路径报的是加载层那条，不是这一条。
+  //
+  // 保留它，是因为 `preflight()` 是**导出**的、可以被传入一份手搓的 config
+  //（单元测试就是那么用的）。删掉会让那条路径失去这一层。
+  // 但**不要把它当成 T-5 的执行点** —— 执行点在 `tools/protocol/load.mjs`。
   if (!d.faultTolerance.declaredWithinLimit && d.faultTolerance.domainCount > 1) {
     problems.push('声明的拓扑违反 T-5（某个故障边界的验证者数超过 ⌊n/4⌋）—— '
       + '先跑 node tools/protocol/validate-topology.mjs 看是哪个边界');
@@ -1389,7 +1398,7 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '
   // 所以它不吃 --yes：--yes 的意思是"我要做的这些步别再问我"，
   // 不是"你可以替我多发一笔我没提过的交易"。要它就显式写 --nudge。
   const allowNudge = args.includes('--nudge');
-  const config = loadProtocol();
+  const config = loadConfigOrExit();
   const identity = readJson(resolve(REPO_ROOT, 'blockchain', 'chain-identity', 'karmachain.identity.json'));
 
   // 目标 nodeID：显式给，或者声明里恰好只有一个 joined 成员时自动取
