@@ -114,12 +114,32 @@ describe('与基准一致的关键行为', () => {
 
 describe('角色差异', () => {
   test('只有 L1 验证者跟踪子网并加载插件', () => {
+    // 2026-09-26：`partial-sync-primary-network` 从这张"按角色"的清单里**挪了出去**。
+    // 它原本与其余四个同类 —— "是不是 L1 验证者"一个条件就决定它。
+    // F-7 落地后不再是：兼任 Primary 网络验证者的 L1 节点**必须不带**它
+    //（avalanchego 对那个组合是启动即致命）。
+    //
+    // **这不是放宽**：那四个键的判据一字未动，而 partial-sync 换成了一条更准的，
+    // 见下一条与 tests/unit/primary-dual-role-flags.test.mjs。
+    // 把它留在这张清单里只有两种结局：要么这条恒红，要么有人把它删掉 ——
+    // 而删掉就等于那个键从此无人看管。
     for (const n of D.topologyNodes) {
       const f = FLAGS[n.id];
       const isV = n.role === 'l1-validator';
-      for (const k of ['track-subnets', 'partial-sync-primary-network', 'sybil-protection-enabled', 'plugin-dir', 'chain-aliases-file']) {
+      for (const k of ['track-subnets', 'sybil-protection-enabled', 'plugin-dir', 'chain-aliases-file']) {
         assert.equal(k in f, isV, `${n.id}（${n.role}）${isV ? '应当' : '不应'}有 ${k}`);
       }
+    }
+  });
+
+  test('partial-sync 按"是否兼任 Primary 验证者"决定，Primary 节点一律没有', () => {
+    const listed = new Set(P.primaryNetwork.alsoValidatedBy ?? []);
+    for (const n of D.topologyNodes) {
+      const has = 'partial-sync-primary-network' in FLAGS[n.id];
+      const want = n.role === 'l1-validator' && !listed.has(n.id);
+      assert.equal(has, want,
+        `${n.id}（${n.role}${listed.has(n.id) ? '，兼任 Primary 验证者' : ''}）`
+        + `${want ? '应当' : '不应'}有 partial-sync-primary-network`);
     }
   });
 

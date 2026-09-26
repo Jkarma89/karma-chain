@@ -43,13 +43,34 @@ const l1Ids = loadProtocol().topology.nodes
   .filter((n) => n.role === 'l1-validator').map((n) => n.id);
 
 describe('兼任 Primary 网络验证者的节点不得开 partial sync', () => {
-  test('前提：确实有 L1 验证者，且当前声明里这个名单是空的', () => {
-    // 前提写成断言，而不是默认它成立 —— 名单一旦在声明里非空，
-    // 下面第 ③ 条比的就不是"惰性"了，而那时它会静默地测别的东西。
+  test('前提：确实有 L1 验证者', () => {
     assert.ok(l1Ids.length >= 2, `只解出 ${l1Ids.length} 个 L1 验证者 —— 夹具或声明变了`);
+  });
+
+  // 2026-09-26：原先这里断言"当前声明里名单是空的"。F-7 落地之后它当然不成立了，
+  // 而**把它删掉了事就等于少了一条**。换成一条更强的：
+  // **声明里列了谁，落盘的 flags 就必须与之一致。**
+  //
+  // 上面几条比的都是"渲染器在内存里给出什么"，而节点真正读的是
+  // `blockchain/nodes/<形态>/<id>.flags.json` 那份文件。漂移测试保证它们是渲染出来的，
+  // 这一条保证**渲染的依据（声明）与结果（文件）说的是同一件事** ——
+  // 手改一份 flags.json 就会在这里红，而那种手改正是 24 小时之后才现形的那类错误。
+  test('声明里的名单与落盘的 flags 一致（两个形态都查）', () => {
     const declared = JSON.parse(readFileSync(resolve(REPO_ROOT, 'blockchain/deployment.json'), 'utf8'));
-    assert.deepEqual(declared.primaryNetwork.alsoValidatedBy ?? [], [],
-      '当前声明里名单非空 —— 若 F-7 已经落地，请把本条的第 ③ 项改成对着新基线比');
+    const listed = new Set(declared.primaryNetwork.alsoValidatedBy ?? []);
+    const bad = [];
+    for (const deployment of ['lan', 'local']) {
+      for (const id of l1Ids) {
+        const f = JSON.parse(readFileSync(
+          resolve(REPO_ROOT, `blockchain/nodes/${deployment}/${id}.flags.json`), 'utf8'));
+        const has = f[FLAG] !== undefined;
+        if (listed.has(id) && has) bad.push(`${deployment}/${id}：列在名单里却仍带着 ${FLAG}`);
+        if (!listed.has(id) && !has) bad.push(`${deployment}/${id}：不在名单里却没有 ${FLAG}`);
+      }
+    }
+    assert.deepEqual(bad, [],
+      '声明与落盘的 flags 不一致 —— 节点读的是文件，而人看的是声明；'
+      + '两者分叉时，代价要到那个节点下次重启才现形，而那时质押已经锁死 24 小时');
   });
 
   test('① 名单里的节点不得带 partial-sync', () => {

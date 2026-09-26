@@ -16,7 +16,6 @@
   "index-enabled": "false",
   "network-allow-private-ips": "true",
   "network-id": "1337",
-  "partial-sync-primary-network": "true",
   "plugin-dir": "/plugins",
   "public-ip": "172.28.0.17",
   "staking-port": "21673",

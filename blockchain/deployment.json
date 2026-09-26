@@ -196,7 +196,12 @@
   },
   "primaryNetwork": {
     "nodeCount": 2,
-    "alsoValidatedBy": []
+    "alsoValidatedBy": [
+      "l1-5",
+      "l1-6",
+      "l1-7",
+      "l1-8"
+    ]
   },
   "validators": {
     "count": 9,
