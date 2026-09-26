@@ -37,6 +37,8 @@ scripts/devnet-verify.sh     # 14 项自动化检查，应输出 "KarmaChain is 
 | 状态 | `scripts\devnet-status.ps1` | `scripts/devnet-status.sh` | 逐节点的恢复状态、高度、peers、所属故障边界；显示在线数与容错上限的关系 |
 | 拓扑 | `scripts\devnet-topology.ps1` | `scripts/devnet-topology.sh` | 校验并展示故障边界与推导出的容错上限；退出码 13 = 违反容错约束 |
 | 重新生成 | `scripts\devnet-render.ps1` | `scripts/devnet-render.sh` | 由 `protocol.json` 重新生成全部派生物；`--check` 只检查漂移 |
+| L1 成员 | `scripts\devnet-member.ps1` | `scripts/devnet-member.sh` | 看 / 加 / 退 **L1 验证者集合**（§5.4、§11）；退出码 3x 一套 |
+| Primary 侧 | `scripts\devnet-primary.ps1` | `scripts/devnet-primary.sh` | 把一个 L1 验证者加进 **Primary 网络**验证者集合（§11.5）；**质押 24 小时不可逆** |
 
 启动成功会打印 READY 摘要：RPC URL、Chain ID、代币、验证者数、出块模式、开发账户余额。退出码见 [`contracts/cli-interface.md`](../specs/001-local-avalanche-devnet/contracts/cli-interface.md)。
 
@@ -1527,6 +1529,67 @@ n=5 掉 2 个（已越界）时，退掉那个离线的能让链回到容错内�
 - 创世哈希不变，链数据不动
 
 改协议参数才走宪法第十五条那条路（见 §8），那条路**要重置**。
+
+### 11.5 Primary 侧：让 L1 验证者兼任 P 链验证者（功能 005 / US4）
+
+**这一节解决的不是 L1 的容错，是「引导」。** P 链引导要求连上 **≥80%** 的权益。
+两个 Primary 各握 50% 时，**掉任意一个，任何节点都引导不起来** —— 004 的 V-08 实测：
+0 个在线失败、1 个（50%）仍失败、2 个（100%）才成功。
+
+做法：让若干 L1 验证者**同时**成为 P 链验证者，把持有者数推上去。
+判据按**机器**算，不按持有者算（本部署的失效单位是机器，而 `ubuntu-1`/`ubuntu-2`
+各同时承载一个 Primary 和一个 L1 验证者）：
+
+| 持有者数 | 每个 | 掉一台后剩 | 够不够（≥80%） |
+|---|---|---|---|
+| 2 | 50% | 50% | ✗ |
+| 4 | 25% | 75% | ✗ |
+| 5 | 20% | 80% | ✓ 但**贴线** |
+| **6** | **16.66%** | **83.34%** | ✓ |
+
+> **每台机器只放一个持有者。** 让 `ubuntu-1`/`ubuntu-2` 上的 L1 验证者也兼任，
+> 那两台就各握两份 —— 8 个等权持有者看着满足"掉任意 1 个"，而掉那一台就剩 75%。
+> **按持有者算会给出一个在现实里为假的绿灯。**
+
+#### 顺序不能反
+
+```
+① 把节点写进 blockchain/deployment.json 的 primaryNetwork.alsoValidatedBy
+② npm run render        →  只有那几个节点的 flags.json 会变，差异是**删掉一个键**
+③ 在各自机器上重建容器  →  docker compose -f docker/compose/<形态>-<边界>.yml \
+                              up -d --force-recreate <节点>
+④ scripts/devnet-primary.sh add --node <节点>      ← 这一步开始不可逆
+```
+
+**必须先去标志、重建，再加进集合。** avalanchego 对「是 Primary 验证者又开着
+`partial-sync-primary-network`」的节点是**启动即致命**
+（`partial sync should not be configured for a validator`）——
+顺序反了，那个节点下一次重启就起不来，而那时质押已经锁死 24 小时。
+
+第 ③ 步做完的判据**不是**去 grep 配置文件，而是问那个节点自己：
+
+```bash
+curl -s -X POST -H 'content-type:application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"info.isBootstrapped","params":{"chain":"C"}}' \
+  http://<地址>:<httpPort>/ext/info
+```
+
+`true` 才说明它真的在全量同步主网络。**文件改了不等于容器改了** ——
+`devnet-primary` 的前置检查里就查这一条，它是唯一能发现"忘了重建"的那条。
+
+#### 两条不可逆与一个到期日
+
+- **质押最少 24 小时**（`minStakeDuration = 86400s`，P 链没有提前解除质押的交易）
+- 那些节点**从此不能再带 `partial-sync` 启动**
+- **质押会到期**，到期后自动退出集合，权益分布**悄悄退回去、没有任何告警**。
+  时长取上限 365 天，但到期本身躲不掉 —— 到期日要记在链外，面板不会提醒
+  （它看的是当前分布，不是到期日）。
+
+#### 它买不到什么
+
+**加 Primary 或让 L1 兼任，都不提高 L1 的容错。** L1 的可离线数由 `⌊n/4⌋` 定死
+（§11.1），与 P 链的权益分布无关。这一节买到的是**引导能力**：
+掉一台机器之后，被重启的节点还能不能回到网络里。
 
 **分界是一个问题，不是一张字段清单**：这次改的是**协议参数**（这条链是什么 ——
 chainId、networkId、创世、gas、代币、共识参数），还是**部署描述**（这条链跑在哪儿 ——
